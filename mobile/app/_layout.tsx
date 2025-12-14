@@ -4,25 +4,53 @@ import { useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
+import {
+  registerForPushNotifications,
+  setupNotificationListeners,
+  setupNotificationChannel,
+} from '@/lib/notifications';
 
 export default function RootLayout() {
-  const { setToken, token } = useStore();
+  const { setToken } = useStore();
 
   useEffect(() => {
-    // Load saved token on app start
-    async function loadToken() {
+    // Set up notification channel (Android)
+    setupNotificationChannel();
+
+    // Set up notification listeners
+    const cleanup = setupNotificationListeners();
+
+    // Load saved token and connect
+    async function initialize() {
       try {
         const savedToken = await SecureStore.getItemAsync('snowfort_token');
+        const savedServer = await SecureStore.getItemAsync('snowfort_server');
+
         if (savedToken) {
           setToken(savedToken);
-          // Auto-connect if we have a token
-          relay.connect(savedToken).catch(console.error);
+
+          // Set server URL if saved
+          if (savedServer) {
+            relay.setUrl(`${savedServer}/ws/mobile`);
+          }
+
+          // Connect to relay
+          await relay.connect(savedToken);
+
+          // Register for push notifications after connecting
+          const pushToken = await registerForPushNotifications();
+          if (pushToken) {
+            relay.registerPushToken(pushToken);
+          }
         }
       } catch (err) {
-        console.error('Failed to load token:', err);
+        console.error('Failed to initialize:', err);
       }
     }
-    loadToken();
+
+    initialize();
+
+    return cleanup;
   }, []);
 
   return (

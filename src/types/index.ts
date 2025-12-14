@@ -42,7 +42,8 @@ export type MobileMessage =
   | { type: 'unsubscribe'; sessionId: string }
   | { type: 'send_input'; sessionId: string; text: string }
   | { type: 'track_session'; sessionId: string }
-  | { type: 'untrack_session'; sessionId: string };
+  | { type: 'untrack_session'; sessionId: string }
+  | { type: 'register_push_token'; pushToken: string };
 
 export type RelayToMobileMessage =
   | { type: 'auth_ok' }

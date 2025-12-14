@@ -1,5 +1,6 @@
 import { authService } from './auth';
 import { connectionRegistry, type ClientData, type ClientType } from './connections';
+import { pushService } from './push';
 import type {
   DaemonMessage,
   RelayToDaemonMessage,
@@ -54,13 +55,28 @@ function handleDaemonMessage(
       if (!ws.data.authenticated) return;
       connectionRegistry.updateSessionStatus(message.sessionId, message.status);
 
-      // TODO: If status is 'idle' and session is tracked, send push notification
+      // Send push notification if session goes idle and is tracked
+      if (message.status === 'idle') {
+        const session = connectionRegistry.getSessionsForUser(ws.data.userId)
+          .find(s => s.id === message.sessionId);
+        if (session && connectionRegistry.isSessionTracked(ws.data.userId, message.sessionId)) {
+          pushService.sendSessionIdleNotification(ws.data.userId, message.sessionId, session.name);
+        }
+      }
       break;
     }
 
     case 'session_end': {
       if (!ws.data.authenticated) return;
+      const session = connectionRegistry.getSessionsForUser(ws.data.userId)
+        .find(s => s.id === message.sessionId);
+
       connectionRegistry.updateSessionStatus(message.sessionId, 'ended');
+
+      // Send push notification if session was tracked
+      if (session && connectionRegistry.isSessionTracked(ws.data.userId, message.sessionId)) {
+        pushService.sendSessionEndedNotification(ws.data.userId, message.sessionId, session.name);
+      }
       break;
     }
   }
@@ -138,6 +154,12 @@ function handleMobileMessage(
       connectionRegistry.untrackSession(ws.data.userId, message.sessionId);
       break;
     }
+
+    case 'register_push_token': {
+      if (!ws.data.authenticated) return;
+      pushService.registerToken(ws.data.userId, message.pushToken);
+      break;
+    }
   }
 }
 
@@ -149,7 +171,11 @@ const server = Bun.serve<ClientData>({
 
     // Health check endpoint
     if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ status: 'ok', ...connectionRegistry.getStats() }), {
+      return new Response(JSON.stringify({
+        status: 'ok',
+        ...connectionRegistry.getStats(),
+        push: pushService.getStats(),
+      }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }

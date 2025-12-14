@@ -123,6 +123,10 @@ class RelayConnection {
     this.send({ type: 'list_sessions' });
   }
 
+  registerPushToken(pushToken: string) {
+    this.send({ type: 'register_push_token', pushToken });
+  }
+
   disconnect() {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
