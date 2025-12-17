@@ -40,7 +40,7 @@ export async function getDeviceToken(): Promise<string | null> {
 
 const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY;
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY;
-const DEFAULT_RELAY_URL = 'https://snowfort-relay.onrender.com'; // Will be updated after deploy
+const DEFAULT_RELAY_URL = 'wss://snowfort.onrender.com';
 
 export async function auth(): Promise<void> {
   console.log('\n🔐 Snowfort Authentication\n');
