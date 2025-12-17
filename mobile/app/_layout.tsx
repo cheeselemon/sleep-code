@@ -1,11 +1,10 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { ClerkProvider, ClerkLoaded, useAuth } from '@clerk/clerk-expo';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
-import { tokenCache } from '@/lib/token-cache';
 
 // Only import notifications on native platforms
 let notificationModule: typeof import('@/lib/notifications') | null = null;
@@ -13,14 +12,7 @@ if (Platform.OS !== 'web') {
   notificationModule = require('@/lib/notifications');
 }
 
-const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
-
-if (!publishableKey) {
-  throw new Error('Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');
-}
-
-function AuthenticatedApp() {
-  const { isSignedIn, getToken } = useAuth();
+export default function RootLayout() {
   const { setToken, setConnected } = useStore();
 
   useEffect(() => {
@@ -32,23 +24,20 @@ function AuthenticatedApp() {
       cleanup = notificationModule.setupNotificationListeners();
     }
 
-    return cleanup;
-  }, []);
-
-  useEffect(() => {
-    async function connectToRelay() {
-      if (!isSignedIn) {
-        setConnected(false);
-        relay.disconnect();
-        return;
-      }
-
+    // Load saved token and connect
+    async function initialize() {
       try {
-        // Get Clerk session token for relay authentication
-        const token = await getToken();
-        if (token) {
-          setToken(token);
-          await relay.connect(token);
+        let savedToken: string | null = null;
+
+        if (Platform.OS === 'web') {
+          savedToken = localStorage.getItem('snowfort_token');
+        } else {
+          savedToken = await SecureStore.getItemAsync('snowfort_token');
+        }
+
+        if (savedToken) {
+          setToken(savedToken);
+          await relay.connect(savedToken);
 
           // Register for push notifications after connecting (native only)
           if (notificationModule) {
@@ -59,12 +48,14 @@ function AuthenticatedApp() {
           }
         }
       } catch (err) {
-        console.error('Failed to connect to relay:', err);
+        console.error('Failed to initialize:', err);
       }
     }
 
-    connectToRelay();
-  }, [isSignedIn]);
+    initialize();
+
+    return cleanup;
+  }, []);
 
   return (
     <>
@@ -77,19 +68,9 @@ function AuthenticatedApp() {
         }}
       >
         <Stack.Screen name="index" options={{ title: 'Snowfort' }} />
-        <Stack.Screen name="login" options={{ title: 'Sign In', presentation: 'modal' }} />
+        <Stack.Screen name="login" options={{ title: 'Connect', presentation: 'modal' }} />
         <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
       </Stack>
     </>
-  );
-}
-
-export default function RootLayout() {
-  return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
-      <ClerkLoaded>
-        <AuthenticatedApp />
-      </ClerkLoaded>
-    </ClerkProvider>
   );
 }
