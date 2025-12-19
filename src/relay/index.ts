@@ -549,12 +549,12 @@ function deviceAuthPage(code: string): string {
     <h1>Link Device to Snowfort</h1>
     <p class="subtitle">Sign in to link your computer</p>
 
-    <div class="code-display" id="code-section" ${code ? '' : 'class="hidden"'}>
+    <div class="code-display ${code ? '' : 'hidden'}" id="code-section">
       <div class="code-label">Device Code</div>
       <div class="code" id="device-code">${code}</div>
     </div>
 
-    <div class="manual-code" id="manual-section" ${code ? 'class="hidden"' : ''}>
+    <div class="manual-code ${code ? 'hidden' : ''}" id="manual-section">
       <p class="code-label">Enter the code from your terminal:</p>
       <input type="text" id="code-input" maxlength="6" placeholder="XXXXXX" autocomplete="off">
     </div>
