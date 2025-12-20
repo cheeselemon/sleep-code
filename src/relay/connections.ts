@@ -11,8 +11,14 @@ export interface ClientData {
   deviceId?: string; // For daemon connections
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface TrackedSession extends Session {
   daemonWs: ServerWebSocket<ClientData> | null;
+  messages: ChatMessage[]; // Buffer of recent messages
 }
 
 class ConnectionRegistry {
@@ -74,10 +80,11 @@ class ConnectionRegistry {
   }
 
   // Register a new session from a daemon
-  registerSession(ws: ServerWebSocket<ClientData>, session: Omit<TrackedSession, 'daemonWs'>): void {
+  registerSession(ws: ServerWebSocket<ClientData>, session: Omit<TrackedSession, 'daemonWs' | 'messages'>): void {
     const trackedSession: TrackedSession = {
       ...session,
       daemonWs: ws,
+      messages: [],
     };
     this.sessions.set(session.id, trackedSession);
 
@@ -132,7 +139,37 @@ class ConnectionRegistry {
 
     ws.data.subscribedSessions.add(sessionId);
     console.log(`[Connections] Mobile subscribed to session ${sessionId.slice(0, 8)}`);
+
+    // Send current session status
+    ws.send(JSON.stringify({
+      type: 'session_status',
+      sessionId,
+      status: session.status,
+    }));
+
+    // Replay message history
+    for (const msg of session.messages) {
+      ws.send(JSON.stringify({
+        type: 'session_message',
+        sessionId,
+        role: msg.role,
+        content: msg.content,
+      }));
+    }
+
     return true;
+  }
+
+  // Add a message to session history
+  addMessage(sessionId: string, role: 'user' | 'assistant', content: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.messages.push({ role, content });
+      // Keep only last 100 messages to avoid unbounded growth
+      if (session.messages.length > 100) {
+        session.messages = session.messages.slice(-100);
+      }
+    }
   }
 
   // Unsubscribe from a session

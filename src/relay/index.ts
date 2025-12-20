@@ -107,6 +107,8 @@ async function handleDaemonMessage(
 
     case 'session_message': {
       if (!ws.data.authenticated) return;
+      // Store message in history
+      connectionRegistry.addMessage(message.sessionId, message.role, message.content);
       // Forward conversation message to subscribed mobile clients
       connectionRegistry.notifySubscribedClients(ws.data.userId, message.sessionId, {
         type: 'session_message',

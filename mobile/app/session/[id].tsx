@@ -16,7 +16,7 @@ import type { ChatMessage } from '@/lib/types';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { sessions, sessionMessages, setCurrentSession } = useStore();
+  const { sessions, sessionMessages, setCurrentSession, clearMessages } = useStore();
   const [input, setInput] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
@@ -26,6 +26,8 @@ export default function SessionScreen() {
   useEffect(() => {
     if (id) {
       setCurrentSession(id);
+      // Clear local messages before subscribing - relay will replay history
+      clearMessages(id);
       relay.subscribeToSession(id);
 
       return () => {

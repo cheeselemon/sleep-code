@@ -14,6 +14,7 @@ interface ParsedMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  isComplete?: boolean; // True if this is a complete response (has stop_reason)
 }
 
 interface Session {
@@ -89,10 +90,15 @@ function parseJsonlLine(line: string): ParsedMessage | null {
       return null;
     }
 
+    // Check if this is a complete response (has stop_reason)
+    // Claude JSONL format has stop_reason when the response is complete
+    const isComplete = message.role === 'assistant' && !!message.stop_reason;
+
     return {
       role: message.role as 'user' | 'assistant',
       content: content.trim(),
       timestamp: data.timestamp || new Date().toISOString(),
+      isComplete,
     };
   } catch {
     return null;
@@ -145,12 +151,18 @@ async function processJsonlUpdates(session: Session): Promise<void> {
 
       const parsed = parseJsonlLine(line);
       if (parsed && relayClient?.isConnected()) {
-        console.log(`[Daemon] New ${parsed.role} message for session ${session.id}`);
+        console.log(`[Daemon] New ${parsed.role} message for session ${session.id}${parsed.isComplete ? ' (complete)' : ''}`);
         relayClient.sendMessage(session.id, parsed.role, parsed.content);
 
-        // Update status based on message type
-        const newStatus = parsed.role === 'assistant' ? 'idle' : 'running';
-        if (newStatus !== session.status) {
+        // Update status: 'running' on user message, 'idle' only when assistant response is complete
+        let newStatus: 'running' | 'idle' | null = null;
+        if (parsed.role === 'user') {
+          newStatus = 'running';
+        } else if (parsed.isComplete) {
+          newStatus = 'idle';
+        }
+
+        if (newStatus && newStatus !== session.status) {
           session.status = newStatus;
           relayClient.sendSessionStatus(session.id, newStatus);
         }
@@ -183,18 +195,21 @@ async function startWatching(session: Session): Promise<void> {
 
       const filePath = `${session.projectDir}/${filename}`;
 
-      // If we're not watching a file yet, or a newer file appeared, switch to it
-      if (!session.watchedFile || filePath !== session.watchedFile) {
+      // Only process updates if:
+      // 1. We don't have a file yet (need to find one)
+      // 2. This is our watched file
+      if (!session.watchedFile) {
         const latestFile = await findLatestJsonlFile(session.projectDir);
-        if (latestFile && latestFile !== session.watchedFile) {
-          console.log(`[Daemon] Switching to watch ${latestFile}`);
+        if (latestFile) {
+          console.log(`[Daemon] Found JSONL file: ${latestFile}`);
           session.watchedFile = latestFile;
-          session.seenMessages.clear();
         }
       }
 
-      // Process updates
-      await processJsonlUpdates(session);
+      // Only process if this change is for our watched file
+      if (session.watchedFile && filePath === session.watchedFile) {
+        await processJsonlUpdates(session);
+      }
     });
   } catch (err) {
     console.error('[Daemon] Error setting up watcher:', err);
@@ -207,11 +222,13 @@ async function startWatching(session: Session): Promise<void> {
       return;
     }
 
-    // Check for new files
-    const latestFile = await findLatestJsonlFile(session.projectDir);
-    if (latestFile && latestFile !== session.watchedFile) {
-      console.log(`[Daemon] Poll found new file: ${latestFile}`);
-      session.watchedFile = latestFile;
+    // Only try to find a file if we don't have one yet
+    if (!session.watchedFile) {
+      const latestFile = await findLatestJsonlFile(session.projectDir);
+      if (latestFile) {
+        console.log(`[Daemon] Poll found JSONL file: ${latestFile}`);
+        session.watchedFile = latestFile;
+      }
     }
 
     if (session.watchedFile) {
