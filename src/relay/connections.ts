@@ -113,6 +113,15 @@ class ConnectionRegistry {
     }
   }
 
+  // Update session name
+  updateSessionName(sessionId: string, name: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.name = name;
+      console.log(`[Connections] Session ${sessionId.slice(0, 8)} renamed to: ${name}`);
+    }
+  }
+
   // Get all sessions for a user
   getSessionsForUser(userId: string): Session[] {
     const sessions: Session[] = [];

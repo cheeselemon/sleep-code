@@ -94,6 +94,20 @@ async function handleDaemonMessage(
       break;
     }
 
+    case 'session_update': {
+      if (!ws.data.authenticated) return;
+      if (message.name) {
+        connectionRegistry.updateSessionName(message.sessionId, message.name);
+        // Notify all mobile clients about the name change
+        connectionRegistry.notifyMobileClients(ws.data.userId, {
+          type: 'session_update',
+          sessionId: message.sessionId,
+          name: message.name,
+        });
+      }
+      break;
+    }
+
     case 'session_output': {
       if (!ws.data.authenticated) return;
       // Forward to subscribed mobile clients

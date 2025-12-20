@@ -15,6 +15,7 @@ interface AppState {
   sessions: Session[];
   setSessions: (sessions: Session[]) => void;
   updateSessionStatus: (sessionId: string, status: Session['status']) => void;
+  updateSessionName: (sessionId: string, name: string) => void;
 
   // Current session
   currentSessionId: string | null;
@@ -43,6 +44,12 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.map((s) =>
         s.id === sessionId ? { ...s, status } : s
+      ),
+    })),
+  updateSessionName: (sessionId, name) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.id === sessionId ? { ...s, name } : s
       ),
     })),
 

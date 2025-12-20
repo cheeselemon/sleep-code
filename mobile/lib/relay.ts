@@ -106,6 +106,12 @@ class RelayConnection {
         store.appendMessage(message.sessionId, message.role, message.content);
         break;
 
+      case 'session_update':
+        if (message.name) {
+          store.updateSessionName(message.sessionId, message.name);
+        }
+        break;
+
       case 'session_status': {
         const previousStatus = this.sessionStatuses.get(message.sessionId);
         this.sessionStatuses.set(message.sessionId, message.status);

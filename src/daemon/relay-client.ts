@@ -98,6 +98,10 @@ export class RelayClient {
     this.send({ type: 'session_start', sessionId, name, cwd });
   }
 
+  sendSessionUpdate(sessionId: string, name: string): void {
+    this.send({ type: 'session_update', sessionId, name });
+  }
+
   sendSessionOutput(sessionId: string, data: string): void {
     this.send({ type: 'session_output', sessionId, data });
   }

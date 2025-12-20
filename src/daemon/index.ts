@@ -31,6 +31,7 @@ interface Session {
   seenMessages: Set<string>; // Track message UUIDs to avoid duplicates
   startedAt: Date; // Only process messages after this time
   existingFiles: Set<string>; // Files that existed before session started
+  slugFound: boolean; // Whether we've found the session name from JSONL
 }
 
 // Active sessions
@@ -65,6 +66,19 @@ function isStopHookSummary(line: string): boolean {
     return data.type === 'system' && data.subtype === 'stop_hook_summary';
   } catch {
     return false;
+  }
+}
+
+// Extract the session slug (name) from a JSONL line
+function extractSlug(line: string): string | null {
+  try {
+    const data = JSON.parse(line);
+    if (data.slug && typeof data.slug === 'string') {
+      return data.slug;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -175,6 +189,19 @@ async function processJsonlUpdates(session: Session): Promise<void> {
         continue;
       }
       session.seenMessages.add(lineHash);
+
+      // Extract session name (slug) from first message if we haven't yet
+      if (!session.slugFound) {
+        const slug = extractSlug(line);
+        if (slug) {
+          session.slugFound = true;
+          session.name = slug;
+          console.log(`[Daemon] Session ${session.id} name: ${slug}`);
+          if (relayClient?.isConnected()) {
+            relayClient.sendSessionUpdate(session.id, slug);
+          }
+        }
+      }
 
       // Check for stop_hook_summary which signals response completion
       if (isStopHookSummary(line)) {
@@ -295,7 +322,7 @@ async function handleSessionMessage(socket: Socket<unknown>, message: any): Prom
 
       const session: Session = {
         id: message.id,
-        name: message.name || message.command?.join(' ') || 'Unknown',
+        name: message.name || message.command?.join(' ') || 'Session',
         cwd: message.cwd,
         projectDir: message.projectDir,
         command: message.command,
@@ -305,6 +332,7 @@ async function handleSessionMessage(socket: Socket<unknown>, message: any): Prom
         seenMessages: new Set(),
         startedAt: new Date(),
         existingFiles,
+        slugFound: false,
       };
       sessions.set(message.id, session);
       console.log(`[Daemon] Session started: ${message.id} - ${session.name}`);
