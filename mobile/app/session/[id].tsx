@@ -13,6 +13,7 @@ import { useStore } from '@/lib/store';
 import { relay } from '@/lib/relay';
 import { useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/lib/types';
+import Markdown from 'react-native-markdown-display';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,12 +68,31 @@ export default function SessionScreen() {
     ended: '#6b7280',
   };
 
+  const markdownStyles = {
+    body: { color: '#e5e7eb', fontSize: 15, lineHeight: 22 },
+    code_inline: { backgroundColor: '#2a2a4a', color: '#a5b4fc', paddingHorizontal: 4, borderRadius: 4 },
+    code_block: { backgroundColor: '#2a2a4a', padding: 12, borderRadius: 8, marginVertical: 8 },
+    fence: { backgroundColor: '#2a2a4a', padding: 12, borderRadius: 8, marginVertical: 8 },
+    link: { color: '#818cf8' },
+    heading1: { color: '#fff', fontSize: 20, fontWeight: 'bold' as const, marginVertical: 8 },
+    heading2: { color: '#fff', fontSize: 18, fontWeight: 'bold' as const, marginVertical: 6 },
+    heading3: { color: '#fff', fontSize: 16, fontWeight: 'bold' as const, marginVertical: 4 },
+    bullet_list: { marginVertical: 4 },
+    ordered_list: { marginVertical: 4 },
+    list_item: { marginVertical: 2 },
+    blockquote: { backgroundColor: '#1a1a2e', borderLeftWidth: 3, borderLeftColor: '#6366f1', paddingLeft: 12, marginVertical: 8 },
+  };
+
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
     return (
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
         <Text style={styles.roleLabel}>{isUser ? 'You' : 'Claude'}</Text>
-        <Text style={styles.messageText}>{item.content}</Text>
+        {isUser ? (
+          <Text style={styles.messageText}>{item.content}</Text>
+        ) : (
+          <Markdown style={markdownStyles}>{item.content}</Markdown>
+        )}
       </View>
     );
   };

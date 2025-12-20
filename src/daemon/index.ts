@@ -58,6 +58,16 @@ async function loadDaemonConfig(): Promise<void> {
   }
 }
 
+// Check if a JSONL line indicates response completion (stop_hook_summary)
+function isStopHookSummary(line: string): boolean {
+  try {
+    const data = JSON.parse(line);
+    return data.type === 'system' && data.subtype === 'stop_hook_summary';
+  } catch {
+    return false;
+  }
+}
+
 // Parse a JSONL line and extract message if it's a user or assistant message
 function parseJsonlLine(line: string): ParsedMessage | null {
   try {
@@ -95,15 +105,11 @@ function parseJsonlLine(line: string): ParsedMessage | null {
       return null;
     }
 
-    // Check if this is a complete response (has stop_reason)
-    // Claude JSONL format has stop_reason when the response is complete
-    const isComplete = message.role === 'assistant' && !!message.stop_reason;
-
     return {
       role: message.role as 'user' | 'assistant',
       content: content.trim(),
       timestamp: data.timestamp || new Date().toISOString(),
-      isComplete,
+      isComplete: false, // Will be determined by stop_hook_summary
     };
   } catch {
     return null;
@@ -168,6 +174,16 @@ async function processJsonlUpdates(session: Session): Promise<void> {
       }
       session.seenMessages.add(lineHash);
 
+      // Check for stop_hook_summary which signals response completion
+      if (isStopHookSummary(line)) {
+        if (session.status !== 'idle' && relayClient?.isConnected()) {
+          console.log(`[Daemon] Response complete for session ${session.id}`);
+          session.status = 'idle';
+          relayClient.sendSessionStatus(session.id, 'idle');
+        }
+        continue;
+      }
+
       const parsed = parseJsonlLine(line);
       if (parsed && relayClient?.isConnected()) {
         // Skip messages from before this session started
@@ -176,20 +192,13 @@ async function processJsonlUpdates(session: Session): Promise<void> {
           continue;
         }
 
-        console.log(`[Daemon] New ${parsed.role} message for session ${session.id}${parsed.isComplete ? ' (complete)' : ''}`);
+        console.log(`[Daemon] New ${parsed.role} message for session ${session.id}`);
         relayClient.sendMessage(session.id, parsed.role, parsed.content);
 
-        // Update status: 'running' on user message, 'idle' only when assistant response is complete
-        let newStatus: 'running' | 'idle' | null = null;
-        if (parsed.role === 'user') {
-          newStatus = 'running';
-        } else if (parsed.isComplete) {
-          newStatus = 'idle';
-        }
-
-        if (newStatus && newStatus !== session.status) {
-          session.status = newStatus;
-          relayClient.sendSessionStatus(session.id, newStatus);
+        // Update status to 'running' on user message
+        if (parsed.role === 'user' && session.status !== 'running') {
+          session.status = 'running';
+          relayClient.sendSessionStatus(session.id, 'running');
         }
       }
     }
