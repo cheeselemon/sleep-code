@@ -29,10 +29,15 @@ interface Session {
   watchedFile?: string;
   lastFileSize: number;
   seenMessages: Set<string>; // Track message UUIDs to avoid duplicates
+  startedAt: Date; // Only process messages after this time
+  existingFiles: Set<string>; // Files that existed before session started
 }
 
 // Active sessions
 const sessions = new Map<string, Session>();
+
+// Files already claimed by sessions (to prevent two sessions watching the same file)
+const claimedFiles = new Set<string>();
 
 // Relay client
 let relayClient: RelayClient | null = null;
@@ -105,29 +110,43 @@ function parseJsonlLine(line: string): ParsedMessage | null {
   }
 }
 
-// Find the most recently modified JSONL file in the project directory
-async function findLatestJsonlFile(projectDir: string): Promise<string | null> {
+// Get all JSONL files in the project directory
+async function getJsonlFiles(projectDir: string): Promise<Set<string>> {
+  try {
+    const files = await readdir(projectDir);
+    return new Set(files.filter(f => f.endsWith('.jsonl')).map(f => `${projectDir}/${f}`));
+  } catch {
+    return new Set();
+  }
+}
+
+// Find a NEW JSONL file that wasn't in the existing set and isn't claimed by another session
+async function findNewJsonlFile(projectDir: string, existingFiles: Set<string>): Promise<string | null> {
   try {
     const files = await readdir(projectDir);
     const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
 
-    if (jsonlFiles.length === 0) return null;
+    // Find files that are NEW (not in existingFiles) and not claimed by another session
+    const newFiles = jsonlFiles
+      .map(f => `${projectDir}/${f}`)
+      .filter(path => !existingFiles.has(path) && !claimedFiles.has(path));
 
-    // Get modification times
+    if (newFiles.length === 0) return null;
+
+    // If multiple new files, return the most recently modified
+    if (newFiles.length === 1) return newFiles[0];
+
     const fileStats = await Promise.all(
-      jsonlFiles.map(async (file) => {
-        const path = `${projectDir}/${file}`;
+      newFiles.map(async (path) => {
         const stat = await Bun.file(path).stat();
         return { path, mtime: stat?.mtime || 0 };
       })
     );
 
-    // Sort by mtime descending
     fileStats.sort((a, b) => (b.mtime as number) - (a.mtime as number));
-
     return fileStats[0]?.path || null;
   } catch (err) {
-    console.error('[Daemon] Error finding JSONL file:', err);
+    console.error('[Daemon] Error finding new JSONL file:', err);
     return null;
   }
 }
@@ -151,6 +170,12 @@ async function processJsonlUpdates(session: Session): Promise<void> {
 
       const parsed = parseJsonlLine(line);
       if (parsed && relayClient?.isConnected()) {
+        // Skip messages from before this session started
+        const messageTime = new Date(parsed.timestamp);
+        if (messageTime < session.startedAt) {
+          continue;
+        }
+
         console.log(`[Daemon] New ${parsed.role} message for session ${session.id}${parsed.isComplete ? ' (complete)' : ''}`);
         relayClient.sendMessage(session.id, parsed.role, parsed.content);
 
@@ -175,14 +200,15 @@ async function processJsonlUpdates(session: Session): Promise<void> {
 
 // Start watching the project directory for JSONL changes
 async function startWatching(session: Session): Promise<void> {
-  // Find the latest JSONL file
-  const jsonlFile = await findLatestJsonlFile(session.projectDir);
+  // Look for a NEW JSONL file (not one that existed before session started)
+  const jsonlFile = await findNewJsonlFile(session.projectDir, session.existingFiles);
 
   if (!jsonlFile) {
-    console.log(`[Daemon] No JSONL file found in ${session.projectDir}, will watch directory`);
+    console.log(`[Daemon] Waiting for new JSONL file in ${session.projectDir}`);
   } else {
     session.watchedFile = jsonlFile;
-    console.log(`[Daemon] Watching ${jsonlFile}`);
+    claimedFiles.add(jsonlFile);
+    console.log(`[Daemon] Watching NEW file: ${jsonlFile}`);
 
     // Initial read
     await processJsonlUpdates(session);
@@ -196,13 +222,14 @@ async function startWatching(session: Session): Promise<void> {
       const filePath = `${session.projectDir}/${filename}`;
 
       // Only process updates if:
-      // 1. We don't have a file yet (need to find one)
+      // 1. We don't have a file yet (need to find a NEW one)
       // 2. This is our watched file
       if (!session.watchedFile) {
-        const latestFile = await findLatestJsonlFile(session.projectDir);
-        if (latestFile) {
-          console.log(`[Daemon] Found JSONL file: ${latestFile}`);
-          session.watchedFile = latestFile;
+        const newFile = await findNewJsonlFile(session.projectDir, session.existingFiles);
+        if (newFile) {
+          console.log(`[Daemon] Found NEW JSONL file: ${newFile}`);
+          session.watchedFile = newFile;
+          claimedFiles.add(newFile);
         }
       }
 
@@ -224,10 +251,11 @@ async function startWatching(session: Session): Promise<void> {
 
     // Only try to find a file if we don't have one yet
     if (!session.watchedFile) {
-      const latestFile = await findLatestJsonlFile(session.projectDir);
-      if (latestFile) {
-        console.log(`[Daemon] Poll found JSONL file: ${latestFile}`);
-        session.watchedFile = latestFile;
+      const newFile = await findNewJsonlFile(session.projectDir, session.existingFiles);
+      if (newFile) {
+        console.log(`[Daemon] Poll found NEW JSONL file: ${newFile}`);
+        session.watchedFile = newFile;
+        claimedFiles.add(newFile);
       }
     }
 
@@ -241,11 +269,19 @@ function stopWatching(session: Session): void {
   if (session.watcher) {
     session.watcher.close();
   }
+  // Unclaim the file so other sessions can potentially use it
+  if (session.watchedFile) {
+    claimedFiles.delete(session.watchedFile);
+  }
 }
 
-function handleSessionMessage(socket: Socket<unknown>, message: any): void {
+async function handleSessionMessage(socket: Socket<unknown>, message: any): Promise<void> {
   switch (message.type) {
     case 'session_start': {
+      // Get existing JSONL files BEFORE creating the session
+      // so we can identify which file is NEW for this session
+      const existingFiles = await getJsonlFiles(message.projectDir);
+
       const session: Session = {
         id: message.id,
         name: message.name || message.command?.join(' ') || 'Unknown',
@@ -256,10 +292,13 @@ function handleSessionMessage(socket: Socket<unknown>, message: any): void {
         status: 'running',
         lastFileSize: 0,
         seenMessages: new Set(),
+        startedAt: new Date(),
+        existingFiles,
       };
       sessions.set(message.id, session);
       console.log(`[Daemon] Session started: ${message.id} - ${session.name}`);
       console.log(`[Daemon] Project dir: ${session.projectDir}`);
+      console.log(`[Daemon] Existing JSONL files: ${existingFiles.size}`);
 
       // Notify relay
       if (relayClient?.isConnected()) {
