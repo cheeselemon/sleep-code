@@ -7,6 +7,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   FlatList,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { useStore } from '@/lib/store';
@@ -81,6 +82,25 @@ export default function SessionScreen() {
     ordered_list: { marginVertical: 4 },
     list_item: { marginVertical: 2 },
     blockquote: { backgroundColor: '#1a1a2e', borderLeftWidth: 3, borderLeftColor: '#6366f1', paddingLeft: 12, marginVertical: 8 },
+    table: { borderWidth: 1, borderColor: '#2a2a4a', borderRadius: 4 },
+    thead: { backgroundColor: '#2a2a4a' },
+    th: { padding: 8, color: '#fff', fontWeight: 'bold' as const },
+    tr: { borderBottomWidth: 1, borderBottomColor: '#2a2a4a' },
+    td: { padding: 8, color: '#e5e7eb' },
+  };
+
+  // Custom rules to wrap tables in horizontal scroll
+  const markdownRules = {
+    table: (node: any, children: any, parent: any, styles: any) => (
+      <ScrollView
+        key={node.key}
+        horizontal
+        showsHorizontalScrollIndicator={true}
+        style={{ marginVertical: 8 }}
+      >
+        <View style={styles.table}>{children}</View>
+      </ScrollView>
+    ),
   };
 
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
@@ -91,7 +111,9 @@ export default function SessionScreen() {
         {isUser ? (
           <Text style={styles.messageText}>{item.content}</Text>
         ) : (
-          <Markdown style={markdownStyles}>{item.content}</Markdown>
+          <View style={styles.markdownContainer}>
+            <Markdown style={markdownStyles} rules={markdownRules}>{item.content}</Markdown>
+          </View>
         )}
       </View>
     );
@@ -235,6 +257,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 12,
     maxWidth: '90%',
+    overflow: 'hidden',
   },
   userBubble: {
     backgroundColor: '#6366f1',
@@ -256,6 +279,10 @@ const styles = StyleSheet.create({
     color: '#e5e7eb',
     fontSize: 15,
     lineHeight: 22,
+  },
+  markdownContainer: {
+    flexShrink: 1,
+    overflow: 'hidden',
   },
   inputContainer: {
     flexDirection: 'row',
