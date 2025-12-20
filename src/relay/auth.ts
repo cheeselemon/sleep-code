@@ -69,12 +69,13 @@ class AuthService {
 export const authService = new AuthService();
 
 // For backwards compatibility during development
-// TODO: Remove this once Clerk is fully integrated
-const DEV_MODE = process.env.NODE_ENV !== 'production';
+// Use SNOWFORT_DEV_MODE=1 to enable test tokens even in production
+const DEV_MODE = process.env.NODE_ENV !== 'production' || process.env.SNOWFORT_DEV_MODE === '1';
 if (DEV_MODE) {
-  console.log('[Auth] Running in development mode - test tokens enabled');
+  console.log('[Auth] Development mode enabled - test tokens accepted');
 }
 
 export function isDevToken(token: string): boolean {
-  return DEV_MODE && token === 'test-token-123';
+  // Accept 'dev-token' or 'test-token-123' for testing
+  return DEV_MODE && (token === 'test-token-123' || token === 'dev-token');
 }

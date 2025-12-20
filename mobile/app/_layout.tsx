@@ -44,8 +44,9 @@ function AuthenticatedApp() {
       }
 
       try {
-        // Get Clerk session token for relay authentication
-        const token = await getToken();
+        // Use dev-token if set, otherwise get Clerk session token
+        const useDevToken = process.env.EXPO_PUBLIC_USE_DEV_TOKEN === '1';
+        const token = useDevToken ? 'dev-token' : await getToken();
         if (token) {
           setToken(token);
           await relay.connect(token);
