@@ -1,11 +1,11 @@
-# AFK
+# afk
 
-Monitor your Claude Code sessions from Slack or Discord. Get notified when Claude needs input, and respond without leaving your chat app.
+Monitor and interact with your Claude Code sessions from Slack or Discord. Get notified when Claude needs input, and respond from wherever you can access Slack/Discord. Claude Code runs on your machine where it normally does, and afk forwards messages between it and Slack/Discord.
 
 ## How it works
 
-1. Run `afk slack` or `afk discord` to start the bot
-2. Run `afk run -- claude` to start a monitored Claude Code session
+1. Run `afk slack` or `afk discord` to start the bot, and leave it running
+2. Run `afk run -- claude ` to start a monitored Claude Code session
 3. A new thread (Slack) or channel (Discord) is created for the session
 4. All messages are relayed bidirectionally - respond from your phone while AFK
 
@@ -13,7 +13,7 @@ Monitor your Claude Code sessions from Slack or Discord. Get notified when Claud
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/afk.git
+git clone https://github.com/clharman/afk.git
 cd afk
 
 # Install dependencies
@@ -62,7 +62,7 @@ afk slack
 afk run -- claude
 ```
 
-A new thread will appear in your Slack channel for each session.
+A new thread will appear in your Slack channel for each session. It will be automatically archived when you exit the Claude Code session.
 
 ## Discord Setup
 
