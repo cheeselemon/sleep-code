@@ -35,6 +35,7 @@ afk run -- claude
 
 ### Key Files
 - `src/cli/index.ts` - CLI entry point
+- `src/cli/run.ts` - `afk run` command (PTY + JSONL watching)
 - `src/cli/slack.ts` - Slack setup and run commands
 - `src/cli/discord.ts` - Discord setup and run commands
 - `src/slack/session-manager.ts` - JSONL watching and session tracking (shared)
