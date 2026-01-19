@@ -118,7 +118,9 @@ export async function run(command: string[]): Promise<void> {
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
       }
-      process.stdin.unref();
+      if (typeof process.stdin.unref === 'function') {
+        process.stdin.unref();
+      }
 
       daemon?.close();
       resolve();
