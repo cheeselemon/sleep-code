@@ -36,10 +36,7 @@
     "cli"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  },
-  "dependencies": {
+"dependencies": {
     "@slack/bolt": "^4.6.0",
     "discord.js": "^14.25.1",
     "grammy": "^1.35.0",
