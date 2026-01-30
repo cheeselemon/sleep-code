@@ -516,6 +516,9 @@ export function createDiscordApp(config: DiscordConfig) {
 
     console.log(`[Discord] Sending input to session ${sessionId}: ${message.content.slice(0, 50)}...`);
 
+    // React with checkmark to acknowledge receipt
+    await message.react('✅').catch(() => {});
+
     // Track this message so we don't re-post it
     discordSentMessages.add(message.content.trim());
 

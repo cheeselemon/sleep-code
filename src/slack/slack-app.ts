@@ -267,6 +267,15 @@ export function createSlackApp(config: SlackConfig) {
 
     console.log(`[Slack] Sending input to session ${sessionId}: ${message.text.slice(0, 50)}...`);
 
+    // React with checkmark to acknowledge receipt
+    if ('ts' in message && message.ts) {
+      await app.client.reactions.add({
+        channel: message.channel,
+        timestamp: message.ts,
+        name: 'white_check_mark',
+      }).catch(() => {});
+    }
+
     // Track this message so we don't re-post it when it comes back via JSONL
     slackSentMessages.add(message.text.trim());
 
