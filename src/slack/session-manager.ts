@@ -84,6 +84,7 @@ function hash(data: string): string {
 export class SessionManager {
   private sessions = new Map<string, InternalSession>();
   private pendingPermissions = new Map<string, Socket>();
+  private pendingAskUserQuestions = new Map<string, string>(); // sessionId -> requestId
   private events: SessionEvents;
   private server: Server | null = null;
 
@@ -273,6 +274,13 @@ export class SessionManager {
         console.log(`[SessionManager] Permission request: ${message.requestId} - ${message.toolName}`);
         this.pendingPermissions.set(message.requestId, socket);
 
+        // AskUserQuestion: store mapping so we can allow when user answers via Discord UI
+        if (message.toolName === 'AskUserQuestion') {
+          console.log(`[SessionManager] Pending AskUserQuestion permission: ${message.requestId}`);
+          this.pendingAskUserQuestions.set(message.sessionId, message.requestId);
+          break;
+        }
+
         if (this.events.onPermissionRequest) {
           try {
             const decision = await this.events.onPermissionRequest({
@@ -309,6 +317,39 @@ export class SessionManager {
       }) + '\n');
     } catch (err) {
       console.error('[SessionManager] Failed to send permission decision:', err);
+    }
+
+    this.pendingPermissions.delete(requestId);
+  }
+
+  // Allow pending AskUserQuestion permission for a session (called when user answers via Discord UI)
+  allowPendingAskUserQuestion(sessionId: string, answers: Record<string, string>): void {
+    const requestId = this.pendingAskUserQuestions.get(sessionId);
+    if (requestId) {
+      console.log(`[SessionManager] Allowing AskUserQuestion permission: ${requestId} with answers:`, answers);
+      this.sendAskUserQuestionResponse(requestId, answers);
+      this.pendingAskUserQuestions.delete(sessionId);
+    }
+  }
+
+  private sendAskUserQuestionResponse(requestId: string, answers: Record<string, string>): void {
+    const socket = this.pendingPermissions.get(requestId);
+    if (!socket) {
+      console.error(`[SessionManager] No pending permission for request: ${requestId}`);
+      return;
+    }
+
+    try {
+      socket.write(JSON.stringify({
+        type: 'permission_response',
+        requestId,
+        decision: {
+          behavior: 'allow',
+          updatedInput: { answers },
+        },
+      }) + '\n');
+    } catch (err) {
+      console.error('[SessionManager] Failed to send AskUserQuestion response:', err);
     }
 
     this.pendingPermissions.delete(requestId);

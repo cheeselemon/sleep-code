@@ -24,6 +24,7 @@ interface PermissionDecision {
     decision: {
       behavior: 'allow' | 'deny';
       message?: string;
+      updatedInput?: any;
     };
   };
 }
@@ -46,18 +47,6 @@ export async function handlePermissionHook(): Promise<void> {
   // Only handle PermissionRequest events
   if (hookInput.hook_event_name !== 'PermissionRequest') {
     // Not a permission request, exit silently
-    process.exit(0);
-  }
-
-  // Auto-allow AskUserQuestion - it's just asking questions, not executing anything
-  if (hookInput.tool_name === 'AskUserQuestion') {
-    const output: PermissionDecision = {
-      hookSpecificOutput: {
-        hookEventName: 'PermissionRequest',
-        decision: { behavior: 'allow' },
-      },
-    };
-    console.log(JSON.stringify(output));
     process.exit(0);
   }
 

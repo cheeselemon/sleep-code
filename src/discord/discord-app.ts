@@ -807,17 +807,15 @@ export function createDiscordApp(config: DiscordConfig) {
         return;
       }
 
-      // Send the answer to Claude Code
-      const sent = sessionManager.sendInput(pending.sessionId, selectedOption.label);
-      if (sent) {
-        await interaction.update({
-          content: `✅ **${question.header}**: ${selectedOption.label}`,
-          components: [], // Remove buttons
-        });
-        pendingQuestions.delete(toolUseId);
-      } else {
-        await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
-      }
+      // Allow pending permission with the answer
+      const answers: Record<string, string> = { [qIdx.toString()]: selectedOption.label };
+      sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+
+      await interaction.update({
+        content: `✅ **${question.header}**: ${selectedOption.label}`,
+        components: [], // Remove buttons
+      });
+      pendingQuestions.delete(toolUseId);
     }
 
     // Handle StringSelectMenu interactions for multiSelect questions - store selection for later submit
@@ -883,16 +881,14 @@ export function createDiscordApp(config: DiscordConfig) {
 
       const answer = interaction.fields.getTextInputValue('answer');
 
-      // Send the custom answer to Claude Code
-      const sent = sessionManager.sendInput(pending.sessionId, answer);
-      if (sent) {
-        await interaction.reply({
-          content: `✅ **${question.header}**: ${answer}`,
-        });
-        pendingQuestions.delete(toolUseId);
-      } else {
-        await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
-      }
+      // Allow pending permission with the answer
+      const answers: Record<string, string> = { [qIdx.toString()]: answer };
+      sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+
+      await interaction.reply({
+        content: `✅ **${question.header}**: ${answer}`,
+      });
+      pendingQuestions.delete(toolUseId);
     }
   });
 
