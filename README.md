@@ -79,7 +79,31 @@ npm run claude
 
 A new channel is created for each session. Messages relay bidirectionally.
 
-## Commands
+## Global Install
+
+전역 명령어로 설치하면 어디서든 `sleep-code` 명령어를 사용할 수 있습니다.
+
+```bash
+cd sleep-code
+npm link
+```
+
+이제 어디서든 사용 가능:
+
+```bash
+sleep-code telegram setup   # Telegram 설정
+sleep-code telegram         # Telegram 봇 실행
+sleep-code discord setup    # Discord 설정
+sleep-code discord          # Discord 봇 실행
+sleep-code slack setup      # Slack 설정
+sleep-code slack            # Slack 봇 실행
+sleep-code claude           # Claude 세션 시작
+sleep-code help             # 도움말
+```
+
+## Commands (npm run)
+
+프로젝트 폴더 내에서 npm으로 실행할 수도 있습니다:
 
 ```bash
 npm run telegram:setup   # Configure Telegram credentials
@@ -105,25 +129,63 @@ npm run claude           # Start a monitored session
 
 ## PM2 Background Execution
 
-```bash
-# Install pm2 globally
-npm install -g pm2
+PM2를 사용하면 봇을 백그라운드에서 실행하고, 시스템 부팅 시 자동으로 시작할 수 있습니다.
 
-# Start individual bot
+### 1. PM2 설치
+
+```bash
+npm install -g pm2
+```
+
+### 2. 봇 실행
+
+```bash
+cd /path/to/sleep-code
+
+# Telegram 봇만 실행
 pm2 start ecosystem.config.cjs --only sleep-telegram
 
-# Start all bots
+# Discord 봇만 실행
+pm2 start ecosystem.config.cjs --only sleep-discord
+
+# Slack 봇만 실행
+pm2 start ecosystem.config.cjs --only sleep-slack
+
+# 모든 봇 동시 실행
 pm2 start ecosystem.config.cjs
-
-# Manage
-pm2 status              # Check status
-pm2 logs sleep-telegram # View logs
-pm2 restart all         # Restart all
-pm2 stop all            # Stop all
-
-# Auto-start on system boot
-pm2 startup && pm2 save
 ```
+
+### 3. 상태 확인 및 관리
+
+```bash
+pm2 status                # 실행 중인 프로세스 목록
+pm2 logs                  # 모든 로그 보기
+pm2 logs sleep-telegram   # 특정 봇 로그만 보기
+pm2 monit                 # 실시간 모니터링 대시보드
+```
+
+### 4. 프로세스 제어
+
+```bash
+pm2 restart sleep-telegram  # 특정 봇 재시작
+pm2 restart all             # 모든 봇 재시작
+pm2 stop sleep-telegram     # 특정 봇 중지
+pm2 stop all                # 모든 봇 중지
+pm2 delete sleep-telegram   # 특정 봇 삭제
+pm2 delete all              # 모든 봇 삭제
+```
+
+### 5. 시스템 부팅 시 자동 시작
+
+```bash
+# 시작 스크립트 생성 (한 번만 실행)
+pm2 startup
+
+# 현재 실행 중인 프로세스 저장
+pm2 save
+```
+
+이후 컴퓨터를 재부팅해도 봇이 자동으로 시작됩니다.
 
 ## How It Works
 
