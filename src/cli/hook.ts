@@ -49,6 +49,18 @@ export async function handlePermissionHook(): Promise<void> {
     process.exit(0);
   }
 
+  // Auto-allow AskUserQuestion - it's just asking questions, not executing anything
+  if (hookInput.tool_name === 'AskUserQuestion') {
+    const output: PermissionDecision = {
+      hookSpecificOutput: {
+        hookEventName: 'PermissionRequest',
+        decision: { behavior: 'allow' },
+      },
+    };
+    console.log(JSON.stringify(output));
+    process.exit(0);
+  }
+
   const requestId = randomUUID().slice(0, 8);
 
   try {
