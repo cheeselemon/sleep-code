@@ -4,79 +4,147 @@ import { createConnection, type Socket } from 'net';
 import * as pty from 'node-pty';
 
 const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
+const RECONNECT_INTERVAL = 2000;
+const MAX_RECONNECT_INTERVAL = 30000;
 
-// Get Claude's project directory for the current working directory
 function getClaudeProjectDir(cwd: string): string {
-  // Claude encodes paths by replacing / with -
   const encodedPath = cwd.replace(/\//g, '-');
   return `${homedir()}/.claude/projects/${encodedPath}`;
 }
 
-// Connect to daemon and maintain bidirectional communication
-function connectToDaemon(
-  sessionId: string,
-  projectDir: string,
-  cwd: string,
-  command: string[],
-  onInput: (text: string) => void
-): Promise<{ close: () => void } | null> {
-  return new Promise((resolve) => {
-    const socket = createConnection(DAEMON_SOCKET);
-    let messageBuffer = '';
+interface DaemonConnectionConfig {
+  sessionId: string;
+  projectDir: string;
+  cwd: string;
+  command: string[];
+  jsonlFile: string;
+  onInput: (text: string) => void;
+}
 
-    socket.on('connect', () => {
-      // Tell daemon about this session
-      socket.write(JSON.stringify({
+class DaemonConnection {
+  private config: DaemonConnectionConfig;
+  private socket: Socket | null = null;
+  private messageBuffer = '';
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectInterval = RECONNECT_INTERVAL;
+  private closed = false;
+  private connected = false;
+
+  constructor(config: DaemonConnectionConfig) {
+    this.config = config;
+  }
+
+  start(): void {
+    this.connect();
+  }
+
+  private connect(): void {
+    if (this.closed) return;
+
+    this.socket = createConnection(DAEMON_SOCKET);
+    this.messageBuffer = '';
+
+    this.socket.on('connect', () => {
+      this.connected = true;
+      this.reconnectInterval = RECONNECT_INTERVAL;
+      console.error('[sleep-code] Connected to relay');
+
+      // Tell daemon about this session (jsonlFile is always known via --session-id)
+      this.socket!.write(JSON.stringify({
         type: 'session_start',
-        id: sessionId,
-        projectDir,
-        cwd,
-        command,
-        name: command.join(' '),
+        id: this.config.sessionId,
+        projectDir: this.config.projectDir,
+        cwd: this.config.cwd,
+        command: this.config.command,
+        name: this.config.command.join(' '),
+        jsonlFile: this.config.jsonlFile,
       }) + '\n');
-
-      resolve({
-        close: () => {
-          socket.write(JSON.stringify({ type: 'session_end', sessionId }) + '\n');
-          socket.end();
-        },
-      });
     });
 
-    socket.on('data', (data) => {
-      messageBuffer += data.toString();
+    this.socket.on('data', (data) => {
+      this.messageBuffer += data.toString();
 
-      const lines = messageBuffer.split('\n');
-      messageBuffer = lines.pop() || '';
+      const lines = this.messageBuffer.split('\n');
+      this.messageBuffer = lines.pop() || '';
 
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
           if (msg.type === 'input' && msg.text) {
-            onInput(msg.text);
+            this.config.onInput(msg.text);
           }
         } catch {}
       }
     });
 
-    socket.on('error', (error) => {
-      // Daemon not running - that's okay, run without it
-      resolve(null);
+    this.socket.on('error', () => {});
+
+    this.socket.on('close', () => {
+      const wasConnected = this.connected;
+      this.connected = false;
+      this.socket = null;
+
+      if (this.closed) return;
+
+      if (wasConnected) {
+        console.error('[sleep-code] Disconnected from relay, reconnecting...');
+      }
+
+      this.scheduleReconnect();
     });
-  });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.reconnectInterval);
+
+    this.reconnectInterval = Math.min(this.reconnectInterval * 1.5, MAX_RECONNECT_INTERVAL);
+  }
+
+  close(): void {
+    this.closed = true;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.socket && this.connected) {
+      try {
+        this.socket.write(JSON.stringify({
+          type: 'session_end',
+          sessionId: this.config.sessionId
+        }) + '\n');
+        this.socket.end();
+      } catch {}
+    }
+
+    this.socket = null;
+  }
 }
 
+
 export async function run(command: string[]): Promise<void> {
-  const sessionId = randomUUID().slice(0, 8);
+  // Use full UUID - Claude Code requires valid UUID for --session-id
+  const sessionId = randomUUID();
   const cwd = process.cwd();
   const projectDir = getClaudeProjectDir(cwd);
 
-  // Use node-pty for full terminal features + remote input
+  // JSONL filename is deterministic: {sessionId}.jsonl
+  const jsonlFile = `${sessionId}.jsonl`;
+
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
 
-  const ptyProcess = pty.spawn(command[0], command.slice(1), {
+  // Inject --session-id flag to control JSONL filename
+  const args = [...command.slice(1), '--session-id', sessionId];
+
+  const ptyProcess = pty.spawn(command[0], args, {
     name: process.env.TERM || 'xterm-256color',
     cols,
     rows,
@@ -84,15 +152,20 @@ export async function run(command: string[]): Promise<void> {
     env: process.env as Record<string, string>,
   });
 
-  const daemon = await connectToDaemon(
+  const daemon = new DaemonConnection({
     sessionId,
     projectDir,
     cwd,
     command,
-    (text) => {
+    jsonlFile,
+    onInput: (text) => {
       ptyProcess.write(text);
-    }
-  );
+    },
+  });
+  daemon.start();
+
+  console.error(`[sleep-code] Session ID: ${sessionId}`);
+  console.error(`[sleep-code] JSONL file: ${projectDir}/${jsonlFile}`);
 
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
@@ -113,7 +186,6 @@ export async function run(command: string[]): Promise<void> {
 
   await new Promise<void>((resolve) => {
     ptyProcess.onExit(() => {
-      // Clean up stdin
       process.stdin.removeListener('data', onStdinData);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
@@ -122,7 +194,7 @@ export async function run(command: string[]): Promise<void> {
         process.stdin.unref();
       }
 
-      daemon?.close();
+      daemon.close();
       resolve();
     });
   });

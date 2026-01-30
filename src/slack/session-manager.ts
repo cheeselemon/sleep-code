@@ -1,15 +1,19 @@
 /**
- * Session manager for Slack bot - handles JSONL watching and Unix socket communication
- * This replaces the need for the daemon + relay.
+ * Session manager for Slack/Discord bot - handles JSONL watching and Unix socket communication
+ *
+ * Simple approach: Each Claude Code session has its own JSONL file.
+ * Filename = Session ID (e.g., abc123.jsonl for session abc123)
+ * So we just watch each session's specific file directly.
  */
 
 import { watch, type FSWatcher } from 'fs';
-import { readdir, readFile, stat, unlink } from 'fs/promises';
+import { readFile, stat, unlink } from 'fs/promises';
 import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
 import type { TodoItem } from '../types.js';
 
 const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
+const MAX_SEEN_MESSAGES = 10000; // Prevent memory leak
 
 export interface SessionInfo {
   id: string;
@@ -23,12 +27,15 @@ export interface SessionInfo {
 interface InternalSession extends SessionInfo {
   socket: Socket;
   watcher?: FSWatcher;
-  watchedFile?: string;
+  pollInterval?: NodeJS.Timeout;
+  jsonlPath: string;
   seenMessages: Set<string>;
+  seenMessagesOrder: string[];    // Track insertion order for LRU cleanup
   slugFound: boolean;
   lastTodosHash: string;
   inPlanMode: boolean;
-  initialFileStats: Map<string, number>; // path -> mtime at session start
+  lastProcessedSize: number;      // Track last read position
+  processing: boolean;            // Prevent concurrent processing
 }
 
 export interface ChatMessage {
@@ -57,7 +64,7 @@ export interface PermissionRequestInfo {
 }
 
 export interface SessionEvents {
-  onSessionStart: (session: SessionInfo) => void;
+  onSessionStart: (session: SessionInfo) => void | Promise<void>;
   onSessionEnd: (sessionId: string) => void;
   onSessionUpdate: (sessionId: string, name: string) => void;
   onSessionStatus: (sessionId: string, status: 'running' | 'idle' | 'ended') => void;
@@ -75,8 +82,7 @@ function hash(data: string): string {
 
 export class SessionManager {
   private sessions = new Map<string, InternalSession>();
-  private claimedFiles = new Set<string>();
-  private pendingPermissions = new Map<string, Socket>(); // requestId -> hook socket
+  private pendingPermissions = new Map<string, Socket>();
   private events: SessionEvents;
   private server: Server | null = null;
 
@@ -85,12 +91,10 @@ export class SessionManager {
   }
 
   async start(): Promise<void> {
-    // Remove old socket file
     try {
       await unlink(DAEMON_SOCKET);
     } catch {}
 
-    // Start Unix socket server
     this.server = createServer((socket) => {
       let messageBuffer = '';
 
@@ -115,7 +119,6 @@ export class SessionManager {
       });
 
       socket.on('close', () => {
-        // Find and cleanup session for this socket
         for (const [id, session] of this.sessions) {
           if (session.socket === socket) {
             console.log(`[SessionManager] Session disconnected: ${id}`);
@@ -150,12 +153,10 @@ export class SessionManager {
       return false;
     }
 
-    // Send text first, then Enter
     try {
       session.socket.write(JSON.stringify({ type: 'input', text }) + '\n');
     } catch (err) {
       console.error(`[SessionManager] Failed to send input to ${sessionId}:`, err);
-      // Socket is dead, clean up
       this.stopWatching(session);
       this.sessions.delete(sessionId);
       this.events.onSessionEnd(sessionId);
@@ -165,9 +166,7 @@ export class SessionManager {
     setTimeout(() => {
       try {
         session.socket.write(JSON.stringify({ type: 'input', text: '\r' }) + '\n');
-      } catch {
-        // Session likely already cleaned up from the first write failure
-      }
+      } catch {}
     }, 50);
 
     return true;
@@ -200,8 +199,17 @@ export class SessionManager {
   private async handleSessionMessage(socket: Socket, message: any): Promise<void> {
     switch (message.type) {
       case 'session_start': {
-        // Snapshot existing JSONL files before creating session
-        const initialFileStats = await this.snapshotJsonlFiles(message.projectDir);
+        // jsonlFile is always provided via --session-id flag
+        const jsonlPath = `${message.projectDir}/${message.jsonlFile}`;
+
+        let lastProcessedSize = 0;
+        try {
+          const fileStat = await stat(jsonlPath);
+          lastProcessedSize = fileStat.size;
+          console.log(`[SessionManager] Existing JSONL found, size: ${lastProcessedSize} bytes`);
+        } catch {
+          console.log(`[SessionManager] JSONL file not found yet (will be created by Claude)`);
+        }
 
         const session: InternalSession = {
           id: message.id,
@@ -211,18 +219,21 @@ export class SessionManager {
           socket,
           status: 'running',
           seenMessages: new Set(),
+          seenMessagesOrder: [],
           startedAt: new Date(),
           slugFound: false,
           lastTodosHash: '',
           inPlanMode: false,
-          initialFileStats,
+          jsonlPath,
+          lastProcessedSize,
+          processing: false,
         };
 
         this.sessions.set(message.id, session);
-        console.log(`[SessionManager] Session started: ${message.id} - ${session.name}`);
-        console.log(`[SessionManager] Snapshot: ${initialFileStats.size} existing JSONL files`);
+        console.log(`[SessionManager] Session started: ${message.id}`);
+        console.log(`[SessionManager] Watching: ${jsonlPath}`);
 
-        this.events.onSessionStart({
+        await this.events.onSessionStart({
           id: session.id,
           name: session.name,
           cwd: session.cwd,
@@ -248,11 +259,8 @@ export class SessionManager {
 
       case 'permission_request': {
         console.log(`[SessionManager] Permission request: ${message.requestId} - ${message.toolName}`);
-
-        // Store the socket to send response back
         this.pendingPermissions.set(message.requestId, socket);
 
-        // Call the event handler if available
         if (this.events.onPermissionRequest) {
           try {
             const decision = await this.events.onPermissionRequest({
@@ -261,16 +269,12 @@ export class SessionManager {
               toolInput: message.toolInput,
               sessionId: message.sessionId,
             });
-
-            // Send decision back to hook
             this.sendPermissionDecision(message.requestId, decision);
           } catch (err) {
             console.error('[SessionManager] Error handling permission request:', err);
-            // Default to deny on error
             this.sendPermissionDecision(message.requestId, { behavior: 'deny', message: 'Error processing request' });
           }
         } else {
-          // No handler, default to deny
           this.sendPermissionDecision(message.requestId, { behavior: 'deny', message: 'No handler available' });
         }
         break;
@@ -298,117 +302,78 @@ export class SessionManager {
     this.pendingPermissions.delete(requestId);
   }
 
-  private async snapshotJsonlFiles(projectDir: string): Promise<Map<string, number>> {
-    const stats = new Map<string, number>();
-    try {
-      const files = await readdir(projectDir);
-      for (const f of files) {
-        if (f.endsWith('.jsonl') && !f.startsWith('agent-')) {
-          const path = `${projectDir}/${f}`;
-          const fileStat = await stat(path);
-          stats.set(path, fileStat.mtimeMs);
-        }
-      }
-    } catch {
-      // Directory might not exist yet
-    }
-    return stats;
-  }
+  /**
+   * Add hash to seen messages with LRU cleanup
+   */
+  private addSeenMessage(session: InternalSession, lineHash: string): void {
+    if (session.seenMessages.has(lineHash)) return;
 
-  private async hasConversationMessages(path: string): Promise<boolean> {
-    try {
-      const content = await readFile(path, 'utf-8');
-      // Check if file contains actual conversation messages (not just metadata)
-      return content.includes('"type":"user"') || content.includes('"type":"assistant"');
-    } catch {
-      return false;
+    session.seenMessages.add(lineHash);
+    session.seenMessagesOrder.push(lineHash);
+
+    // LRU cleanup: remove oldest entries if over limit
+    while (session.seenMessagesOrder.length > MAX_SEEN_MESSAGES) {
+      const oldest = session.seenMessagesOrder.shift();
+      if (oldest) {
+        session.seenMessages.delete(oldest);
+      }
     }
   }
 
-  private async findActiveJsonlFile(session: InternalSession): Promise<string | null> {
-    try {
-      const files = await readdir(session.projectDir);
-      const jsonlFiles = files.filter((f) => f.endsWith('.jsonl') && !f.startsWith('agent-'));
+  /**
+   * Process this session's JSONL file
+   */
+  private async processJsonl(session: InternalSession): Promise<void> {
+    // No JSONL path yet
+    if (!session.jsonlPath) return;
 
-      const allPaths = jsonlFiles
-        .map((f) => `${session.projectDir}/${f}`)
-        .filter((path) => !this.claimedFiles.has(path));
-
-      if (allPaths.length === 0) return null;
-
-      // Get current file stats
-      const fileStats = await Promise.all(
-        allPaths.map(async (path) => {
-          const fileStat = await stat(path);
-          return { path, mtime: fileStat.mtimeMs };
-        })
-      );
-
-      // Sort by mtime descending - prefer most recently modified
-      fileStats.sort((a, b) => b.mtime - a.mtime);
-
-      // Look for files that are either:
-      // 1. Modified since our snapshot (for --continue case) - check first!
-      // 2. New (didn't exist in our snapshot)
-      // Only consider files with actual conversation messages
-      for (const { path, mtime } of fileStats) {
-        const initialMtime = session.initialFileStats.get(path);
-
-        if (initialMtime !== undefined && mtime > initialMtime) {
-          // Existing file that was modified after session start (--continue case)
-          if (await this.hasConversationMessages(path)) {
-            console.log(`[SessionManager] Found modified JSONL (--continue): ${path}`);
-            return path;
-          }
-        }
-      }
-
-      // Then check new files
-      for (const { path } of fileStats) {
-        const initialMtime = session.initialFileStats.get(path);
-
-        if (initialMtime === undefined) {
-          // New file that didn't exist when session started
-          if (await this.hasConversationMessages(path)) {
-            console.log(`[SessionManager] Found new JSONL: ${path}`);
-            return path;
-          }
-        }
-      }
-
-      // No valid conversation file found yet
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private async processJsonlUpdates(session: InternalSession): Promise<void> {
-    if (!session.watchedFile) return;
+    // Prevent concurrent processing
+    if (session.processing) return;
+    session.processing = true;
 
     try {
-      const content = await readFile(session.watchedFile, 'utf-8');
+      const buffer = await readFile(session.jsonlPath);
+
+      // No new content
+      if (buffer.length <= session.lastProcessedSize) {
+        return;
+      }
+
+      // Only read new content
+      const newBuffer = buffer.subarray(session.lastProcessedSize);
+      session.lastProcessedSize = buffer.length;
+
+      const content = newBuffer.toString('utf-8');
       const lines = content.split('\n').filter(Boolean);
 
       for (const line of lines) {
         const lineHash = hash(line);
         if (session.seenMessages.has(lineHash)) continue;
-        session.seenMessages.add(lineHash);
+        this.addSeenMessage(session, lineHash);
+
+        // Parse once, reuse result
+        let data: any;
+        try {
+          data = JSON.parse(line);
+        } catch {
+          continue;
+        }
 
         // Extract session name (slug)
-        if (!session.slugFound) {
-          const slug = this.extractSlug(line);
-          if (slug) {
-            session.slugFound = true;
-            session.name = slug;
-            console.log(`[SessionManager] Session ${session.id} name: ${slug}`);
-            this.events.onSessionUpdate(session.id, slug);
-          }
+        if (!session.slugFound && data.slug && typeof data.slug === 'string') {
+          session.slugFound = true;
+          session.name = data.slug;
+          console.log(`[SessionManager] Session ${session.id} name: ${data.slug}`);
+          this.events.onSessionUpdate(session.id, data.slug);
         }
 
         // Extract todos
-        const todos = this.extractTodos(line);
-        if (todos) {
+        if (data.todos && Array.isArray(data.todos) && data.todos.length > 0) {
+          const todos: TodoItem[] = data.todos.map((t: any) => ({
+            content: t.content || '',
+            status: t.status || 'pending',
+            activeForm: t.activeForm,
+          }));
           const todosHash = hash(JSON.stringify(todos));
           if (todosHash !== session.lastTodosHash) {
             session.lastTodosHash = todosHash;
@@ -417,244 +382,130 @@ export class SessionManager {
         }
 
         // Detect plan mode changes
-        const planModeStatus = this.detectPlanMode(line);
-        if (planModeStatus !== null && planModeStatus !== session.inPlanMode) {
-          session.inPlanMode = planModeStatus;
-          console.log(`[SessionManager] Session ${session.id} plan mode: ${planModeStatus}`);
-          this.events.onPlanModeChange(session.id, planModeStatus);
-        }
-
-        // Extract tool calls from assistant messages
-        const toolCalls = this.extractToolCalls(line);
-        for (const tool of toolCalls) {
-          this.events.onToolCall(session.id, tool);
-        }
-
-        // Extract tool results from user messages
-        const toolResults = this.extractToolResults(line);
-        for (const result of toolResults) {
-          this.events.onToolResult(session.id, result);
-        }
-
-        // Parse and forward messages
-        const parsed = this.parseJsonlLine(line);
-        if (parsed) {
-          const messageTime = new Date(parsed.timestamp);
-          if (messageTime < session.startedAt) continue;
-
-          this.events.onMessage(session.id, parsed.role, parsed.content);
-        }
-      }
-    } catch (err) {
-      console.error('[SessionManager] Error processing JSONL:', err);
-    }
-  }
-
-  private async startWatching(session: InternalSession): Promise<void> {
-    const jsonlFile = await this.findActiveJsonlFile(session);
-
-    if (jsonlFile) {
-      session.watchedFile = jsonlFile;
-      this.claimedFiles.add(jsonlFile);
-      console.log(`[SessionManager] Watching: ${jsonlFile}`);
-      await this.processJsonlUpdates(session);
-    } else {
-      console.log(`[SessionManager] Waiting for JSONL changes in ${session.projectDir}`);
-    }
-
-    // Watch directory for changes
-    try {
-      session.watcher = watch(session.projectDir, { recursive: false }, async (_, filename) => {
-        if (!filename?.endsWith('.jsonl')) return;
-
-        if (!session.watchedFile) {
-          const newFile = await this.findActiveJsonlFile(session);
-          if (newFile) {
-            session.watchedFile = newFile;
-            this.claimedFiles.add(newFile);
+        if (data.type === 'user') {
+          const msgContent = data.message?.content;
+          if (typeof msgContent === 'string') {
+            if (msgContent.includes('<system-reminder>') && msgContent.includes('Plan mode is active')) {
+              if (!session.inPlanMode) {
+                session.inPlanMode = true;
+                console.log(`[SessionManager] Session ${session.id} plan mode: true`);
+                this.events.onPlanModeChange(session.id, true);
+              }
+            } else if (msgContent.includes('Exited Plan Mode') || msgContent.includes('exited plan mode')) {
+              if (session.inPlanMode) {
+                session.inPlanMode = false;
+                console.log(`[SessionManager] Session ${session.id} plan mode: false`);
+                this.events.onPlanModeChange(session.id, false);
+              }
+            }
           }
         }
 
-        const filePath = `${session.projectDir}/${filename}`;
-        if (session.watchedFile && filePath === session.watchedFile) {
-          await this.processJsonlUpdates(session);
+        // Extract tool calls from assistant messages
+        if (data.type === 'assistant' && Array.isArray(data.message?.content)) {
+          for (const block of data.message.content) {
+            if (block.type === 'tool_use' && block.id && block.name) {
+              console.log(`[SessionManager] Tool call: ${block.name}`);
+              this.events.onToolCall(session.id, {
+                id: block.id,
+                name: block.name,
+                input: block.input || {},
+              });
+            }
+          }
+        }
+
+        // Extract tool results from user messages
+        if (data.type === 'user' && Array.isArray(data.message?.content)) {
+          for (const block of data.message.content) {
+            if (block.type === 'tool_result' && block.tool_use_id) {
+              let text = '';
+              if (typeof block.content === 'string') {
+                text = block.content;
+              } else if (Array.isArray(block.content)) {
+                text = block.content
+                  .filter((b: any) => b.type === 'text')
+                  .map((b: any) => b.text)
+                  .join('\n');
+              }
+              this.events.onToolResult(session.id, {
+                toolUseId: block.tool_use_id,
+                content: text,
+                isError: block.is_error === true,
+              });
+            }
+          }
+        }
+
+        // Parse and forward chat messages
+        if ((data.type === 'user' || data.type === 'assistant') && !data.isMeta && !data.subtype) {
+          const message = data.message;
+          if (message?.role) {
+            let textContent = '';
+            if (typeof message.content === 'string') {
+              textContent = message.content;
+            } else if (Array.isArray(message.content)) {
+              for (const block of message.content) {
+                if (block.type === 'text' && block.text) {
+                  textContent += block.text;
+                }
+              }
+            }
+
+            if (textContent.trim()) {
+              const messageTime = new Date(data.timestamp || Date.now());
+              if (messageTime >= session.startedAt) {
+                this.events.onMessage(session.id, message.role, textContent.trim());
+              }
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        console.error(`[SessionManager] Error processing JSONL:`, err);
+      }
+    } finally {
+      session.processing = false;
+    }
+  }
+
+  private startWatching(session: InternalSession): void {
+    if (!session.jsonlPath) return;
+
+    // Extract just the filename for comparison
+    const jsonlFilename = session.jsonlPath.split('/').pop();
+
+    try {
+      session.watcher = watch(session.projectDir, { recursive: false }, async (_, filename) => {
+        if (filename === jsonlFilename) {
+          await this.processJsonl(session);
         }
       });
     } catch (err) {
-      console.error('[SessionManager] Error setting up watcher:', err);
+      console.error(`[SessionManager] Error setting up watcher:`, err);
     }
 
-    // Poll as backup
-    const pollInterval = setInterval(async () => {
+    // Poll as backup (every 1 second)
+    session.pollInterval = setInterval(async () => {
       if (!this.sessions.has(session.id)) {
-        clearInterval(pollInterval);
+        if (session.pollInterval) clearInterval(session.pollInterval);
         return;
       }
-
-      if (!session.watchedFile) {
-        const newFile = await this.findActiveJsonlFile(session);
-        if (newFile) {
-          session.watchedFile = newFile;
-          this.claimedFiles.add(newFile);
-        }
-      }
-
-      if (session.watchedFile) {
-        await this.processJsonlUpdates(session);
-      }
+      await this.processJsonl(session);
     }, 1000);
+
+    // Initial process
+    this.processJsonl(session);
+    console.log(`[SessionManager] Now watching: ${session.jsonlPath}`);
   }
 
   private stopWatching(session: InternalSession): void {
     if (session.watcher) {
       session.watcher.close();
     }
-    if (session.watchedFile) {
-      this.claimedFiles.delete(session.watchedFile);
-    }
-  }
-
-  private detectPlanMode(line: string): boolean | null {
-    try {
-      const data = JSON.parse(line);
-      if (data.type !== 'user') return null;
-
-      const content = data.message?.content;
-      if (typeof content !== 'string') return null;
-
-      // Check for plan mode activation
-      if (content.includes('<system-reminder>') && content.includes('Plan mode is active')) {
-        return true;
-      }
-
-      // Check for plan mode exit (ExitPlanMode was called)
-      if (content.includes('Exited Plan Mode') || content.includes('exited plan mode')) {
-        return false;
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private extractToolCalls(line: string): ToolCallInfo[] {
-    try {
-      const data = JSON.parse(line);
-      if (data.type !== 'assistant') return [];
-
-      const content = data.message?.content;
-      if (!Array.isArray(content)) return [];
-
-      const tools: ToolCallInfo[] = [];
-      for (const block of content) {
-        if (block.type === 'tool_use' && block.id && block.name) {
-          tools.push({
-            id: block.id,
-            name: block.name,
-            input: block.input || {},
-          });
-        }
-      }
-      return tools;
-    } catch {
-      return [];
-    }
-  }
-
-  private extractToolResults(line: string): ToolResultInfo[] {
-    try {
-      const data = JSON.parse(line);
-      if (data.type !== 'user') return [];
-
-      const content = data.message?.content;
-      if (!Array.isArray(content)) return [];
-
-      const results: ToolResultInfo[] = [];
-      for (const block of content) {
-        if (block.type === 'tool_result' && block.tool_use_id) {
-          // Content can be string or array of text blocks
-          let text = '';
-          if (typeof block.content === 'string') {
-            text = block.content;
-          } else if (Array.isArray(block.content)) {
-            text = block.content
-              .filter((b: any) => b.type === 'text')
-              .map((b: any) => b.text)
-              .join('\n');
-          }
-
-          results.push({
-            toolUseId: block.tool_use_id,
-            content: text,
-            isError: block.is_error === true,
-          });
-        }
-      }
-      return results;
-    } catch {
-      return [];
-    }
-  }
-
-  private extractSlug(line: string): string | null {
-    try {
-      const data = JSON.parse(line);
-      if (data.slug && typeof data.slug === 'string') {
-        return data.slug;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private extractTodos(line: string): TodoItem[] | null {
-    try {
-      const data = JSON.parse(line);
-      if (data.todos && Array.isArray(data.todos) && data.todos.length > 0) {
-        return data.todos.map((t: any) => ({
-          content: t.content || '',
-          status: t.status || 'pending',
-          activeForm: t.activeForm,
-        }));
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private parseJsonlLine(line: string): ChatMessage | null {
-    try {
-      const data = JSON.parse(line);
-
-      if (data.type !== 'user' && data.type !== 'assistant') return null;
-      if (data.isMeta || data.subtype) return null;
-
-      const message = data.message;
-      if (!message || !message.role) return null;
-
-      let content = '';
-      if (typeof message.content === 'string') {
-        content = message.content;
-      } else if (Array.isArray(message.content)) {
-        for (const block of message.content) {
-          if (block.type === 'text' && block.text) {
-            content += block.text;
-          }
-        }
-      }
-
-      if (!content.trim()) return null;
-
-      return {
-        role: message.role as 'user' | 'assistant',
-        content: content.trim(),
-        timestamp: data.timestamp || new Date().toISOString(),
-      };
-    } catch {
-      return null;
+    if (session.pollInterval) {
+      clearInterval(session.pollInterval);
     }
   }
 }
