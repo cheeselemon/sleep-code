@@ -743,19 +743,17 @@ export function createDiscordApp(config: DiscordConfig) {
           return question.options[optIdx]?.label || val;
         });
 
-        // Send all selected answers joined by comma
+        // Allow pending permission with the answers
         const answerText = selectedLabels.join(', ');
-        const sent = sessionManager.sendInput(pending.sessionId, answerText);
-        if (sent) {
-          await interaction.update({
-            content: `✅ **${question.header}**: ${answerText}`,
-            components: [], // Remove all components
-          });
-          pendingQuestions.delete(toolUseId);
-          pendingMultiSelections.delete(selectionKey);
-        } else {
-          await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
-        }
+        const answers: Record<string, string> = { [qIdx.toString()]: answerText };
+        sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+
+        await interaction.update({
+          content: `✅ **${question.header}**: ${answerText}`,
+          components: [], // Remove all components
+        });
+        pendingQuestions.delete(toolUseId);
+        pendingMultiSelections.delete(selectionKey);
         return;
       }
 
