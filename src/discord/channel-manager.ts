@@ -1,11 +1,27 @@
-import type { Client, TextChannel, CategoryChannel, Guild } from 'discord.js';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import type { Client, TextChannel, CategoryChannel, Guild, ThreadChannel } from 'discord.js';
+import { ChannelType } from 'discord.js';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { homedir } from 'os';
+import { join } from 'path';
+
+const MAPPINGS_DIR = join(homedir(), '.sleep-code');
+const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
+
+interface PersistedMapping {
+  sessionId: string;
+  threadId: string;
+  channelId: string;
+  cwd: string;
+}
 
 export interface ChannelMapping {
   sessionId: string;
-  channelId: string;
+  channelId: string;    // CWD-based channel
+  threadId: string;     // Session-specific thread
   channelName: string;
+  threadName: string;
   sessionName: string;
+  cwd: string;
   status: 'running' | 'idle' | 'ended';
   createdAt: Date;
 }
@@ -24,20 +40,126 @@ function sanitizeChannelName(name: string): string {
     .slice(0, 90); // Leave room for "sleep-" prefix and uniqueness suffix
 }
 
+// Topic format: "Claude Code | cwd:/path/to/project"
+const TOPIC_PREFIX = 'Claude Code |';
+
+function parseTopic(topic: string | null): { cwd?: string } | null {
+  if (!topic || !topic.startsWith(TOPIC_PREFIX)) return null;
+  const result: { cwd?: string } = {};
+  const parts = topic.slice(TOPIC_PREFIX.length).split('|').map(p => p.trim());
+  for (const part of parts) {
+    if (part.startsWith('cwd:')) {
+      result.cwd = part.slice(4);
+    }
+  }
+  return result;
+}
+
+function buildTopic(cwd: string): string {
+  return `${TOPIC_PREFIX} cwd:${cwd}`;
+}
+
 export class ChannelManager {
-  private channels = new Map<string, ChannelMapping>();
-  private channelToSession = new Map<string, string>();
+  private sessions = new Map<string, ChannelMapping>();       // sessionId -> mapping
+  private threadToSession = new Map<string, string>();        // threadId -> sessionId
+  private cwdToChannel = new Map<string, string>();           // cwd -> channelId
+  private persistedMappings = new Map<string, PersistedMapping>(); // sessionId -> persisted data
   private client: Client;
   private userId: string;
   private guild: Guild | null = null;
   private category: CategoryChannel | null = null;
+  private initialized = false;
+  private initPromise: Promise<void> | null = null;
 
   constructor(client: Client, userId: string) {
     this.client = client;
     this.userId = userId;
   }
 
+  /**
+   * Load persisted session mappings from file
+   */
+  private async loadMappings(): Promise<void> {
+    try {
+      const data = await readFile(MAPPINGS_FILE, 'utf-8');
+      const mappings: PersistedMapping[] = JSON.parse(data);
+      for (const m of mappings) {
+        this.persistedMappings.set(m.sessionId, m);
+      }
+      console.log(`[ChannelManager] Loaded ${mappings.length} persisted session mappings`);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        console.error('[ChannelManager] Error loading mappings:', err.message);
+      }
+    }
+  }
+
+  /**
+   * Save session mappings to file
+   */
+  private async saveMappings(): Promise<void> {
+    try {
+      await mkdir(MAPPINGS_DIR, { recursive: true });
+      const mappings = Array.from(this.persistedMappings.values());
+      await writeFile(MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
+    } catch (err: any) {
+      console.error('[ChannelManager] Error saving mappings:', err.message);
+    }
+  }
+
+  /**
+   * Add or update a persisted mapping
+   */
+  private async persistMapping(sessionId: string, threadId: string, channelId: string, cwd: string): Promise<void> {
+    this.persistedMappings.set(sessionId, { sessionId, threadId, channelId, cwd });
+    await this.saveMappings();
+  }
+
+  /**
+   * Remove a persisted mapping
+   */
+  private async removePersistedMapping(sessionId: string): Promise<void> {
+    this.persistedMappings.delete(sessionId);
+    await this.saveMappings();
+  }
+
+  /**
+   * Wait for initialization to complete (with timeout)
+   */
+  async waitForInit(timeoutMs = 30000): Promise<boolean> {
+    if (this.initialized) return true;
+    if (this.initPromise) {
+      await this.initPromise;
+      return this.initialized;
+    }
+
+    // Wait for initialization to start (polling)
+    const startTime = Date.now();
+    while (!this.initialized && Date.now() - startTime < timeoutMs) {
+      if (this.initPromise) {
+        await this.initPromise;
+        return this.initialized;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return this.initialized;
+  }
+
   async initialize(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initPromise) {
+      await this.initPromise;
+      return;
+    }
+
+    this.initPromise = this.doInitialize();
+    await this.initPromise;
+  }
+
+  private async doInitialize(): Promise<void> {
+    // Load persisted session mappings first
+    await this.loadMappings();
+
     // Find the first guild the bot is in
     const guilds = await this.client.guilds.fetch();
     if (guilds.size === 0) {
@@ -63,34 +185,72 @@ export class ChannelManager {
 
     console.log(`[ChannelManager] Using guild: ${this.guild.name}`);
     console.log(`[ChannelManager] Using category: ${this.category.name}`);
+
+    // Scan existing channels for recovery after restart
+    await this.recoverChannels();
+
+    this.initialized = true;
+    console.log(`[ChannelManager] Initialization complete`);
   }
 
-  async createChannel(
-    sessionId: string,
-    sessionName: string,
-    cwd: string
-  ): Promise<ChannelMapping | null> {
-    if (!this.guild || !this.category) {
-      console.error('[ChannelManager] Not initialized');
-      return null;
+  /**
+   * Scan existing channels in the category and recover cwd->channel mappings
+   */
+  private async recoverChannels(): Promise<void> {
+    if (!this.guild || !this.category) return;
+
+    const channels = this.guild.channels.cache.filter(
+      (ch) => ch.parentId === this.category!.id && ch.type === ChannelType.GuildText
+    );
+
+    let recovered = 0;
+    for (const [channelId, channel] of channels) {
+      if (channel.type !== ChannelType.GuildText) continue;
+
+      const textChannel = channel as TextChannel;
+      const topic = textChannel.topic;
+      const parsed = parseTopic(topic);
+      if (parsed?.cwd) {
+        this.cwdToChannel.set(parsed.cwd, channelId);
+        recovered++;
+        console.log(`[ChannelManager] Recovered channel #${channel.name} for cwd: ${parsed.cwd}`);
+      }
     }
 
-    // Check if channel already exists for this session
-    if (this.channels.has(sessionId)) {
-      return this.channels.get(sessionId)!;
+    if (recovered > 0) {
+      console.log(`[ChannelManager] Recovered ${recovered} channel mappings`);
+    }
+  }
+
+  /**
+   * Get or create a channel for a CWD
+   */
+  private async getOrCreateChannel(cwd: string): Promise<TextChannel | null> {
+    if (!this.guild || !this.category) return null;
+
+    // Check if channel exists for this CWD
+    const existingChannelId = this.cwdToChannel.get(cwd);
+    if (existingChannelId) {
+      try {
+        const channel = await this.guild.channels.fetch(existingChannelId);
+        if (channel && channel.type === ChannelType.GuildText) {
+          return channel as TextChannel;
+        }
+      } catch {
+        // Channel deleted, remove from map
+        this.cwdToChannel.delete(cwd);
+      }
     }
 
-    // Extract just the folder name from the path
+    // Create new channel
     const folderName = cwd.split('/').filter(Boolean).pop() || 'session';
     const baseName = `sleep-${sanitizeChannelName(folderName)}`;
 
-    // Try to create channel, incrementing suffix if name is taken
     let channelName = baseName;
     let suffix = 1;
-    let channel: TextChannel | null = null;
 
     while (true) {
-      const nameToTry = channelName.length > 100 ? channelName.slice(0, 100) : channelName;
+      const nameToTry = channelName.slice(0, 100);
 
       // Check if name exists
       const existing = this.guild.channels.cache.find(
@@ -99,93 +259,260 @@ export class ChannelManager {
 
       if (!existing) {
         try {
-          channel = await this.guild.channels.create({
+          const channel = await this.guild.channels.create({
             name: nameToTry,
             type: ChannelType.GuildText,
             parent: this.category,
-            topic: `Claude Code session: ${sessionName}`,
+            topic: buildTopic(cwd),
           });
-          channelName = nameToTry;
-          break;
+
+          this.cwdToChannel.set(cwd, channel.id);
+          console.log(`[ChannelManager] Created channel #${nameToTry} for cwd: ${cwd}`);
+          return channel;
         } catch (err: any) {
           console.error('[ChannelManager] Failed to create channel:', err.message);
           return null;
         }
       } else {
+        // Check if this existing channel is for the same CWD
+        if (existing.type === ChannelType.GuildText) {
+          const textChannel = existing as TextChannel;
+          const topic = textChannel.topic;
+          const parsed = parseTopic(topic);
+          if (parsed?.cwd === cwd) {
+            this.cwdToChannel.set(cwd, existing.id);
+            return textChannel;
+          }
+        }
         suffix++;
         channelName = `${baseName}-${suffix}`;
       }
     }
+  }
 
-    if (!channel) {
+  /**
+   * Find existing thread for a session ID in a channel
+   */
+  private async findExistingThread(channel: TextChannel, sessionId: string): Promise<ThreadChannel | null> {
+    try {
+      // Fetch active and archived threads
+      const activeThreads = await channel.threads.fetchActive();
+      const archivedThreads = await channel.threads.fetchArchived({ type: 'public' });
+
+      // Look for thread that starts with sessionId
+      for (const [, thread] of activeThreads.threads) {
+        if (thread.name.startsWith(sessionId)) {
+          console.log(`[ChannelManager] Found existing active thread for session ${sessionId}`);
+          return thread;
+        }
+      }
+
+      for (const [, thread] of archivedThreads.threads) {
+        if (thread.name.startsWith(sessionId)) {
+          console.log(`[ChannelManager] Found existing archived thread for session ${sessionId}, unarchiving...`);
+          await thread.setArchived(false);
+          return thread;
+        }
+      }
+    } catch (err) {
+      console.error('[ChannelManager] Error searching for existing thread:', err);
+    }
+    return null;
+  }
+
+  /**
+   * Create a session (channel + thread)
+   */
+  async createSession(
+    sessionId: string,
+    sessionName: string,
+    cwd: string
+  ): Promise<ChannelMapping | null> {
+    // Wait for initialization if not ready
+    if (!this.initialized) {
+      console.log(`[ChannelManager] Waiting for initialization before creating session ${sessionId}`);
+      const ready = await this.waitForInit();
+      if (!ready) {
+        console.error('[ChannelManager] Initialization failed, cannot create session');
+        return null;
+      }
+    }
+
+    // Check if session already exists in memory
+    if (this.sessions.has(sessionId)) {
+      return this.sessions.get(sessionId)!;
+    }
+
+    // Get or create the channel for this CWD
+    const channel = await this.getOrCreateChannel(cwd);
+    if (!channel) return null;
+
+    // Try to find existing thread from persisted mapping (by threadId)
+    let thread: ThreadChannel | null = null;
+    let isNewThread = false;
+    const persisted = this.persistedMappings.get(sessionId);
+
+    if (persisted) {
+      try {
+        const existingThread = await this.client.channels.fetch(persisted.threadId);
+        if (existingThread?.isThread()) {
+          thread = existingThread;
+          // Unarchive if archived
+          if (thread.archived) {
+            await thread.setArchived(false);
+          }
+          console.log(`[ChannelManager] Found existing thread ${persisted.threadId} for session ${sessionId}`);
+        }
+      } catch (err) {
+        console.log(`[ChannelManager] Persisted thread ${persisted.threadId} not found, will create new`);
+        await this.removePersistedMapping(sessionId);
+      }
+    }
+
+    if (!thread) {
+      // Create a new standalone thread
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const threadName = `${sessionId} - ${timestamp}`;
+
+      try {
+        thread = await channel.threads.create({
+          name: threadName.slice(0, 100),
+          autoArchiveDuration: 1440, // 24 hours
+          reason: `Claude Code session ${sessionId}`,
+        });
+        isNewThread = true;
+        console.log(`[ChannelManager] Created thread "${threadName}" for session ${sessionId}`);
+      } catch (err: any) {
+        console.error('[ChannelManager] Failed to create thread:', err.message);
+        return null;
+      }
+    }
+
+    if (!thread) {
+      console.error('[ChannelManager] Thread is null after creation/lookup');
       return null;
+    }
+
+    // Add user to thread so it appears in their sidebar
+    if (this.userId) {
+      try {
+        await thread.members.add(this.userId);
+      } catch (err) {
+        // User might already be in thread
+      }
+    }
+
+    // Only send initial message for new threads
+    if (isNewThread) {
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      await thread.send(
+        `🚀 **New Session Started**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+      );
+    } else {
+      // Notify reconnection
+      await thread.send(`🔄 **Session Reconnected**`);
     }
 
     const mapping: ChannelMapping = {
       sessionId,
       channelId: channel.id,
-      channelName,
+      threadId: thread.id,
+      channelName: channel.name,
+      threadName: thread.name,
       sessionName,
+      cwd,
       status: 'running',
       createdAt: new Date(),
     };
 
-    this.channels.set(sessionId, mapping);
-    this.channelToSession.set(channel.id, sessionId);
+    this.sessions.set(sessionId, mapping);
+    this.threadToSession.set(thread.id, sessionId);
 
-    console.log(`[ChannelManager] Created channel #${channelName} for session ${sessionId}`);
+    // Persist the mapping for future reconnects
+    await this.persistMapping(sessionId, thread.id, channel.id, cwd);
+
+    console.log(`[ChannelManager] Stored session mapping: ${sessionId} -> thread ${thread.id}`);
+
     return mapping;
   }
 
-  async archiveChannel(sessionId: string): Promise<boolean> {
-    if (!this.guild) return false;
-
-    const mapping = this.channels.get(sessionId);
+  /**
+   * Archive a session's thread
+   */
+  async archiveSession(sessionId: string): Promise<boolean> {
+    const mapping = this.sessions.get(sessionId);
     if (!mapping) return false;
 
     try {
-      const channel = await this.guild.channels.fetch(mapping.channelId);
-      if (channel && channel.type === ChannelType.GuildText) {
-        // Rename with archived suffix
-        const timestamp = Date.now().toString(36);
-        const archivedName = `${mapping.channelName}-archived-${timestamp}`.slice(0, 100);
-
-        await channel.setName(archivedName);
-
-        // Move out of category or delete (Discord doesn't have archive)
-        // For now, just rename to indicate it's archived
-        console.log(`[ChannelManager] Archived channel #${mapping.channelName}`);
+      const thread = await this.client.channels.fetch(mapping.threadId);
+      if (thread && thread.isThread()) {
+        await thread.setArchived(true);
+        console.log(`[ChannelManager] Archived thread for session ${sessionId}`);
       }
+
+      // Update status and remove persisted mapping
+      mapping.status = 'ended';
+      await this.removePersistedMapping(sessionId);
       return true;
     } catch (err: any) {
-      console.error('[ChannelManager] Failed to archive channel:', err.message);
+      console.error('[ChannelManager] Failed to archive thread:', err.message);
       return false;
     }
   }
 
-  getChannel(sessionId: string): ChannelMapping | undefined {
-    return this.channels.get(sessionId);
+  getSession(sessionId: string): ChannelMapping | undefined {
+    return this.sessions.get(sessionId);
   }
 
+  // Alias for compatibility
+  getChannel(sessionId: string): ChannelMapping | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  getSessionByThread(threadId: string): string | undefined {
+    return this.threadToSession.get(threadId);
+  }
+
+  // Also check parent channel for messages
   getSessionByChannel(channelId: string): string | undefined {
-    return this.channelToSession.get(channelId);
+    // First check if it's a thread
+    const sessionFromThread = this.threadToSession.get(channelId);
+    if (sessionFromThread) return sessionFromThread;
+
+    // Check if there's an active session in this channel
+    for (const [sessionId, mapping] of this.sessions) {
+      if (mapping.channelId === channelId && mapping.status !== 'ended') {
+        return sessionId;
+      }
+    }
+    return undefined;
   }
 
   updateStatus(sessionId: string, status: 'running' | 'idle' | 'ended'): void {
-    const mapping = this.channels.get(sessionId);
+    const mapping = this.sessions.get(sessionId);
     if (mapping) {
       mapping.status = status;
     }
   }
 
   updateName(sessionId: string, name: string): void {
-    const mapping = this.channels.get(sessionId);
+    const mapping = this.sessions.get(sessionId);
     if (mapping) {
       mapping.sessionName = name;
     }
   }
 
   getAllActive(): ChannelMapping[] {
-    return Array.from(this.channels.values()).filter((c) => c.status !== 'ended');
+    return Array.from(this.sessions.values()).filter((s) => s.status !== 'ended');
   }
 }

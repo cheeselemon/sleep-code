@@ -74,6 +74,7 @@ export interface SessionEvents {
   onToolResult: (sessionId: string, result: ToolResultInfo) => void;
   onPlanModeChange: (sessionId: string, inPlanMode: boolean) => void;
   onPermissionRequest?: (request: PermissionRequestInfo) => Promise<{ behavior: 'allow' | 'deny'; message?: string }>;
+  onTitleChange?: (sessionId: string, title: string) => void;
 }
 
 function hash(data: string): string {
@@ -253,6 +254,17 @@ export class SessionManager {
           this.stopWatching(session);
           this.sessions.delete(message.sessionId);
           this.events.onSessionEnd(message.sessionId);
+        }
+        break;
+      }
+
+      case 'title_update': {
+        const session = this.sessions.get(message.sessionId);
+        if (session && message.title) {
+          console.log(`[SessionManager] Title update for ${message.sessionId}: ${message.title}`);
+          if (this.events.onTitleChange) {
+            this.events.onTitleChange(message.sessionId, message.title);
+          }
         }
         break;
       }

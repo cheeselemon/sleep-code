@@ -2,7 +2,6 @@ import {
   Client,
   GatewayIntentBits,
   Events,
-  ChannelType,
   AttachmentBuilder,
   REST,
   Routes,
@@ -15,13 +14,11 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ComponentType,
 } from 'discord.js';
-import type { ButtonInteraction, StringSelectMenuInteraction, ModalSubmitInteraction } from 'discord.js';
 import type { DiscordConfig } from './types.js';
-import { SessionManager, type SessionInfo, type ToolCallInfo, type ToolResultInfo } from '../slack/session-manager.js';
+import { SessionManager } from '../slack/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
-import { markdownToSlack, chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
+import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
 import { extractImagePaths } from '../utils/image-extractor.js';
 
 export function createDiscordApp(config: DiscordConfig) {
@@ -54,6 +51,9 @@ export function createDiscordApp(config: DiscordConfig) {
   }
   const pendingQuestions = new Map<string, PendingQuestion>(); // toolUseId -> question data
 
+  // Track multiSelect selections before submit
+  const pendingMultiSelections = new Map<string, string[]>(); // `${toolUseId}:${qIdx}` -> selected option indices
+
   // Track pending permission requests
   interface PendingPermission {
     requestId: string;
@@ -61,116 +61,175 @@ export function createDiscordApp(config: DiscordConfig) {
   }
   const pendingPermissions = new Map<string, PendingPermission>(); // requestId -> resolver
 
+  // Track pending titles for sessions that don't have threads yet
+  const pendingTitles = new Map<string, string>(); // sessionId -> title
+
+  // Helper to get thread for sending messages
+  const getThread = async (sessionId: string) => {
+    const session = channelManager.getSession(sessionId);
+    if (!session) {
+      console.log(`[Discord] getThread: No session mapping for ${sessionId}`);
+      return null;
+    }
+    try {
+      const thread = await client.channels.fetch(session.threadId);
+      if (thread?.isThread()) return thread;
+      console.log(`[Discord] getThread: Channel ${session.threadId} is not a thread`);
+    } catch (err) {
+      console.log(`[Discord] getThread: Failed to fetch thread ${session.threadId}:`, err);
+    }
+    return null;
+  };
+
   // Create session manager with event handlers that post to Discord
   const sessionManager = new SessionManager({
     onSessionStart: async (session) => {
-      const channel = await channelManager.createChannel(session.id, session.name, session.cwd);
-      if (channel) {
-        const discordChannel = await client.channels.fetch(channel.channelId);
-        if (discordChannel?.type === ChannelType.GuildText) {
-          await discordChannel.send(
+      const mapping = await channelManager.createSession(session.id, session.name, session.cwd);
+      if (mapping) {
+        const thread = await getThread(session.id);
+        if (thread) {
+          await thread.send(
             `${formatSessionStatus(session.status)} **Session started**\n\`${session.cwd}\``
           );
+
+          // Apply pending title if one was received before thread creation
+          const pendingTitle = pendingTitles.get(session.id);
+          if (pendingTitle) {
+            try {
+              await thread.setName(pendingTitle.slice(0, 100));
+              console.log(`[Discord] Applied pending title: ${pendingTitle}`);
+            } catch (err) {
+              console.error('[Discord] Failed to apply pending title:', err);
+            }
+            pendingTitles.delete(session.id);
+          }
         }
       }
     },
 
     onSessionEnd: async (sessionId) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (channel) {
-        channelManager.updateStatus(sessionId, 'ended');
-
-        const discordChannel = await client.channels.fetch(channel.channelId);
-        if (discordChannel?.type === ChannelType.GuildText) {
-          await discordChannel.send('🛑 **Session ended** - this channel will be archived');
+      const session = channelManager.getSession(sessionId);
+      if (session) {
+        const thread = await getThread(sessionId);
+        if (thread) {
+          await thread.send('🛑 **Session ended** - this thread will be archived');
         }
 
-        await channelManager.archiveChannel(sessionId);
+        await channelManager.archiveSession(sessionId);
       }
     },
 
     onSessionUpdate: async (sessionId, name) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (channel) {
+      const session = channelManager.getSession(sessionId);
+      if (session) {
         channelManager.updateName(sessionId, name);
-        // Update channel topic
+        // Update thread name
         try {
-          const discordChannel = await client.channels.fetch(channel.channelId);
-          if (discordChannel?.type === ChannelType.GuildText) {
-            await discordChannel.setTopic(`Claude Code session: ${name}`);
+          const thread = await getThread(sessionId);
+          if (thread) {
+            const newName = `${session.sessionId} - ${name}`.slice(0, 100);
+            await thread.setName(newName);
           }
         } catch (err) {
-          console.error('[Discord] Failed to update channel topic:', err);
+          console.error('[Discord] Failed to update thread name:', err);
         }
       }
     },
 
     onSessionStatus: async (sessionId, status) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (channel) {
+      const session = channelManager.getSession(sessionId);
+      if (session) {
         channelManager.updateStatus(sessionId, status);
       }
     },
 
+    onTitleChange: async (sessionId, title) => {
+      // Just store the title - will be applied when user sends a message
+      pendingTitles.set(sessionId, title);
+    },
+
     onMessage: async (sessionId, role, content) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (channel) {
-        // Discord markdown is similar to Slack's mrkdwn but uses standard markdown
-        const formatted = content; // Discord uses standard markdown
+      console.log(`[Discord] onMessage: session=${sessionId}, role=${role}, content="${content.slice(0, 50)}..."`);
+      const thread = await getThread(sessionId);
+      if (!thread) {
+        console.log(`[Discord] ❌ No thread found for session ${sessionId}`);
+        return;
+      }
+      console.log(`[Discord] ✓ Found thread ${thread.id} for session ${sessionId}`);
 
-        if (role === 'user') {
-          // Skip messages that originated from Discord
-          const contentKey = content.trim();
-          if (discordSentMessages.has(contentKey)) {
-            discordSentMessages.delete(contentKey);
-            return;
+      const formatted = content;
+
+      if (role === 'user') {
+        // Skip messages that originated from Discord
+        const contentKey = content.trim();
+        if (discordSentMessages.has(contentKey)) {
+          discordSentMessages.delete(contentKey);
+          console.log(`[Discord] Skipping Discord-originated message`);
+          return;
+        }
+
+        // User message from terminal
+        // Discord has 4000 char limit, leave room for "**User:** " prefix
+        const chunks = chunkMessage(formatted, 3900);
+        try {
+          for (const chunk of chunks) {
+            await thread.send(`**User:** ${chunk}`);
           }
-
-          // User message from terminal
-          const discordChannel = await client.channels.fetch(channel.channelId);
-          if (discordChannel?.type === ChannelType.GuildText) {
-            const chunks = chunkMessage(formatted);
-            for (const chunk of chunks) {
-              await discordChannel.send(`**User:** ${chunk}`);
-            }
+          console.log(`[Discord] Sent user message to thread`);
+        } catch (err: any) {
+          console.error(`[Discord] ❌ Failed to send user message to thread ${thread.id}:`, err.message);
+        }
+      } else {
+        // Apply pending title when assistant responds (title is ready by now)
+        const pendingTitle = pendingTitles.get(sessionId);
+        if (pendingTitle) {
+          try {
+            // Remove spinner prefix (⠐, ⠂, ✳, etc.) from title
+            const cleanTitle = pendingTitle.replace(/^[⠁⠂⠄⡀⢀⠠⠐⠈✳]\s*/, '');
+            await thread.setName(cleanTitle.slice(0, 100));
+            console.log(`[Discord] Updated thread name to: ${cleanTitle}`);
+          } catch (err) {
+            console.error('[Discord] Failed to update thread name:', err);
           }
-        } else {
-          // Claude's response
-          const discordChannel = await client.channels.fetch(channel.channelId);
-          if (discordChannel?.type === ChannelType.GuildText) {
-            const chunks = chunkMessage(formatted);
-            for (const chunk of chunks) {
-              await discordChannel.send(chunk);
-            }
+          pendingTitles.delete(sessionId);
+        }
 
-            // Extract and upload any images mentioned in the response
-            const session = sessionManager.getSession(sessionId);
-            const images = extractImagePaths(content, session?.cwd);
-            for (const image of images) {
-              try {
-                console.log(`[Discord] Uploading image: ${image.resolvedPath}`);
-                const attachment = new AttachmentBuilder(image.resolvedPath);
-                await discordChannel.send({
-                  content: `📎 ${image.originalPath}`,
-                  files: [attachment],
-                });
-              } catch (err) {
-                console.error('[Discord] Failed to upload image:', err);
-              }
-            }
+        // Claude's response - Discord has 4000 char limit
+        const chunks = chunkMessage(formatted, 3900);
+        try {
+          for (const chunk of chunks) {
+            await thread.send(chunk);
+          }
+          console.log(`[Discord] Sent assistant message to thread (${chunks.length} chunks)`);
+        } catch (err: any) {
+          console.error(`[Discord] ❌ Failed to send assistant message to thread ${thread.id}:`, err.message);
+        }
+
+        // Extract and upload any images mentioned in the response
+        const session = sessionManager.getSession(sessionId);
+        const images = extractImagePaths(content, session?.cwd);
+        for (const image of images) {
+          try {
+            console.log(`[Discord] Uploading image: ${image.resolvedPath}`);
+            const attachment = new AttachmentBuilder(image.resolvedPath);
+            await thread.send({
+              content: `📎 ${image.originalPath}`,
+              files: [attachment],
+            });
+          } catch (err) {
+            console.error('[Discord] Failed to upload image:', err);
           }
         }
       }
     },
 
     onTodos: async (sessionId, todos) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (channel && todos.length > 0) {
+      if (todos.length > 0) {
         const todosText = formatTodos(todos);
         try {
-          const discordChannel = await client.channels.fetch(channel.channelId);
-          if (discordChannel?.type === ChannelType.GuildText) {
-            await discordChannel.send(`**Tasks:**\n${todosText}`);
+          const thread = await getThread(sessionId);
+          if (thread) {
+            await thread.send(`**Tasks:**\n${todosText}`);
           }
         } catch (err) {
           console.error('[Discord] Failed to post todos:', err);
@@ -179,15 +238,18 @@ export function createDiscordApp(config: DiscordConfig) {
     },
 
     onToolCall: async (sessionId, tool) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (!channel) return;
+      console.log(`[Discord] onToolCall: ${tool.name}, id=${tool.id}, input=${JSON.stringify(tool.input).slice(0, 200)}`);
+
+      const thread = await getThread(sessionId);
+      if (!thread) {
+        console.log(`[Discord] No thread for session ${sessionId}`);
+        return;
+      }
 
       // Special handling for AskUserQuestion
       if (tool.name === 'AskUserQuestion' && tool.input.questions) {
+        console.log(`[Discord] AskUserQuestion detected with ${tool.input.questions.length} questions`);
         try {
-          const discordChannel = await client.channels.fetch(channel.channelId);
-          if (discordChannel?.type !== ChannelType.GuildText) return;
-
           // Store pending question for interaction handling
           pendingQuestions.set(tool.id, {
             sessionId,
@@ -195,41 +257,77 @@ export function createDiscordApp(config: DiscordConfig) {
             questions: tool.input.questions,
           });
 
-          // Build message with buttons for each question
+          // Build message with buttons/select menu for each question
           for (let qIdx = 0; qIdx < tool.input.questions.length; qIdx++) {
             const q = tool.input.questions[qIdx];
             const questionText = `❓ **${q.header}**\n${q.question}`;
 
-            // Create buttons for options (max 5 per row, max 4 options + Other)
-            const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-            let currentRow = new ActionRowBuilder<ButtonBuilder>();
+            if (q.multiSelect) {
+              // Use StringSelectMenu for multiSelect questions
+              const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId(`askq_select:${tool.id}:${qIdx}`)
+                .setPlaceholder('Select options...')
+                .setMinValues(1)
+                .setMaxValues(q.options.length);
 
-            for (let oIdx = 0; oIdx < q.options.length && oIdx < 4; oIdx++) {
-              const opt = q.options[oIdx];
-              const button = new ButtonBuilder()
-                .setCustomId(`askq:${tool.id}:${qIdx}:${oIdx}`)
-                .setLabel(opt.label.slice(0, 80))
-                .setStyle(ButtonStyle.Primary);
+              for (let oIdx = 0; oIdx < q.options.length; oIdx++) {
+                const opt = q.options[oIdx];
+                selectMenu.addOptions(
+                  new StringSelectMenuOptionBuilder()
+                    .setLabel(opt.label.slice(0, 100))
+                    .setDescription(opt.description.slice(0, 100))
+                    .setValue(`${oIdx}`)
+                );
+              }
 
-              currentRow.addComponents(button);
+              const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+              // Add Submit and Other buttons in a separate row
+              const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`askq_submit:${tool.id}:${qIdx}`)
+                  .setLabel('Submit')
+                  .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                  .setCustomId(`askq:${tool.id}:${qIdx}:other`)
+                  .setLabel('Other...')
+                  .setStyle(ButtonStyle.Secondary)
+              );
+
+              await thread.send({
+                content: questionText,
+                components: [selectRow, buttonRow],
+              });
+            } else {
+              // Use buttons for single-select questions (max 5 per row, max 4 options + Other)
+              const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+              const currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+              for (let oIdx = 0; oIdx < q.options.length && oIdx < 4; oIdx++) {
+                const opt = q.options[oIdx];
+                const button = new ButtonBuilder()
+                  .setCustomId(`askq:${tool.id}:${qIdx}:${oIdx}`)
+                  .setLabel(opt.label.slice(0, 80))
+                  .setStyle(ButtonStyle.Primary);
+
+                currentRow.addComponents(button);
+              }
+
+              // Add "Other" button
+              const otherButton = new ButtonBuilder()
+                .setCustomId(`askq:${tool.id}:${qIdx}:other`)
+                .setLabel('Other...')
+                .setStyle(ButtonStyle.Secondary);
+              currentRow.addComponents(otherButton);
+
+              rows.push(currentRow);
+
+              await thread.send({
+                content: questionText,
+                components: rows,
+              });
             }
-
-            // Add "Other" button
-            const otherButton = new ButtonBuilder()
-              .setCustomId(`askq:${tool.id}:${qIdx}:other`)
-              .setLabel('Other...')
-              .setStyle(ButtonStyle.Secondary);
-            currentRow.addComponents(otherButton);
-
-            rows.push(currentRow);
-
-            await discordChannel.send({
-              content: questionText,
-              components: rows,
-            });
           }
-
-          toolCallMessages.set(tool.id, 'ask-user-question');
         } catch (err) {
           console.error('[Discord] Failed to post AskUserQuestion:', err);
         }
@@ -259,26 +357,22 @@ export function createDiscordApp(config: DiscordConfig) {
         : `🔧 **${tool.name}**`;
 
       try {
-        const discordChannel = await client.channels.fetch(channel.channelId);
-        if (discordChannel?.type === ChannelType.GuildText) {
-          const message = await discordChannel.send(text);
-          // Store the message id for threading results
-          toolCallMessages.set(tool.id, message.id);
-        }
+        const message = await thread.send(text);
+        // Store the message id for threading results (sub-thread in thread)
+        toolCallMessages.set(tool.id, message.id);
       } catch (err) {
         console.error('[Discord] Failed to post tool call:', err);
       }
     },
 
     onToolResult: async (sessionId, result) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (!channel) return;
+      const thread = await getThread(sessionId);
+      if (!thread) return;
 
       const parentMessageId = toolCallMessages.get(result.toolUseId);
-      if (!parentMessageId) return; // No parent message to reply to
 
       // Truncate long results
-      const maxLen = 1800; // Discord has 2000 char limit
+      const maxLen = 1800;
       let content = result.content;
       if (content.length > maxLen) {
         content = content.slice(0, maxLen) + '\n... (truncated)';
@@ -288,42 +382,33 @@ export function createDiscordApp(config: DiscordConfig) {
       const text = `${prefix}\n\`\`\`\n${content}\n\`\`\``;
 
       try {
-        const discordChannel = await client.channels.fetch(channel.channelId);
-        if (discordChannel?.type === ChannelType.GuildText) {
-          // Fetch the parent message and create a thread
-          const parentMessage = await discordChannel.messages.fetch(parentMessageId);
+        if (parentMessageId) {
+          // Reply to the tool call message
+          const parentMessage = await thread.messages.fetch(parentMessageId);
           if (parentMessage) {
-            // Create a thread if one doesn't exist, or use existing
-            let thread = parentMessage.thread;
-            if (!thread) {
-              thread = await parentMessage.startThread({
-                name: 'Result',
-                autoArchiveDuration: 60,
-              });
-            }
+            await parentMessage.reply(text);
+          } else {
             await thread.send(text);
           }
-
-          // Clean up the mapping
-          toolCallMessages.delete(result.toolUseId);
+        } else {
+          await thread.send(text);
         }
+
+        toolCallMessages.delete(result.toolUseId);
       } catch (err) {
         console.error('[Discord] Failed to post tool result:', err);
       }
     },
 
     onPlanModeChange: async (sessionId, inPlanMode) => {
-      const channel = channelManager.getChannel(sessionId);
-      if (!channel) return;
+      const thread = await getThread(sessionId);
+      if (!thread) return;
 
       const emoji = inPlanMode ? '📋' : '🔨';
       const status = inPlanMode ? 'Planning mode - Claude is designing a solution' : 'Execution mode - Claude is implementing';
 
       try {
-        const discordChannel = await client.channels.fetch(channel.channelId);
-        if (discordChannel?.type === ChannelType.GuildText) {
-          await discordChannel.send(`${emoji} ${status}`);
-        }
+        await thread.send(`${emoji} ${status}`);
       } catch (err) {
         console.error('[Discord] Failed to post plan mode change:', err);
       }
@@ -366,32 +451,29 @@ export function createDiscordApp(config: DiscordConfig) {
             .setStyle(ButtonStyle.Danger),
         );
 
-        // Find channel and send message
-        const channel = channelManager.getChannel(request.sessionId);
-        const sendToChannel = async () => {
+        // Send to thread
+        const sendToThread = async () => {
           try {
-            if (channel) {
-              const discordChannel = await client.channels.fetch(channel.channelId);
-              if (discordChannel?.type === ChannelType.GuildText) {
-                await discordChannel.send({ content: text, components: [row] });
-                return;
-              }
+            const thread = await getThread(request.sessionId);
+            if (thread) {
+              await thread.send({ content: text, components: [row] });
+              return;
             }
 
-            // Fallback to first active channel
-            console.log('[Discord] No channel found for permission request, using first active channel');
+            // Fallback to first active session's thread
+            console.log('[Discord] No thread found for permission request, using first active session');
             const active = channelManager.getAllActive();
             if (active.length > 0) {
-              const discordChannel = await client.channels.fetch(active[0].channelId);
-              if (discordChannel?.type === ChannelType.GuildText) {
-                await discordChannel.send({ content: text, components: [row] });
+              const fallbackThread = await client.channels.fetch(active[0].threadId);
+              if (fallbackThread?.isThread()) {
+                await fallbackThread.send({ content: text, components: [row] });
                 return;
               }
             }
 
-            // No channel available, auto-deny
-            console.log('[Discord] No active channels, auto-denying permission');
-            resolve({ behavior: 'deny', message: 'No Discord channel available' });
+            // No thread available, auto-deny
+            console.log('[Discord] No active threads, auto-denying permission');
+            resolve({ behavior: 'deny', message: 'No Discord thread available' });
             pendingPermissions.delete(request.requestId);
           } catch (err) {
             console.error('[Discord] Failed to post permission request:', err);
@@ -400,7 +482,7 @@ export function createDiscordApp(config: DiscordConfig) {
           }
         };
 
-        sendToChannel();
+        sendToThread();
 
         // Timeout after 5 minutes
         const TIMEOUT_MS = 5 * 60 * 1000;
@@ -500,7 +582,7 @@ export function createDiscordApp(config: DiscordConfig) {
       }
 
       const text = active
-        .map((c) => `<#${c.channelId}> - ${formatSessionStatus(c.status)}`)
+        .map((s) => `<#${s.threadId}> (in <#${s.channelId}>) - ${formatSessionStatus(s.status)}`)
         .join('\n');
 
       await interaction.reply(`**Active Sessions:**\n${text}`);
@@ -630,6 +712,55 @@ export function createDiscordApp(config: DiscordConfig) {
         return;
       }
 
+      // Handle multiSelect Submit button
+      if (customId.startsWith('askq_submit:')) {
+        const parts = customId.split(':');
+        if (parts.length !== 3) return;
+
+        const [, toolUseId, qIdxStr] = parts;
+        const pending = pendingQuestions.get(toolUseId);
+        if (!pending) {
+          await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+          return;
+        }
+
+        const qIdx = parseInt(qIdxStr, 10);
+        const question = pending.questions[qIdx];
+        if (!question) {
+          await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+          return;
+        }
+
+        // Get stored selections
+        const selectionKey = `${toolUseId}:${qIdx}`;
+        const selectedValues = pendingMultiSelections.get(selectionKey);
+        if (!selectedValues || selectedValues.length === 0) {
+          await interaction.reply({ content: '⚠️ Please select at least one option first.', ephemeral: true });
+          return;
+        }
+
+        // Get selected option labels
+        const selectedLabels = selectedValues.map((val) => {
+          const optIdx = parseInt(val, 10);
+          return question.options[optIdx]?.label || val;
+        });
+
+        // Send all selected answers joined by comma
+        const answerText = selectedLabels.join(', ');
+        const sent = sessionManager.sendInput(pending.sessionId, answerText);
+        if (sent) {
+          await interaction.update({
+            content: `✅ **${question.header}**: ${answerText}`,
+            components: [], // Remove all components
+          });
+          pendingQuestions.delete(toolUseId);
+          pendingMultiSelections.delete(selectionKey);
+        } else {
+          await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
+        }
+        return;
+      }
+
       // Handle AskUserQuestion buttons
       if (!customId.startsWith('askq:')) return;
 
@@ -689,6 +820,45 @@ export function createDiscordApp(config: DiscordConfig) {
       } else {
         await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
       }
+    }
+
+    // Handle StringSelectMenu interactions for multiSelect questions - store selection for later submit
+    if (interaction.isStringSelectMenu()) {
+      const customId = interaction.customId;
+      if (!customId.startsWith('askq_select:')) return;
+
+      const parts = customId.split(':');
+      if (parts.length !== 3) return;
+
+      const [, toolUseId, qIdxStr] = parts;
+      const pending = pendingQuestions.get(toolUseId);
+      if (!pending) {
+        await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+        return;
+      }
+
+      const qIdx = parseInt(qIdxStr, 10);
+      const question = pending.questions[qIdx];
+      if (!question) {
+        await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+        return;
+      }
+
+      // Store selected values for later submit
+      const selectionKey = `${toolUseId}:${qIdx}`;
+      pendingMultiSelections.set(selectionKey, interaction.values);
+
+      // Get selected option labels for display
+      const selectedLabels = interaction.values.map((val) => {
+        const optIdx = parseInt(val, 10);
+        return question.options[optIdx]?.label || val;
+      });
+
+      // Update message to show current selection (don't submit yet)
+      await interaction.update({
+        content: `❓ **${question.header}**\n${question.question}\n\n✏️ Selected: ${selectedLabels.join(', ')}\n\n*Click Submit to confirm*`,
+      });
+      return;
     }
 
     // Handle modal submissions
