@@ -1,4 +1,23 @@
-import { Client, GatewayIntentBits, Events, ChannelType, AttachmentBuilder, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Events,
+  ChannelType,
+  AttachmentBuilder,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ComponentType,
+} from 'discord.js';
+import type { ButtonInteraction, StringSelectMenuInteraction, ModalSubmitInteraction } from 'discord.js';
 import type { DiscordConfig } from './types.js';
 import { SessionManager, type SessionInfo, type ToolCallInfo, type ToolResultInfo } from '../slack/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
@@ -21,6 +40,19 @@ export function createDiscordApp(config: DiscordConfig) {
 
   // Track tool call messages for threading results
   const toolCallMessages = new Map<string, string>(); // toolUseId -> message id
+
+  // Track pending AskUserQuestion interactions
+  interface PendingQuestion {
+    sessionId: string;
+    toolUseId: string;
+    questions: Array<{
+      question: string;
+      header: string;
+      options: Array<{ label: string; description: string }>;
+      multiSelect: boolean;
+    }>;
+  }
+  const pendingQuestions = new Map<string, PendingQuestion>(); // toolUseId -> question data
 
   // Create session manager with event handlers that post to Discord
   const sessionManager = new SessionManager({
@@ -142,6 +174,60 @@ export function createDiscordApp(config: DiscordConfig) {
     onToolCall: async (sessionId, tool) => {
       const channel = channelManager.getChannel(sessionId);
       if (!channel) return;
+
+      // Special handling for AskUserQuestion
+      if (tool.name === 'AskUserQuestion' && tool.input.questions) {
+        try {
+          const discordChannel = await client.channels.fetch(channel.channelId);
+          if (discordChannel?.type !== ChannelType.GuildText) return;
+
+          // Store pending question for interaction handling
+          pendingQuestions.set(tool.id, {
+            sessionId,
+            toolUseId: tool.id,
+            questions: tool.input.questions,
+          });
+
+          // Build message with buttons for each question
+          for (let qIdx = 0; qIdx < tool.input.questions.length; qIdx++) {
+            const q = tool.input.questions[qIdx];
+            const questionText = `❓ **${q.header}**\n${q.question}`;
+
+            // Create buttons for options (max 5 per row, max 4 options + Other)
+            const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+            let currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+            for (let oIdx = 0; oIdx < q.options.length && oIdx < 4; oIdx++) {
+              const opt = q.options[oIdx];
+              const button = new ButtonBuilder()
+                .setCustomId(`askq:${tool.id}:${qIdx}:${oIdx}`)
+                .setLabel(opt.label.slice(0, 80))
+                .setStyle(ButtonStyle.Primary);
+
+              currentRow.addComponents(button);
+            }
+
+            // Add "Other" button
+            const otherButton = new ButtonBuilder()
+              .setCustomId(`askq:${tool.id}:${qIdx}:other`)
+              .setLabel('Other...')
+              .setStyle(ButtonStyle.Secondary);
+            currentRow.addComponents(otherButton);
+
+            rows.push(currentRow);
+
+            await discordChannel.send({
+              content: questionText,
+              components: rows,
+            });
+          }
+
+          toolCallMessages.set(tool.id, 'ask-user-question');
+        } catch (err) {
+          console.error('[Discord] Failed to post AskUserQuestion:', err);
+        }
+        return;
+      }
 
       // Format tool call summary
       let inputSummary = '';
@@ -404,6 +490,108 @@ export function createDiscordApp(config: DiscordConfig) {
         await interaction.reply(`🧠 Sent /model ${modelArg}`);
       } else {
         await interaction.reply('⚠️ Failed to send command - session not connected.');
+      }
+    }
+  });
+
+  // Handle button interactions for AskUserQuestion
+  client.on(Events.InteractionCreate, async (interaction) => {
+    // Handle button clicks
+    if (interaction.isButton()) {
+      const customId = interaction.customId;
+      if (!customId.startsWith('askq:')) return;
+
+      const parts = customId.split(':');
+      if (parts.length !== 4) return;
+
+      const [, toolUseId, qIdxStr, optionPart] = parts;
+      const pending = pendingQuestions.get(toolUseId);
+      if (!pending) {
+        await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+        return;
+      }
+
+      const qIdx = parseInt(qIdxStr, 10);
+      const question = pending.questions[qIdx];
+      if (!question) {
+        await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+        return;
+      }
+
+      // Handle "Other" option - show modal
+      if (optionPart === 'other') {
+        const modal = new ModalBuilder()
+          .setCustomId(`askq_modal:${toolUseId}:${qIdx}`)
+          .setTitle(question.header.slice(0, 45));
+
+        const textInput = new TextInputBuilder()
+          .setCustomId('answer')
+          .setLabel(question.question.slice(0, 45))
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Enter your answer...')
+          .setRequired(true);
+
+        const row = new ActionRowBuilder<TextInputBuilder>().addComponents(textInput);
+        modal.addComponents(row);
+
+        await interaction.showModal(modal);
+        return;
+      }
+
+      // Handle option selection
+      const optIdx = parseInt(optionPart, 10);
+      const selectedOption = question.options[optIdx];
+      if (!selectedOption) {
+        await interaction.reply({ content: '⚠️ Invalid option.', ephemeral: true });
+        return;
+      }
+
+      // Send the answer to Claude Code
+      const sent = sessionManager.sendInput(pending.sessionId, selectedOption.label);
+      if (sent) {
+        await interaction.update({
+          content: `✅ **${question.header}**: ${selectedOption.label}`,
+          components: [], // Remove buttons
+        });
+        pendingQuestions.delete(toolUseId);
+      } else {
+        await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
+      }
+    }
+
+    // Handle modal submissions
+    if (interaction.isModalSubmit()) {
+      const customId = interaction.customId;
+      if (!customId.startsWith('askq_modal:')) return;
+
+      const parts = customId.split(':');
+      if (parts.length !== 3) return;
+
+      const [, toolUseId, qIdxStr] = parts;
+      const pending = pendingQuestions.get(toolUseId);
+      if (!pending) {
+        await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+        return;
+      }
+
+      const qIdx = parseInt(qIdxStr, 10);
+      const question = pending.questions[qIdx];
+      if (!question) {
+        await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+        return;
+      }
+
+      const answer = interaction.fields.getTextInputValue('answer');
+
+      // Send the custom answer to Claude Code
+      const sent = sessionManager.sendInput(pending.sessionId, answer);
+      if (sent) {
+        await interaction.reply({
+          content: `✅ **${question.header}**: ${answer}`,
+        });
+        pendingQuestions.delete(toolUseId);
+      } else {
+        await interaction.reply({ content: '⚠️ Failed to send answer - session not connected.', ephemeral: true });
       }
     }
   });
