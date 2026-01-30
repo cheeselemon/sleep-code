@@ -75,7 +75,10 @@ export function createDiscordApp(config: DiscordConfig) {
   const discordSentMessages = new Set<string>();
 
   // Track tool call messages for threading results
-  const toolCallMessages = new Map<string, string>(); // toolUseId -> message id
+  const toolCallMessages = new Map<string, { messageId: string; toolName: string }>(); // toolUseId -> info
+
+  // Tools whose results should be skipped in Discord (too verbose)
+  const SKIP_RESULT_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Task']);
 
   // Track pending AskUserQuestion interactions
   interface PendingQuestion {
@@ -389,21 +392,27 @@ export function createDiscordApp(config: DiscordConfig) {
 
       try {
         const message = await thread.send(text);
-        // Store the message id for threading results (sub-thread in thread)
-        toolCallMessages.set(tool.id, message.id);
+        // Store the message id and tool name for threading results
+        toolCallMessages.set(tool.id, { messageId: message.id, toolName: tool.name });
       } catch (err) {
         console.error('[Discord] Failed to post tool call:', err);
       }
     },
 
     onToolResult: async (sessionId, result) => {
+      const toolInfo = toolCallMessages.get(result.toolUseId);
+      toolCallMessages.delete(result.toolUseId);
+
+      // Skip verbose tool results
+      if (toolInfo && SKIP_RESULT_TOOLS.has(toolInfo.toolName)) {
+        return;
+      }
+
       const thread = await getThread(sessionId);
       if (!thread) return;
 
-      const parentMessageId = toolCallMessages.get(result.toolUseId);
-
       // Truncate long results
-      const maxLen = 1800;
+      const maxLen = 800;
       let content = result.content;
       if (content.length > maxLen) {
         content = content.slice(0, maxLen) + '\n... (truncated)';
@@ -413,9 +422,9 @@ export function createDiscordApp(config: DiscordConfig) {
       const text = `${prefix}\n\`\`\`\n${content}\n\`\`\``;
 
       try {
-        if (parentMessageId) {
+        if (toolInfo?.messageId) {
           // Reply to the tool call message
-          const parentMessage = await thread.messages.fetch(parentMessageId);
+          const parentMessage = await thread.messages.fetch(toolInfo.messageId);
           if (parentMessage) {
             await parentMessage.reply(text);
           } else {
@@ -424,8 +433,6 @@ export function createDiscordApp(config: DiscordConfig) {
         } else {
           await thread.send(text);
         }
-
-        toolCallMessages.delete(result.toolUseId);
       } catch (err) {
         console.error('[Discord] Failed to post tool result:', err);
       }
