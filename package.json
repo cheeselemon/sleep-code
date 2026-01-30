@@ -1,19 +1,26 @@
 {
-  "name": "afk-code",
+  "name": "sleep-code",
   "version": "0.2.0",
   "description": "Monitor and interact with Claude Code sessions from Slack/Discord/Telegram",
   "author": "Colin Harman",
   "repository": {
     "type": "git",
-    "url": "https://github.com/clharman/afk-code.git"
+    "url": "https://github.com/cheeselemon/sleep-code.git"
   },
   "type": "module",
   "bin": {
-    "afk-code": "./dist/cli/index.js"
+    "sleep-code": "./dist/cli/index.js"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/cli/index.ts",
+    "telegram": "node dist/cli/index.js telegram",
+    "telegram:setup": "node dist/cli/index.js telegram setup",
+    "discord": "node dist/cli/index.js discord",
+    "discord:setup": "node dist/cli/index.js discord setup",
+    "slack": "node dist/cli/index.js slack",
+    "slack:setup": "node dist/cli/index.js slack setup",
+    "claude": "node dist/cli/index.js claude",
     "prepublishOnly": "npm run build",
     "postinstall": "node -e \"const fs = require('fs'); const path = require('path'); const dir = path.dirname(path.dirname(require.resolve('node-pty'))); const prebuilds = path.join(dir, 'prebuilds'); if (fs.existsSync(prebuilds)) { fs.readdirSync(prebuilds).forEach(p => { const helper = path.join(prebuilds, p, 'spawn-helper'); if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755); }); }\""
   },

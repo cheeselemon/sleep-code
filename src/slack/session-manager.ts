@@ -9,7 +9,7 @@ import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
 import type { TodoItem } from '../types.js';
 
-const DAEMON_SOCKET = '/tmp/afk-code-daemon.sock';
+const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
 
 export interface SessionInfo {
   id: string;

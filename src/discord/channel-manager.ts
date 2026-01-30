@@ -21,7 +21,7 @@ function sanitizeChannelName(name: string): string {
     .replace(/\s+/g, '-') // Spaces to hyphens
     .replace(/-+/g, '-') // Collapse multiple hyphens
     .replace(/^-|-$/g, '') // Trim hyphens from ends
-    .slice(0, 90); // Leave room for "afk-" prefix and uniqueness suffix
+    .slice(0, 90); // Leave room for "sleep-" prefix and uniqueness suffix
 }
 
 export class ChannelManager {
@@ -47,16 +47,16 @@ export class ChannelManager {
     const guildId = guilds.first()!.id;
     this.guild = await this.client.guilds.fetch(guildId);
 
-    // Find or create AFK Code category
+    // Find or create Sleep Code category
     const existingCategory = this.guild.channels.cache.find(
-      (ch) => ch.type === ChannelType.GuildCategory && ch.name.toLowerCase() === 'afk code sessions'
+      (ch) => ch.type === ChannelType.GuildCategory && ch.name.toLowerCase() === 'sleep code sessions'
     ) as CategoryChannel | undefined;
 
     if (existingCategory) {
       this.category = existingCategory;
     } else {
       this.category = await this.guild.channels.create({
-        name: 'AFK Code Sessions',
+        name: 'Sleep Code Sessions',
         type: ChannelType.GuildCategory,
       });
     }
@@ -82,7 +82,7 @@ export class ChannelManager {
 
     // Extract just the folder name from the path
     const folderName = cwd.split('/').filter(Boolean).pop() || 'session';
-    const baseName = `afk-${sanitizeChannelName(folderName)}`;
+    const baseName = `sleep-${sanitizeChannelName(folderName)}`;
 
     // Try to create channel, incrementing suffix if name is taken
     let channelName = baseName;

@@ -2,9 +2,9 @@ import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
 
-const CONFIG_DIR = `${homedir()}/.afk-code`;
+const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const SLACK_CONFIG_FILE = `${CONFIG_DIR}/slack.env`;
-const MANIFEST_URL = 'https://github.com/clharman/afk-code/blob/main/slack-manifest.json';
+const MANIFEST_URL = 'https://github.com/cheeselemon/sleep-code/blob/main/slack-manifest.json';
 
 function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -31,7 +31,7 @@ async function fileExists(path: string): Promise<boolean> {
 export async function slackSetup(): Promise<void> {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐
-│                  AFK Code Slack Setup                       │
+│                 Sleep Code Slack Setup                      │
 └─────────────────────────────────────────────────────────────┘
 
 This will guide you through setting up the Slack bot for
@@ -88,7 +88,7 @@ Now let's collect your tokens:
   // Save configuration
   await mkdir(CONFIG_DIR, { recursive: true });
 
-  const envContent = `# AFK Code Slack Configuration
+  const envContent = `# Sleep Code Slack Configuration
 SLACK_BOT_TOKEN=${botToken}
 SLACK_APP_TOKEN=${appToken}
 SLACK_USER_ID=${userId}
@@ -99,10 +99,10 @@ SLACK_USER_ID=${userId}
 ✓ Configuration saved to ${SLACK_CONFIG_FILE}
 
 To start the Slack bot, run:
-  afk-code slack
+  sleep-code slack
 
 Then start a Claude Code session with:
-  afk-code run -- claude
+  sleep-code run -- claude
 `);
 }
 
@@ -124,7 +124,7 @@ export async function slackRun(): Promise<void> {
   // Load config from multiple sources (in order of precedence):
   // 1. Environment variables (highest priority)
   // 2. Local .env file
-  // 3. ~/.afk-code/slack.env (lowest priority)
+  // 3. ~/.sleep-code/slack.env (lowest priority)
 
   const globalConfig = await loadEnvFile(SLACK_CONFIG_FILE);
   const localConfig = await loadEnvFile(`${process.cwd()}/.env`);
@@ -150,7 +150,7 @@ export async function slackRun(): Promise<void> {
     console.error('Provide tokens via:');
     console.error('  - Environment variables (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_USER_ID)');
     console.error('  - Local .env file');
-    console.error('  - Run "afk-code slack setup" for guided configuration');
+    console.error('  - Run "sleep-code slack setup" for guided configuration');
     process.exit(1);
   }
 
@@ -166,8 +166,8 @@ export async function slackRun(): Promise<void> {
   const localEnvExists = await fileExists(`${process.cwd()}/.env`);
   const globalEnvExists = await fileExists(SLACK_CONFIG_FILE);
   const source = localEnvExists ? '.env' : globalEnvExists ? SLACK_CONFIG_FILE : 'environment';
-  console.log(`[AFK Code] Loaded config from ${source}`);
-  console.log('[AFK Code] Starting Slack bot...');
+  console.log(`[Sleep Code] Loaded config from ${source}`);
+  console.log('[Sleep Code] Starting Slack bot...');
 
   const slackConfig = {
     botToken: config.SLACK_BOT_TOKEN,
@@ -181,21 +181,21 @@ export async function slackRun(): Promise<void> {
   // Start session manager (Unix socket server for CLI connections)
   try {
     await sessionManager.start();
-    console.log('[AFK Code] Session manager started');
+    console.log('[Sleep Code] Session manager started');
   } catch (err) {
-    console.error('[AFK Code] Failed to start session manager:', err);
+    console.error('[Sleep Code] Failed to start session manager:', err);
     process.exit(1);
   }
 
   // Start Slack app
   try {
     await app.start();
-    console.log('[AFK Code] Slack bot is running!');
+    console.log('[Sleep Code] Slack bot is running!');
     console.log('');
-    console.log('Start a Claude Code session with: afk-code run -- claude');
-    console.log('Each session will create a private #afk-* channel');
+    console.log('Start a Claude Code session with: sleep-code run -- claude');
+    console.log('Each session will create a private #sleep-* channel');
   } catch (err) {
-    console.error('[AFK Code] Failed to start Slack app:', err);
+    console.error('[Sleep Code] Failed to start Slack app:', err);
     process.exit(1);
   }
 }

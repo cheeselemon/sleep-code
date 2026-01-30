@@ -41,7 +41,7 @@ jobs:
 
       - run: npm run build
 
-      - run: npm pkg set name='@clharman/afk-code'
+      - run: npm pkg set name='@cheeselemon/sleep-code'
 
       - run: npm publish
         env:

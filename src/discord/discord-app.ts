@@ -317,7 +317,7 @@ export function createDiscordApp(config: DiscordConfig) {
     if (commandName === 'sessions') {
       const active = channelManager.getAllActive();
       if (active.length === 0) {
-        await interaction.reply('No active sessions. Start a session with `afk-code run -- claude`');
+        await interaction.reply('No active sessions. Start a session with `sleep-code run -- claude`');
         return;
       }
 

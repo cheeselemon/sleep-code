@@ -3,7 +3,7 @@ import { homedir } from 'os';
 import { createConnection, type Socket } from 'net';
 import * as pty from 'node-pty';
 
-const DAEMON_SOCKET = '/tmp/afk-code-daemon.sock';
+const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
 
 // Get Claude's project directory for the current working directory
 function getClaudeProjectDir(cwd: string): string {

@@ -20,7 +20,7 @@ function sanitizeChannelName(name: string): string {
     .replace(/\s+/g, '-') // Spaces to hyphens
     .replace(/-+/g, '-') // Collapse multiple hyphens
     .replace(/^-|-$/g, '') // Trim hyphens from ends
-    .slice(0, 70); // Leave room for "afk-" prefix and uniqueness suffix
+    .slice(0, 70); // Leave room for "sleep-" prefix and uniqueness suffix
 }
 
 export class ChannelManager {
@@ -46,7 +46,7 @@ export class ChannelManager {
 
     // Extract just the folder name from the path
     const folderName = cwd.split('/').filter(Boolean).pop() || 'session';
-    const baseName = `afk-${sanitizeChannelName(folderName)}`;
+    const baseName = `sleep-${sanitizeChannelName(folderName)}`;
 
     // Try to create channel, incrementing suffix if name is taken
     let channelName = baseName;

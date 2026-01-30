@@ -2,7 +2,7 @@ import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
 
-const CONFIG_DIR = `${homedir()}/.afk-code`;
+const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const DISCORD_CONFIG_FILE = `${CONFIG_DIR}/discord.env`;
 
 function prompt(question: string): Promise<string> {
@@ -30,7 +30,7 @@ async function fileExists(path: string): Promise<boolean> {
 export async function discordSetup(): Promise<void> {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐
-│                 AFK Code Discord Setup                      │
+│                Sleep Code Discord Setup                     │
 └─────────────────────────────────────────────────────────────┘
 
 This will guide you through setting up the Discord bot for
@@ -40,7 +40,7 @@ Step 1: Create a Discord Application
 ────────────────────────────────────
 1. Go to: https://discord.com/developers/applications
 2. Click "New Application"
-3. Give it a name (e.g., "AFK Code")
+3. Give it a name (e.g., "Sleep Code")
 4. Click "Create"
 
 Step 2: Create a Bot
@@ -87,7 +87,7 @@ Now let's collect your credentials:
   // Save configuration
   await mkdir(CONFIG_DIR, { recursive: true });
 
-  const envContent = `# AFK Code Discord Configuration
+  const envContent = `# Sleep Code Discord Configuration
 DISCORD_BOT_TOKEN=${botToken}
 DISCORD_USER_ID=${userId}
 `;
@@ -97,10 +97,10 @@ DISCORD_USER_ID=${userId}
 ✓ Configuration saved to ${DISCORD_CONFIG_FILE}
 
 To start the Discord bot, run:
-  afk-code discord
+  sleep-code discord
 
 Then start a Claude Code session with:
-  afk-code run -- claude
+  sleep-code run -- claude
 `);
 }
 
@@ -122,7 +122,7 @@ export async function discordRun(): Promise<void> {
   // Load config from multiple sources (in order of precedence):
   // 1. Environment variables (highest priority)
   // 2. Local .env file
-  // 3. ~/.afk-code/discord.env (lowest priority)
+  // 3. ~/.sleep-code/discord.env (lowest priority)
 
   const globalConfig = await loadEnvFile(DISCORD_CONFIG_FILE);
   const localConfig = await loadEnvFile(`${process.cwd()}/.env`);
@@ -147,7 +147,7 @@ export async function discordRun(): Promise<void> {
     console.error('Provide tokens via:');
     console.error('  - Environment variables (DISCORD_BOT_TOKEN, DISCORD_USER_ID)');
     console.error('  - Local .env file');
-    console.error('  - Run "afk-code discord setup" for guided configuration');
+    console.error('  - Run "sleep-code discord setup" for guided configuration');
     process.exit(1);
   }
 
@@ -158,8 +158,8 @@ export async function discordRun(): Promise<void> {
   const localEnvExists = await fileExists(`${process.cwd()}/.env`);
   const globalEnvExists = await fileExists(DISCORD_CONFIG_FILE);
   const source = localEnvExists ? '.env' : globalEnvExists ? DISCORD_CONFIG_FILE : 'environment';
-  console.log(`[AFK Code] Loaded config from ${source}`);
-  console.log('[AFK Code] Starting Discord bot...');
+  console.log(`[Sleep Code] Loaded config from ${source}`);
+  console.log('[Sleep Code] Starting Discord bot...');
 
   const discordConfig = {
     botToken: config.DISCORD_BOT_TOKEN,
@@ -171,21 +171,21 @@ export async function discordRun(): Promise<void> {
   // Start session manager (Unix socket server for CLI connections)
   try {
     await sessionManager.start();
-    console.log('[AFK Code] Session manager started');
+    console.log('[Sleep Code] Session manager started');
   } catch (err) {
-    console.error('[AFK Code] Failed to start session manager:', err);
+    console.error('[Sleep Code] Failed to start session manager:', err);
     process.exit(1);
   }
 
   // Start Discord bot
   try {
     await client.login(config.DISCORD_BOT_TOKEN);
-    console.log('[AFK Code] Discord bot is running!');
+    console.log('[Sleep Code] Discord bot is running!');
     console.log('');
-    console.log('Start a Claude Code session with: afk-code run -- claude');
-    console.log('Each session will create an #afk-* channel');
+    console.log('Start a Claude Code session with: sleep-code run -- claude');
+    console.log('Each session will create a #sleep-* channel');
   } catch (err) {
-    console.error('[AFK Code] Failed to start Discord bot:', err);
+    console.error('[Sleep Code] Failed to start Discord bot:', err);
     process.exit(1);
   }
 }

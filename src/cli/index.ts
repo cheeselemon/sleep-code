@@ -12,8 +12,8 @@ async function main() {
       // Find -- separator and get command after it
       const separatorIndex = args.indexOf('--');
       if (separatorIndex === -1) {
-        console.error('Usage: afk-code run -- <command> [args...]');
-        console.error('Example: afk-code run -- claude');
+        console.error('Usage: sleep-code run -- <command> [args...]');
+        console.error('Example: sleep-code run -- claude');
         process.exit(1);
       }
       const cmd = args.slice(separatorIndex + 1);
@@ -57,7 +57,7 @@ async function main() {
     case '-h':
     case undefined: {
       console.log(`
-AFK Code - Monitor Claude Code sessions from Slack/Discord/Telegram
+Sleep Code - Monitor Claude Code sessions from Slack/Discord/Telegram
 
 Commands:
   telegram           Run the Telegram bot
@@ -70,13 +70,13 @@ Commands:
   help               Show this help message
 
 Examples:
-  afk-code telegram setup   # First-time Telegram configuration
-  afk-code telegram         # Start the Telegram bot
-  afk-code discord setup    # First-time Discord configuration
-  afk-code discord          # Start the Discord bot
-  afk-code slack setup      # First-time Slack configuration
-  afk-code slack            # Start the Slack bot
-  afk-code claude           # Start a Claude Code session
+  sleep-code telegram setup   # First-time Telegram configuration
+  sleep-code telegram         # Start the Telegram bot
+  sleep-code discord setup    # First-time Discord configuration
+  sleep-code discord          # Start the Discord bot
+  sleep-code slack setup      # First-time Slack configuration
+  sleep-code slack            # Start the Slack bot
+  sleep-code claude           # Start a Claude Code session
 `);
       break;
     }

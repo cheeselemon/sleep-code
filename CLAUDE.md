@@ -1,35 +1,35 @@
-## Project: AFK Code
+## Project: Sleep Code
 
 Interact with Claude Code sessions from Slack, Discord, and Telegram.
 
 ### Architecture
-- **CLI**: `src/cli/` - Commands like `afk-code run`, `afk-code slack`, `afk-code discord`, `afk-code telegram`
+- **CLI**: `src/cli/` - Commands for `npm run telegram`, `npm run discord`, `npm run slack`, `npm run claude`
 - **Slack**: `src/slack/` - Slack bot integration
 - **Discord**: `src/discord/` - Discord bot integration
 - **Telegram**: `src/telegram/` - Telegram bot integration via grammY
 
 ### Running
 ```bash
-# Slack setup (first time)
-afk-code slack setup
-
-# Start the Slack bot
-afk-code slack
-
-# Discord setup (first time)
-afk-code discord setup
-
-# Start the Discord bot
-afk-code discord
-
 # Telegram setup (first time)
-afk-code telegram setup
+npm run telegram:setup
 
 # Start the Telegram bot
-afk-code telegram
+npm run telegram
+
+# Discord setup (first time)
+npm run discord:setup
+
+# Start the Discord bot
+npm run discord
+
+# Slack setup (first time)
+npm run slack:setup
+
+# Start the Slack bot
+npm run slack
 
 # Start a monitored Claude Code session (in another terminal)
-afk-code claude
+npm run claude
 ```
 
 ### Key Files
@@ -43,3 +43,4 @@ afk-code claude
 - `src/discord/discord-app.ts` - Discord.js app and event handlers
 - `src/telegram/telegram-app.ts` - Telegram grammY app and event handlers
 - `slack-manifest.json` - Slack app manifest for easy setup
+- `ecosystem.config.cjs` - PM2 configuration for background execution

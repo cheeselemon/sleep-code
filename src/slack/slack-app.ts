@@ -286,7 +286,7 @@ export function createSlackApp(config: SlackConfig) {
     if (subcommand === 'sessions' || !subcommand) {
       const active = channelManager.getAllActive();
       if (active.length === 0) {
-        await respond('No active sessions. Start a session with `afk-code run -- claude`');
+        await respond('No active sessions. Start a session with `sleep-code run -- claude`');
         return;
       }
 
@@ -439,7 +439,7 @@ export function createSlackApp(config: SlackConfig) {
     const blocks: any[] = [
       {
         type: 'header',
-        text: { type: 'plain_text', text: 'AFK Code Sessions', emoji: true },
+        text: { type: 'plain_text', text: 'Sleep Code Sessions', emoji: true },
       },
       { type: 'divider' },
     ];
@@ -449,7 +449,7 @@ export function createSlackApp(config: SlackConfig) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: '_No active sessions_\n\nStart a session with `afk-code run -- claude`',
+          text: '_No active sessions_\n\nStart a session with `sleep-code run -- claude`',
         },
       });
     } else {

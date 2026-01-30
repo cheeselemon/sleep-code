@@ -1,8 +1,8 @@
-# AFK Code
+# Sleep Code
 
-Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while AFK.
+Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while away.
 
-<img src="https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9" alt="AFK Code iPhone Slack screenshot" width="400">
+<img src="https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9" alt="Sleep Code iPhone Slack screenshot" width="400">
 
 ## Client Comparison
 
@@ -26,12 +26,16 @@ Telegram and Discord are recommended.
 #    - https://api.telegram.org/bot<TOKEN>/getUpdates
 #    - Find "chat":{"id":YOUR_CHAT_ID}
 
-# 3. Configure and run
-npx afk-code telegram setup   # Enter your credentials
-npx afk-code telegram         # Start the bot
+# 3. Clone and setup
+git clone https://github.com/cheeselemon/sleep-code.git
+cd sleep-code && npm install && npm run build
 
-# 4. In another terminal, start a monitored Claude session
-npx afk-code claude
+# 4. Configure and run
+npm run telegram:setup   # Enter your credentials
+npm run telegram         # Start the bot
+
+# 5. In another terminal, start a monitored Claude session
+npm run claude
 ```
 
 ## Quick Start (Discord)
@@ -47,11 +51,11 @@ npx afk-code claude
 # 2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
 
 # 3. Configure and run
-npx afk-code discord setup   # Enter your credentials
-npx afk-code discord         # Start the bot
+npm run discord:setup   # Enter your credentials
+npm run discord         # Start the bot
 
 # 4. In another terminal, start a monitored Claude session
-npx afk-code claude
+npm run claude
 ```
 
 ## Quick Start (Slack)
@@ -66,26 +70,25 @@ npx afk-code claude
 #    - Your User ID from your Slack profile → "..." → Copy member ID
 
 # 3. Configure and run
-npx afk-code slack setup   # Enter your credentials
-npx afk-code slack         # Start the bot
+npm run slack:setup   # Enter your credentials
+npm run slack         # Start the bot
 
 # 4. In another terminal, start a monitored Claude session
-npx afk-code claude
+npm run claude
 ```
 
 A new channel is created for each session. Messages relay bidirectionally.
 
 ## Commands
 
-```
-afk-code telegram setup     Configure Telegram credentials
-afk-code telegram           Run the Telegram bot
-afk-code discord setup      Configure Discord credentials
-afk-code discord            Run the Discord bot
-afk-code slack setup        Configure Slack credentials
-afk-code slack              Run the Slack bot
-afk-code <command> [args]   Start a monitored session
-afk-code help               Show help
+```bash
+npm run telegram:setup   # Configure Telegram credentials
+npm run telegram         # Run the Telegram bot
+npm run discord:setup    # Configure Discord credentials
+npm run discord          # Run the Discord bot
+npm run slack:setup      # Configure Slack credentials
+npm run slack            # Run the Slack bot
+npm run claude           # Start a monitored session
 ```
 
 ### Slash Commands
@@ -100,28 +103,32 @@ afk-code help               Show help
 | `/interrupt` | ✓ | ✓ | ✓ | Send Escape (interrupt) |
 | `/mode` | ✓ | ✓ | ✓ | Toggle mode (Shift+Tab) |
 
-## Installation Options
+## PM2 Background Execution
 
 ```bash
-# Global install
-npm install -g afk-code
+# Install pm2 globally
+npm install -g pm2
 
-# Or use npx (no install)
-npx afk-code <command>
+# Start individual bot
+pm2 start ecosystem.config.cjs --only sleep-telegram
 
-# Or run from source
-git clone https://github.com/clharman/afk-code.git
-cd afk-code && npm install
-npm run dev -- slack
-npm run dev -- claude
+# Start all bots
+pm2 start ecosystem.config.cjs
+
+# Manage
+pm2 status              # Check status
+pm2 logs sleep-telegram # View logs
+pm2 restart all         # Restart all
+pm2 stop all            # Stop all
+
+# Auto-start on system boot
+pm2 startup && pm2 save
 ```
-
-Requires Node.js 18+.
 
 ## How It Works
 
-1. `afk-code slack`, `afk-code discord`, or `afk-code telegram` starts a bot that listens for sessions
-2. `afk-code claude` spawns Claude in a PTY and connects to the bot via Unix socket
+1. `npm run telegram/discord/slack` starts a bot that listens for sessions
+2. `npm run claude` spawns Claude in a PTY and connects to the bot via Unix socket
 3. The bot watches Claude's JSONL files for messages and relays them to chat
 4. Messages you send in chat are forwarded to the terminal
 

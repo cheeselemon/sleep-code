@@ -226,7 +226,7 @@ export function createTelegramApp(config: TelegramConfig) {
 
     if (!current) {
       if (activeSessions.size === 0) {
-        await ctx.reply('No active sessions. Start one with:\n`afk-code run -- claude`', { parse_mode: 'Markdown' });
+        await ctx.reply('No active sessions. Start one with:\n`sleep-code run -- claude`', { parse_mode: 'Markdown' });
       } else {
         // Multiple sessions, need to select one
         const list = Array.from(activeSessions.values())
@@ -269,10 +269,10 @@ export function createTelegramApp(config: TelegramConfig) {
     switch (command.toLowerCase()) {
       case '/start': {
         await ctx.reply(
-          `*AFK Code Telegram Bot*\n\n` +
+          `*Sleep Code Telegram Bot*\n\n` +
             `This bot lets you monitor and interact with Claude Code sessions.\n\n` +
             `Start a session with:\n` +
-            `\`afk-code run -- claude\`\n\n` +
+            `\`sleep-code run -- claude\`\n\n` +
             `Type /help for available commands.`,
           { parse_mode: 'Markdown' }
         );
@@ -281,7 +281,7 @@ export function createTelegramApp(config: TelegramConfig) {
 
       case '/sessions': {
         if (activeSessions.size === 0) {
-          await ctx.reply('No active sessions. Start one with `afk-code run -- claude`');
+          await ctx.reply('No active sessions. Start one with `sleep-code run -- claude`');
           return;
         }
 
@@ -383,7 +383,7 @@ export function createTelegramApp(config: TelegramConfig) {
 
       case '/help': {
         await ctx.reply(
-          `*AFK Code Commands:*\n\n` +
+          `*Sleep Code Commands:*\n\n` +
             `/sessions - List active sessions\n` +
             `/switch <name> - Switch to a session\n` +
             `/model <name> - Switch model\n` +

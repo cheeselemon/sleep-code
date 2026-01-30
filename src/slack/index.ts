@@ -26,7 +26,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('[Slack] Starting AFK Code bot...');
+  console.log('[Slack] Starting Sleep Code bot...');
 
   const { app, sessionManager } = createSlackApp(config);
 
@@ -44,8 +44,8 @@ async function main() {
     await app.start();
     console.log('[Slack] Bot is running!');
     console.log('');
-    console.log('Start a Claude Code session with: afk-code run -- claude');
-    console.log('Each session will create a private #afk-* channel');
+    console.log('Start a Claude Code session with: sleep-code run -- claude');
+    console.log('Each session will create a private #sleep-* channel');
   } catch (err) {
     console.error('[Slack] Failed to start app:', err);
     process.exit(1);

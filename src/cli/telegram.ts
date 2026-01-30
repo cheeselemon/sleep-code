@@ -2,7 +2,7 @@ import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
 
-const CONFIG_DIR = `${homedir()}/.afk-code`;
+const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const TELEGRAM_CONFIG_FILE = `${CONFIG_DIR}/telegram.env`;
 
 function prompt(question: string): Promise<string> {
@@ -30,7 +30,7 @@ async function fileExists(path: string): Promise<boolean> {
 export async function telegramSetup(): Promise<void> {
   console.log(`
 ┌─────────────────────────────────────────────────────────────┐
-│                AFK Code Telegram Setup                       │
+│               Sleep Code Telegram Setup                      │
 └─────────────────────────────────────────────────────────────┘
 
 This will configure a Telegram bot for monitoring Claude Code sessions.
@@ -39,8 +39,8 @@ Step 1: Create a Telegram Bot
 ─────────────────────────────
 1. Open Telegram and search for @BotFather
 2. Send /newbot and follow the prompts
-3. Choose a name (e.g., "AFK Code")
-4. Choose a username (e.g., "my_afk_code_bot")
+3. Choose a name (e.g., "Sleep Code")
+4. Choose a username (e.g., "my_sleep_code_bot")
 5. Copy the bot token BotFather gives you
 `);
 
@@ -72,7 +72,7 @@ Step 2: Get Your Chat ID
   // Save configuration
   await mkdir(CONFIG_DIR, { recursive: true });
 
-  const envContent = `# AFK Code Telegram Configuration
+  const envContent = `# Sleep Code Telegram Configuration
 TELEGRAM_BOT_TOKEN=${botToken}
 TELEGRAM_CHAT_ID=${chatId}
 `;
@@ -83,10 +83,10 @@ TELEGRAM_CHAT_ID=${chatId}
 Configuration saved to ${TELEGRAM_CONFIG_FILE}
 
 To start the Telegram bot, run:
-  afk-code telegram
+  sleep-code telegram
 
 Then start a Claude Code session with:
-  afk-code run -- claude
+  sleep-code run -- claude
 
 Your bot will send session updates to your Telegram chat!
 `);
@@ -127,11 +127,11 @@ export async function telegramRun(): Promise<void> {
   if (missing.length > 0) {
     console.error(`Missing config: ${missing.join(', ')}`);
     console.error('');
-    console.error('Run "afk-code telegram setup" for guided configuration.');
+    console.error('Run "sleep-code telegram setup" for guided configuration.');
     process.exit(1);
   }
 
-  console.log('[AFK Code] Starting Telegram bot...');
+  console.log('[Sleep Code] Starting Telegram bot...');
 
   // Import and create the Telegram app
   const { createTelegramApp } = await import('../telegram/telegram-app.js');
@@ -147,16 +147,16 @@ export async function telegramRun(): Promise<void> {
   try {
     await sessionManager.start();
   } catch (err) {
-    console.error('[AFK Code] Failed to start session manager:', err);
+    console.error('[Sleep Code] Failed to start session manager:', err);
     process.exit(1);
   }
 
   // Start bot
   bot.start({
     onStart: (botInfo) => {
-      console.log(`[AFK Code] Telegram bot @${botInfo.username} is running!`);
+      console.log(`[Sleep Code] Telegram bot @${botInfo.username} is running!`);
       console.log('');
-      console.log('Start a Claude Code session with: afk-code run -- claude');
+      console.log('Start a Claude Code session with: sleep-code run -- claude');
     },
   });
 }
