@@ -54,6 +54,13 @@ export function createDiscordApp(config: DiscordConfig) {
   }
   const pendingQuestions = new Map<string, PendingQuestion>(); // toolUseId -> question data
 
+  // Track pending permission requests
+  interface PendingPermission {
+    requestId: string;
+    resolve: (decision: { behavior: 'allow' | 'deny'; message?: string }) => void;
+  }
+  const pendingPermissions = new Map<string, PendingPermission>(); // requestId -> resolver
+
   // Create session manager with event handlers that post to Discord
   const sessionManager = new SessionManager({
     onSessionStart: async (session) => {
@@ -321,6 +328,79 @@ export function createDiscordApp(config: DiscordConfig) {
         console.error('[Discord] Failed to post plan mode change:', err);
       }
     },
+
+    onPermissionRequest: async (request) => {
+      // Find the channel for this session (or use a default channel)
+      const channel = channelManager.getChannel(request.sessionId);
+
+      return new Promise(async (resolve) => {
+        // Store the resolver for when user clicks a button
+        pendingPermissions.set(request.requestId, {
+          requestId: request.requestId,
+          resolve,
+        });
+
+        // Format tool input summary
+        let inputSummary = '';
+        if (request.toolName === 'Bash' && request.toolInput?.command) {
+          inputSummary = `\`\`\`\n${request.toolInput.command.slice(0, 500)}\n\`\`\``;
+        } else if (request.toolInput?.file_path) {
+          inputSummary = `\`${request.toolInput.file_path}\``;
+        } else if (request.toolInput) {
+          inputSummary = `\`\`\`json\n${JSON.stringify(request.toolInput, null, 2).slice(0, 500)}\n\`\`\``;
+        }
+
+        const text = `🔐 **Permission Request: ${request.toolName}**\n${inputSummary}`;
+
+        // Create buttons
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`perm:${request.requestId}:allow`)
+            .setLabel('Allow')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`perm:${request.requestId}:deny`)
+            .setLabel('Deny')
+            .setStyle(ButtonStyle.Danger),
+        );
+
+        try {
+          if (channel) {
+            const discordChannel = await client.channels.fetch(channel.channelId);
+            if (discordChannel?.type === ChannelType.GuildText) {
+              await discordChannel.send({ content: text, components: [row] });
+            }
+          } else {
+            console.log('[Discord] No channel found for permission request, using first active channel');
+            const active = channelManager.getAllActive();
+            if (active.length > 0) {
+              const discordChannel = await client.channels.fetch(active[0].channelId);
+              if (discordChannel?.type === ChannelType.GuildText) {
+                await discordChannel.send({ content: text, components: [row] });
+              }
+            } else {
+              // No channel available, auto-deny
+              console.log('[Discord] No active channels, auto-denying permission');
+              resolve({ behavior: 'deny', message: 'No Discord channel available' });
+              pendingPermissions.delete(request.requestId);
+            }
+          }
+        } catch (err) {
+          console.error('[Discord] Failed to post permission request:', err);
+          resolve({ behavior: 'deny', message: 'Failed to post to Discord' });
+          pendingPermissions.delete(request.requestId);
+        }
+
+        // Timeout after 5 minutes
+        setTimeout(() => {
+          if (pendingPermissions.has(request.requestId)) {
+            console.log(`[Discord] Permission request ${request.requestId} timed out`);
+            resolve({ behavior: 'deny', message: 'Request timed out' });
+            pendingPermissions.delete(request.requestId);
+          }
+        }, 5 * 60 * 1000);
+      });
+    },
   });
 
   // Handle messages in session channels (user sending input to Claude)
@@ -499,6 +579,32 @@ export function createDiscordApp(config: DiscordConfig) {
     // Handle button clicks
     if (interaction.isButton()) {
       const customId = interaction.customId;
+
+      // Handle permission request buttons
+      if (customId.startsWith('perm:')) {
+        const parts = customId.split(':');
+        if (parts.length !== 3) return;
+
+        const [, requestId, decision] = parts;
+        const pending = pendingPermissions.get(requestId);
+        if (!pending) {
+          await interaction.reply({ content: '⚠️ This permission request has expired.', ephemeral: true });
+          return;
+        }
+
+        const behavior = decision === 'allow' ? 'allow' : 'deny';
+        pending.resolve({ behavior });
+        pendingPermissions.delete(requestId);
+
+        const emoji = behavior === 'allow' ? '✅' : '❌';
+        await interaction.update({
+          content: `${emoji} Permission ${behavior === 'allow' ? 'granted' : 'denied'}`,
+          components: [],
+        });
+        return;
+      }
+
+      // Handle AskUserQuestion buttons
       if (!customId.startsWith('askq:')) return;
 
       const parts = customId.split(':');

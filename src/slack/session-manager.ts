@@ -49,6 +49,13 @@ export interface ToolResultInfo {
   isError: boolean;
 }
 
+export interface PermissionRequestInfo {
+  requestId: string;
+  toolName: string;
+  toolInput: any;
+  sessionId: string;
+}
+
 export interface SessionEvents {
   onSessionStart: (session: SessionInfo) => void;
   onSessionEnd: (sessionId: string) => void;
@@ -59,6 +66,7 @@ export interface SessionEvents {
   onToolCall: (sessionId: string, tool: ToolCallInfo) => void;
   onToolResult: (sessionId: string, result: ToolResultInfo) => void;
   onPlanModeChange: (sessionId: string, inPlanMode: boolean) => void;
+  onPermissionRequest?: (request: PermissionRequestInfo) => Promise<{ behavior: 'allow' | 'deny'; message?: string }>;
 }
 
 function hash(data: string): string {
@@ -68,6 +76,7 @@ function hash(data: string): string {
 export class SessionManager {
   private sessions = new Map<string, InternalSession>();
   private claimedFiles = new Set<string>();
+  private pendingPermissions = new Map<string, Socket>(); // requestId -> hook socket
   private events: SessionEvents;
   private server: Server | null = null;
 
@@ -236,7 +245,57 @@ export class SessionManager {
         }
         break;
       }
+
+      case 'permission_request': {
+        console.log(`[SessionManager] Permission request: ${message.requestId} - ${message.toolName}`);
+
+        // Store the socket to send response back
+        this.pendingPermissions.set(message.requestId, socket);
+
+        // Call the event handler if available
+        if (this.events.onPermissionRequest) {
+          try {
+            const decision = await this.events.onPermissionRequest({
+              requestId: message.requestId,
+              toolName: message.toolName,
+              toolInput: message.toolInput,
+              sessionId: message.sessionId,
+            });
+
+            // Send decision back to hook
+            this.sendPermissionDecision(message.requestId, decision);
+          } catch (err) {
+            console.error('[SessionManager] Error handling permission request:', err);
+            // Default to deny on error
+            this.sendPermissionDecision(message.requestId, { behavior: 'deny', message: 'Error processing request' });
+          }
+        } else {
+          // No handler, default to deny
+          this.sendPermissionDecision(message.requestId, { behavior: 'deny', message: 'No handler available' });
+        }
+        break;
+      }
     }
+  }
+
+  sendPermissionDecision(requestId: string, decision: { behavior: 'allow' | 'deny'; message?: string }): void {
+    const socket = this.pendingPermissions.get(requestId);
+    if (!socket) {
+      console.error(`[SessionManager] No pending permission for request: ${requestId}`);
+      return;
+    }
+
+    try {
+      socket.write(JSON.stringify({
+        type: 'permission_response',
+        requestId,
+        decision,
+      }) + '\n');
+    } catch (err) {
+      console.error('[SessionManager] Failed to send permission decision:', err);
+    }
+
+    this.pendingPermissions.delete(requestId);
   }
 
   private async snapshotJsonlFiles(projectDir: string): Promise<Map<string, number>> {

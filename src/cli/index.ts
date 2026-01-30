@@ -2,6 +2,48 @@ import { run } from './run.js';
 import { slackSetup, slackRun } from './slack.js';
 import { discordSetup, discordRun } from './discord.js';
 import { telegramSetup, telegramRun } from './telegram.js';
+import { handlePermissionHook } from './hook.js';
+import { readFile, writeFile } from 'fs/promises';
+import { homedir } from 'os';
+import { resolve } from 'path';
+
+async function setupHook(): Promise<void> {
+  const settingsPath = resolve(homedir(), '.claude', 'settings.json');
+
+  let settings: any = {};
+  try {
+    const content = await readFile(settingsPath, 'utf-8');
+    settings = JSON.parse(content);
+  } catch {
+    // File doesn't exist or is invalid
+  }
+
+  // Add hooks configuration
+  if (!settings.hooks) {
+    settings.hooks = {};
+  }
+
+  // Get the path to the sleep-code binary
+  const sleepCodePath = process.argv[1]; // Current script path
+  const hookCommand = `node ${sleepCodePath} hook`;
+
+  settings.hooks.PermissionRequest = [
+    {
+      matcher: '*',
+      hooks: [
+        {
+          type: 'command',
+          command: hookCommand,
+        },
+      ],
+    },
+  ];
+
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+  console.log('✅ Hook configured in ~/.claude/settings.json');
+  console.log(`   Command: ${hookCommand}`);
+  console.log('\n⚠️  Make sure the Discord bot is running to receive permission requests.');
+}
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -52,6 +94,16 @@ async function main() {
       break;
     }
 
+    case 'hook': {
+      if (args[1] === 'setup') {
+        await setupHook();
+      } else {
+        // Hook handler for Claude Code PermissionRequest
+        await handlePermissionHook();
+      }
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -66,7 +118,8 @@ Commands:
   discord setup      Configure Discord integration
   slack              Run the Slack bot
   slack setup        Configure Slack integration
-  <command> [args]   Start a monitored session
+  hook setup         Configure Claude Code permission hook
+  run -- <cmd>       Start a monitored session
   help               Show this help message
 
 Examples:
@@ -76,7 +129,8 @@ Examples:
   sleep-code discord          # Start the Discord bot
   sleep-code slack setup      # First-time Slack configuration
   sleep-code slack            # Start the Slack bot
-  sleep-code claude           # Start a Claude Code session
+  sleep-code hook setup       # Configure permission forwarding
+  sleep-code run -- claude    # Start a Claude Code session
 `);
       break;
     }
