@@ -84,7 +84,7 @@ function forwardToDiscord(
   requestId: string,
   hookInput: HookInput
 ): Promise<{ behavior: 'allow' | 'deny'; message?: string }> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const socket = createConnection(DAEMON_SOCKET);
     let messageBuffer = '';
 
@@ -124,7 +124,7 @@ function forwardToDiscord(
       }
     });
 
-    socket.on('error', (err) => {
+    socket.on('error', () => {
       clearTimeout(timeout);
       // Daemon not running - default to deny
       resolve({ behavior: 'deny', message: 'Sleep-code daemon not running' });

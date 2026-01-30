@@ -329,11 +329,8 @@ export function createDiscordApp(config: DiscordConfig) {
       }
     },
 
-    onPermissionRequest: async (request) => {
-      // Find the channel for this session (or use a default channel)
-      const channel = channelManager.getChannel(request.sessionId);
-
-      return new Promise(async (resolve) => {
+    onPermissionRequest: (request) => {
+      return new Promise((resolve) => {
         // Store the resolver for when user clicks a button
         pendingPermissions.set(request.requestId, {
           requestId: request.requestId,
@@ -341,64 +338,79 @@ export function createDiscordApp(config: DiscordConfig) {
         });
 
         // Format tool input summary
+        const MAX_INPUT_LENGTH = 500;
         let inputSummary = '';
         if (request.toolName === 'Bash' && request.toolInput?.command) {
-          inputSummary = `\`\`\`\n${request.toolInput.command.slice(0, 500)}\n\`\`\``;
+          inputSummary = `\`\`\`\n${request.toolInput.command.slice(0, MAX_INPUT_LENGTH)}\n\`\`\``;
         } else if (request.toolInput?.file_path) {
           inputSummary = `\`${request.toolInput.file_path}\``;
         } else if (request.toolInput) {
-          inputSummary = `\`\`\`json\n${JSON.stringify(request.toolInput, null, 2).slice(0, 500)}\n\`\`\``;
+          inputSummary = `\`\`\`json\n${JSON.stringify(request.toolInput, null, 2).slice(0, MAX_INPUT_LENGTH)}\n\`\`\``;
         }
 
         const text = `🔐 **Permission Request: ${request.toolName}**\n${inputSummary}`;
 
-        // Create buttons
+        // Create buttons: Allow, Always Allow, Deny
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
             .setCustomId(`perm:${request.requestId}:allow`)
             .setLabel('Allow')
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
+            .setCustomId(`perm:${request.requestId}:always`)
+            .setLabel('Always Allow')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
             .setCustomId(`perm:${request.requestId}:deny`)
             .setLabel('Deny')
             .setStyle(ButtonStyle.Danger),
         );
 
-        try {
-          if (channel) {
-            const discordChannel = await client.channels.fetch(channel.channelId);
-            if (discordChannel?.type === ChannelType.GuildText) {
-              await discordChannel.send({ content: text, components: [row] });
+        // Find channel and send message
+        const channel = channelManager.getChannel(request.sessionId);
+        const sendToChannel = async () => {
+          try {
+            if (channel) {
+              const discordChannel = await client.channels.fetch(channel.channelId);
+              if (discordChannel?.type === ChannelType.GuildText) {
+                await discordChannel.send({ content: text, components: [row] });
+                return;
+              }
             }
-          } else {
+
+            // Fallback to first active channel
             console.log('[Discord] No channel found for permission request, using first active channel');
             const active = channelManager.getAllActive();
             if (active.length > 0) {
               const discordChannel = await client.channels.fetch(active[0].channelId);
               if (discordChannel?.type === ChannelType.GuildText) {
                 await discordChannel.send({ content: text, components: [row] });
+                return;
               }
-            } else {
-              // No channel available, auto-deny
-              console.log('[Discord] No active channels, auto-denying permission');
-              resolve({ behavior: 'deny', message: 'No Discord channel available' });
-              pendingPermissions.delete(request.requestId);
             }
+
+            // No channel available, auto-deny
+            console.log('[Discord] No active channels, auto-denying permission');
+            resolve({ behavior: 'deny', message: 'No Discord channel available' });
+            pendingPermissions.delete(request.requestId);
+          } catch (err) {
+            console.error('[Discord] Failed to post permission request:', err);
+            resolve({ behavior: 'deny', message: 'Failed to post to Discord' });
+            pendingPermissions.delete(request.requestId);
           }
-        } catch (err) {
-          console.error('[Discord] Failed to post permission request:', err);
-          resolve({ behavior: 'deny', message: 'Failed to post to Discord' });
-          pendingPermissions.delete(request.requestId);
-        }
+        };
+
+        sendToChannel();
 
         // Timeout after 5 minutes
+        const TIMEOUT_MS = 5 * 60 * 1000;
         setTimeout(() => {
           if (pendingPermissions.has(request.requestId)) {
             console.log(`[Discord] Permission request ${request.requestId} timed out`);
             resolve({ behavior: 'deny', message: 'Request timed out' });
             pendingPermissions.delete(request.requestId);
           }
-        }, 5 * 60 * 1000);
+        }, TIMEOUT_MS);
       });
     },
   });
@@ -592,13 +604,27 @@ export function createDiscordApp(config: DiscordConfig) {
           return;
         }
 
-        const behavior = decision === 'allow' ? 'allow' : 'deny';
+        // 'allow' and 'always' both grant permission, 'deny' rejects
+        const behavior = (decision === 'allow' || decision === 'always') ? 'allow' : 'deny';
         pending.resolve({ behavior });
         pendingPermissions.delete(requestId);
 
-        const emoji = behavior === 'allow' ? '✅' : '❌';
+        let emoji: string;
+        let statusText: string;
+        if (decision === 'allow') {
+          emoji = '✅';
+          statusText = 'Permission granted';
+        } else if (decision === 'always') {
+          emoji = '✅';
+          statusText = 'Permission granted (always allow)';
+          // TODO: Add to Claude Code's settings.json for persistent permission
+        } else {
+          emoji = '❌';
+          statusText = 'Permission denied';
+        }
+
         await interaction.update({
-          content: `${emoji} Permission ${behavior === 'allow' ? 'granted' : 'denied'}`,
+          content: `${emoji} ${statusText}`,
           components: [],
         });
         return;
