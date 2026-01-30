@@ -93,14 +93,9 @@ export function createDiscordApp(config: DiscordConfig) {
           );
 
           // Apply pending title if one was received before thread creation
+          // Title updates disabled due to Discord rate limits
           const pendingTitle = pendingTitles.get(session.id);
           if (pendingTitle) {
-            try {
-              await thread.setName(pendingTitle.slice(0, 100));
-              console.log(`[Discord] Applied pending title: ${pendingTitle}`);
-            } catch (err) {
-              console.error('[Discord] Failed to apply pending title:', err);
-            }
             pendingTitles.delete(session.id);
           }
         }
@@ -125,11 +120,12 @@ export function createDiscordApp(config: DiscordConfig) {
         channelManager.updateName(sessionId, name);
         // Update thread name
         try {
-          const thread = await getThread(sessionId);
-          if (thread) {
-            const newName = `${session.sessionId} - ${name}`.slice(0, 100);
-            await thread.setName(newName);
-          }
+          // Title updates disabled due to Discord rate limits
+          // const thread = await getThread(sessionId);
+          // if (thread) {
+          //   const newName = `${session.sessionId} - ${name}`.slice(0, 100);
+          //   await thread.setName(newName);
+          // }
         } catch (err) {
           console.error('[Discord] Failed to update thread name:', err);
         }
@@ -180,22 +176,20 @@ export function createDiscordApp(config: DiscordConfig) {
           console.error(`[Discord] ❌ Failed to send user message to thread ${thread.id}:`, err.message);
         }
       } else {
-        // Apply pending title when assistant responds (title is ready by now)
+        // Title updates disabled due to Discord rate limits
         const pendingTitle = pendingTitles.get(sessionId);
         if (pendingTitle) {
-          // Remove spinner prefix (⠐, ⠂, ✳, etc.) from title
-          const cleanTitle = pendingTitle.replace(/^[⠁⠂⠄⡀⢀⠠⠐⠈✳]\s*/, '');
-          // Don't await - thread rename has strict rate limits and can block
-          thread.setName(cleanTitle.slice(0, 100)).catch(() => {});
           pendingTitles.delete(sessionId);
         }
 
         // Claude's response - Discord has 4000 char limit
         const chunks = chunkMessage(formatted, 3900);
+        console.log(`[Discord] Sending ${chunks.length} chunks to thread`);
         try {
           for (const chunk of chunks) {
             await thread.send(chunk);
           }
+          console.log(`[Discord] ✓ Sent assistant message`);
         } catch (err: any) {
           console.error(`[Discord] ❌ Failed to send assistant message to thread ${thread.id}:`, err.message);
         }
