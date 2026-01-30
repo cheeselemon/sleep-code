@@ -106,6 +106,18 @@ class DaemonConnection {
     this.reconnectInterval = Math.min(this.reconnectInterval * 1.5, MAX_RECONNECT_INTERVAL);
   }
 
+  sendTitle(title: string): void {
+    if (this.connected && this.socket) {
+      try {
+        this.socket.write(JSON.stringify({
+          type: 'title_update',
+          sessionId: this.config.sessionId,
+          title,
+        }) + '\n');
+      } catch {}
+    }
+  }
+
   close(): void {
     this.closed = true;
 
@@ -125,6 +137,74 @@ class DaemonConnection {
     }
 
     this.socket = null;
+  }
+}
+
+// Braille spinner characters used by Claude Code
+const SPINNER_CHARS = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠐⠂⠄⠠⠈⠁✓✗✳●○◐◑◒◓]\s*/;
+
+/**
+ * Terminal title extractor with buffering and debouncing
+ */
+class TitleExtractor {
+  private buffer = '';
+  private lastNormalizedTitle = '';
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private pendingTitle: string | null = null;
+  private onTitleChange: ((title: string) => void) | null = null;
+
+  constructor(onTitleChange?: (title: string) => void) {
+    this.onTitleChange = onTitleChange || null;
+  }
+
+  /**
+   * Normalize title by removing spinner characters
+   */
+  private normalizeTitle(title: string): string {
+    return title.replace(SPINNER_CHARS, '').trim();
+  }
+
+  /**
+   * Process PTY data and extract terminal title if present
+   */
+  process(data: string): void {
+    // Append to buffer
+    this.buffer += data;
+
+    // Only keep last 1KB to prevent memory issues
+    if (this.buffer.length > 1024) {
+      this.buffer = this.buffer.slice(-1024);
+    }
+
+    // OSC (Operating System Command) for setting title: ESC ] 0 ; title BEL
+    // or ESC ] 2 ; title BEL (title only, no icon)
+    // BEL can be \x07 or ESC \ (\x1b\\)
+    const match = this.buffer.match(/\x1b\](?:0|2);([^\x07\x1b]*?)(?:\x07|\x1b\\)/);
+    if (match) {
+      const rawTitle = match[1];
+      // Clear buffer after successful match
+      this.buffer = '';
+
+      if (!rawTitle) return;
+
+      // Normalize by removing spinner
+      const normalized = this.normalizeTitle(rawTitle);
+      if (!normalized || normalized === this.lastNormalizedTitle) return;
+
+      this.lastNormalizedTitle = normalized;
+      this.pendingTitle = normalized;
+
+      // Debounce: wait 500ms before sending to avoid rapid updates
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+      }
+      this.debounceTimer = setTimeout(() => {
+        if (this.pendingTitle && this.onTitleChange) {
+          this.onTitleChange(this.pendingTitle);
+        }
+        this.debounceTimer = null;
+      }, 500);
+    }
   }
 }
 
@@ -171,8 +251,13 @@ export async function run(command: string[]): Promise<void> {
     process.stdin.setRawMode(true);
   }
 
+  const titleExtractor = new TitleExtractor((title) => {
+    daemon.sendTitle(title);
+  });
+
   ptyProcess.onData((data: string) => {
     process.stdout.write(data);
+    titleExtractor.process(data);
   });
 
   const onStdinData = (data: Buffer) => {
