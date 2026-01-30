@@ -183,14 +183,10 @@ export function createDiscordApp(config: DiscordConfig) {
         // Apply pending title when assistant responds (title is ready by now)
         const pendingTitle = pendingTitles.get(sessionId);
         if (pendingTitle) {
-          try {
-            // Remove spinner prefix (⠐, ⠂, ✳, etc.) from title
-            const cleanTitle = pendingTitle.replace(/^[⠁⠂⠄⡀⢀⠠⠐⠈✳]\s*/, '');
-            await thread.setName(cleanTitle.slice(0, 100));
-            console.log(`[Discord] Updated thread name to: ${cleanTitle}`);
-          } catch (err) {
-            console.error('[Discord] Failed to update thread name:', err);
-          }
+          // Remove spinner prefix (⠐, ⠂, ✳, etc.) from title
+          const cleanTitle = pendingTitle.replace(/^[⠁⠂⠄⡀⢀⠠⠐⠈✳]\s*/, '');
+          // Don't await - thread rename has strict rate limits and can block
+          thread.setName(cleanTitle.slice(0, 100)).catch(() => {});
           pendingTitles.delete(sessionId);
         }
 
@@ -200,7 +196,6 @@ export function createDiscordApp(config: DiscordConfig) {
           for (const chunk of chunks) {
             await thread.send(chunk);
           }
-          console.log(`[Discord] Sent assistant message to thread (${chunks.length} chunks)`);
         } catch (err: any) {
           console.error(`[Discord] ❌ Failed to send assistant message to thread ${thread.id}:`, err.message);
         }
