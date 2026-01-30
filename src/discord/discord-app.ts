@@ -14,12 +14,51 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  type Attachment,
 } from 'discord.js';
+import { writeFile, mkdir } from 'fs/promises';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import type { DiscordConfig } from './types.js';
 import { SessionManager } from '../slack/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
 import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
 import { extractImagePaths } from '../utils/image-extractor.js';
+
+// Image extensions that Claude can read
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+
+/**
+ * Download Discord attachment to temp directory
+ */
+async function downloadAttachment(attachment: Attachment): Promise<string | null> {
+  const ext = attachment.name?.toLowerCase().split('.').pop() || '';
+  if (!IMAGE_EXTENSIONS.includes(`.${ext}`)) {
+    return null; // Not an image
+  }
+
+  try {
+    const response = await fetch(attachment.url);
+    if (!response.ok) {
+      console.error(`[Discord] Failed to download attachment: ${response.status}`);
+      return null;
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const tempDir = join(tmpdir(), 'sleep-code-images');
+    await mkdir(tempDir, { recursive: true });
+
+    const filename = `${Date.now()}-${attachment.name || 'image.png'}`;
+    const filepath = join(tempDir, filename);
+    await writeFile(filepath, buffer);
+
+    console.log(`[Discord] Downloaded image to: ${filepath}`);
+    return filepath;
+  } catch (err) {
+    console.error('[Discord] Error downloading attachment:', err);
+    return null;
+  }
+}
 
 export function createDiscordApp(config: DiscordConfig) {
   const client = new Client({
@@ -63,6 +102,9 @@ export function createDiscordApp(config: DiscordConfig) {
 
   // Track pending titles for sessions that don't have threads yet
   const pendingTitles = new Map<string, string>(); // sessionId -> title
+
+  // YOLO mode: auto-approve all permission requests for this session
+  const yoloSessions = new Set<string>(); // sessionId
 
   // Helper to get thread for sending messages
   const getThread = async (sessionId: string) => {
@@ -405,6 +447,23 @@ export function createDiscordApp(config: DiscordConfig) {
 
     onPermissionRequest: (request) => {
       return new Promise((resolve) => {
+        // YOLO mode: auto-approve without asking
+        if (yoloSessions.has(request.sessionId)) {
+          console.log(`[Discord] YOLO mode: auto-approving ${request.toolName}`);
+          // Notify in thread
+          getThread(request.sessionId).then(thread => {
+            if (thread) {
+              thread.send(`🔥 **YOLO**: Auto-approved \`${request.toolName}\``)
+                .then(() => console.log(`[Discord] YOLO notification sent`))
+                .catch((err) => console.error(`[Discord] YOLO notification failed:`, err.message));
+            } else {
+              console.log(`[Discord] YOLO: No thread found for session ${request.sessionId}`);
+            }
+          });
+          resolve({ behavior: 'allow' });
+          return;
+        }
+
         // Store the resolver for when user clicks a button
         pendingPermissions.set(request.requestId, {
           requestId: request.requestId,
@@ -508,12 +567,29 @@ export function createDiscordApp(config: DiscordConfig) {
     // React with checkmark to acknowledge receipt
     await message.react('✅').catch(() => {});
 
-    // Track this message so we don't re-post it
-    discordSentMessages.add(message.content.trim());
+    // Download any image attachments
+    const imagePaths: string[] = [];
+    for (const [, attachment] of message.attachments) {
+      const filepath = await downloadAttachment(attachment);
+      if (filepath) {
+        imagePaths.push(filepath);
+      }
+    }
 
-    const sent = sessionManager.sendInput(sessionId, message.content);
+    // Build message with image paths
+    let inputText = message.content;
+    if (imagePaths.length > 0) {
+      const imageRefs = imagePaths.map(p => `[Image: ${p}]`).join('\n');
+      inputText = inputText ? `${inputText}\n\n${imageRefs}` : imageRefs;
+      console.log(`[Discord] Added ${imagePaths.length} image(s) to message`);
+    }
+
+    // Track this message so we don't re-post it
+    discordSentMessages.add(inputText.trim());
+
+    const sent = sessionManager.sendInput(sessionId, inputText);
     if (!sent) {
-      discordSentMessages.delete(message.content.trim());
+      discordSentMessages.delete(inputText.trim());
       await message.reply('⚠️ Failed to send input - session not connected.');
     }
   });
@@ -547,6 +623,9 @@ export function createDiscordApp(config: DiscordConfig) {
           option.setName('name')
             .setDescription('Model name (opus, sonnet, haiku)')
             .setRequired(true)),
+      new SlashCommandBuilder()
+        .setName('yolo-sleep')
+        .setDescription('Toggle YOLO mode - auto-approve all permission requests'),
     ];
 
     try {
@@ -656,6 +735,29 @@ export function createDiscordApp(config: DiscordConfig) {
         await interaction.reply(`🧠 Sent /model ${modelArg}`);
       } else {
         await interaction.reply('⚠️ Failed to send command - session not connected.');
+      }
+    }
+
+    if (commandName === 'yolo-sleep') {
+      const sessionId = channelManager.getSessionByChannel(channelId);
+      if (!sessionId) {
+        await interaction.reply('⚠️ This channel is not associated with an active session.');
+        return;
+      }
+
+      const channel = channelManager.getChannel(sessionId);
+      if (!channel || channel.status === 'ended') {
+        await interaction.reply('⚠️ This session has ended.');
+        return;
+      }
+
+      // Toggle YOLO mode
+      if (yoloSessions.has(sessionId)) {
+        yoloSessions.delete(sessionId);
+        await interaction.reply('🛡️ **YOLO mode OFF** - Permission requests will be shown');
+      } else {
+        yoloSessions.add(sessionId);
+        await interaction.reply('🔥 **YOLO mode ON** - All permissions auto-approved!');
       }
     }
   });
