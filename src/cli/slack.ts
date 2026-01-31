@@ -1,6 +1,7 @@
 import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
+import { cliLogger as log } from '../utils/logger.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const SLACK_CONFIG_FILE = `${CONFIG_DIR}/slack.env`;
@@ -166,8 +167,8 @@ export async function slackRun(): Promise<void> {
   const localEnvExists = await fileExists(`${process.cwd()}/.env`);
   const globalEnvExists = await fileExists(SLACK_CONFIG_FILE);
   const source = localEnvExists ? '.env' : globalEnvExists ? SLACK_CONFIG_FILE : 'environment';
-  console.log(`[Sleep Code] Loaded config from ${source}`);
-  console.log('[Sleep Code] Starting Slack bot...');
+  log.info({ source }, 'Loaded config');
+  log.info('Starting Slack bot...');
 
   const slackConfig = {
     botToken: config.SLACK_BOT_TOKEN,
@@ -181,21 +182,20 @@ export async function slackRun(): Promise<void> {
   // Start session manager (Unix socket server for CLI connections)
   try {
     await sessionManager.start();
-    console.log('[Sleep Code] Session manager started');
+    log.info('Session manager started');
   } catch (err) {
-    console.error('[Sleep Code] Failed to start session manager:', err);
+    log.error({ err }, 'Failed to start session manager');
     process.exit(1);
   }
 
   // Start Slack app
   try {
     await app.start();
-    console.log('[Sleep Code] Slack bot is running!');
-    console.log('');
+    log.info('Slack bot is running!');
     console.log('Start a Claude Code session with: sleep-code run -- claude');
     console.log('Each session will create a private #sleep-* channel');
   } catch (err) {
-    console.error('[Sleep Code] Failed to start Slack app:', err);
+    log.error({ err }, 'Failed to start Slack app');
     process.exit(1);
   }
 }

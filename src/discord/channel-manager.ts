@@ -3,6 +3,7 @@ import { ChannelType } from 'discord.js';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
+import { discordLogger as log } from '../utils/logger.js';
 
 const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
@@ -86,10 +87,10 @@ export class ChannelManager {
       for (const m of mappings) {
         this.persistedMappings.set(m.sessionId, m);
       }
-      console.log(`[ChannelManager] Loaded ${mappings.length} persisted session mappings`);
+      log.info(`[ChannelManager] Loaded ${mappings.length} persisted session mappings`);
     } catch (err: any) {
       if (err.code !== 'ENOENT') {
-        console.error('[ChannelManager] Error loading mappings:', err.message);
+        log.error('[ChannelManager] Error loading mappings:', err.message);
       }
     }
   }
@@ -103,7 +104,7 @@ export class ChannelManager {
       const mappings = Array.from(this.persistedMappings.values());
       await writeFile(MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
     } catch (err: any) {
-      console.error('[ChannelManager] Error saving mappings:', err.message);
+      log.error('[ChannelManager] Error saving mappings:', err.message);
     }
   }
 
@@ -183,14 +184,14 @@ export class ChannelManager {
       });
     }
 
-    console.log(`[ChannelManager] Using guild: ${this.guild.name}`);
-    console.log(`[ChannelManager] Using category: ${this.category.name}`);
+    log.info(`[ChannelManager] Using guild: ${this.guild.name}`);
+    log.info(`[ChannelManager] Using category: ${this.category.name}`);
 
     // Scan existing channels for recovery after restart
     await this.recoverChannels();
 
     this.initialized = true;
-    console.log(`[ChannelManager] Initialization complete`);
+    log.info(`[ChannelManager] Initialization complete`);
   }
 
   /**
@@ -213,12 +214,12 @@ export class ChannelManager {
       if (parsed?.cwd) {
         this.cwdToChannel.set(parsed.cwd, channelId);
         recovered++;
-        console.log(`[ChannelManager] Recovered channel #${channel.name} for cwd: ${parsed.cwd}`);
+        log.info(`[ChannelManager] Recovered channel #${channel.name} for cwd: ${parsed.cwd}`);
       }
     }
 
     if (recovered > 0) {
-      console.log(`[ChannelManager] Recovered ${recovered} channel mappings`);
+      log.info(`[ChannelManager] Recovered ${recovered} channel mappings`);
     }
   }
 
@@ -267,10 +268,10 @@ export class ChannelManager {
           });
 
           this.cwdToChannel.set(cwd, channel.id);
-          console.log(`[ChannelManager] Created channel #${nameToTry} for cwd: ${cwd}`);
+          log.info(`[ChannelManager] Created channel #${nameToTry} for cwd: ${cwd}`);
           return channel;
         } catch (err: any) {
-          console.error('[ChannelManager] Failed to create channel:', err.message);
+          log.error('[ChannelManager] Failed to create channel:', err.message);
           return null;
         }
       } else {
@@ -302,20 +303,20 @@ export class ChannelManager {
       // Look for thread that starts with sessionId
       for (const [, thread] of activeThreads.threads) {
         if (thread.name.startsWith(sessionId)) {
-          console.log(`[ChannelManager] Found existing active thread for session ${sessionId}`);
+          log.info(`[ChannelManager] Found existing active thread for session ${sessionId}`);
           return thread;
         }
       }
 
       for (const [, thread] of archivedThreads.threads) {
         if (thread.name.startsWith(sessionId)) {
-          console.log(`[ChannelManager] Found existing archived thread for session ${sessionId}, unarchiving...`);
+          log.info(`[ChannelManager] Found existing archived thread for session ${sessionId}, unarchiving...`);
           await thread.setArchived(false);
           return thread;
         }
       }
     } catch (err) {
-      console.error('[ChannelManager] Error searching for existing thread:', err);
+      log.error('[ChannelManager] Error searching for existing thread:', err);
     }
     return null;
   }
@@ -330,10 +331,10 @@ export class ChannelManager {
   ): Promise<ChannelMapping | null> {
     // Wait for initialization if not ready
     if (!this.initialized) {
-      console.log(`[ChannelManager] Waiting for initialization before creating session ${sessionId}`);
+      log.info(`[ChannelManager] Waiting for initialization before creating session ${sessionId}`);
       const ready = await this.waitForInit();
       if (!ready) {
-        console.error('[ChannelManager] Initialization failed, cannot create session');
+        log.error('[ChannelManager] Initialization failed, cannot create session');
         return null;
       }
     }
@@ -361,10 +362,10 @@ export class ChannelManager {
           if (thread.archived) {
             await thread.setArchived(false);
           }
-          console.log(`[ChannelManager] Found existing thread ${persisted.threadId} for session ${sessionId}`);
+          log.info(`[ChannelManager] Found existing thread ${persisted.threadId} for session ${sessionId}`);
         }
       } catch (err) {
-        console.log(`[ChannelManager] Persisted thread ${persisted.threadId} not found, will create new`);
+        log.info(`[ChannelManager] Persisted thread ${persisted.threadId} not found, will create new`);
         await this.removePersistedMapping(sessionId);
       }
     }
@@ -386,15 +387,15 @@ export class ChannelManager {
           reason: `Claude Code session ${sessionId}`,
         });
         isNewThread = true;
-        console.log(`[ChannelManager] Created thread "${threadName}" for session ${sessionId}`);
+        log.info(`[ChannelManager] Created thread "${threadName}" for session ${sessionId}`);
       } catch (err: any) {
-        console.error('[ChannelManager] Failed to create thread:', err.message);
+        log.error('[ChannelManager] Failed to create thread:', err.message);
         return null;
       }
     }
 
     if (!thread) {
-      console.error('[ChannelManager] Thread is null after creation/lookup');
+      log.error('[ChannelManager] Thread is null after creation/lookup');
       return null;
     }
 
@@ -441,7 +442,7 @@ export class ChannelManager {
     // Persist the mapping for future reconnects
     await this.persistMapping(sessionId, thread.id, channel.id, cwd);
 
-    console.log(`[ChannelManager] Stored session mapping: ${sessionId} -> thread ${thread.id}`);
+    log.info(`[ChannelManager] Stored session mapping: ${sessionId} -> thread ${thread.id}`);
 
     return mapping;
   }
@@ -457,7 +458,7 @@ export class ChannelManager {
       const thread = await this.client.channels.fetch(mapping.threadId);
       if (thread && thread.isThread()) {
         await thread.setArchived(true);
-        console.log(`[ChannelManager] Archived thread for session ${sessionId}`);
+        log.info(`[ChannelManager] Archived thread for session ${sessionId}`);
       }
 
       // Update status and remove persisted mapping
@@ -465,7 +466,7 @@ export class ChannelManager {
       await this.removePersistedMapping(sessionId);
       return true;
     } catch (err: any) {
-      console.error('[ChannelManager] Failed to archive thread:', err.message);
+      log.error('[ChannelManager] Failed to archive thread:', err.message);
       return false;
     }
   }

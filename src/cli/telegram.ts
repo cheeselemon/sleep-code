@@ -1,6 +1,7 @@
 import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
+import { cliLogger as log } from '../utils/logger.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const TELEGRAM_CONFIG_FILE = `${CONFIG_DIR}/telegram.env`;
@@ -131,7 +132,7 @@ export async function telegramRun(): Promise<void> {
     process.exit(1);
   }
 
-  console.log('[Sleep Code] Starting Telegram bot...');
+  log.info('Starting Telegram bot...');
 
   // Import and create the Telegram app
   const { createTelegramApp } = await import('../telegram/telegram-app.js');
@@ -147,14 +148,14 @@ export async function telegramRun(): Promise<void> {
   try {
     await sessionManager.start();
   } catch (err) {
-    console.error('[Sleep Code] Failed to start session manager:', err);
+    log.error({ err }, 'Failed to start session manager');
     process.exit(1);
   }
 
   // Start bot
   bot.start({
     onStart: (botInfo) => {
-      console.log(`[Sleep Code] Telegram bot @${botInfo.username} is running!`);
+      log.info({ username: botInfo.username }, 'Telegram bot is running!');
       console.log('');
       console.log('Start a Claude Code session with: sleep-code run -- claude');
     },

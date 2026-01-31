@@ -24,6 +24,7 @@ import { SessionManager } from '../slack/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
 import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
 import { extractImagePaths } from '../utils/image-extractor.js';
+import { discordLogger as log } from '../utils/logger.js';
 
 // Image extensions that Claude can read
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -40,7 +41,7 @@ async function downloadAttachment(attachment: Attachment): Promise<string | null
   try {
     const response = await fetch(attachment.url);
     if (!response.ok) {
-      console.error(`[Discord] Failed to download attachment: ${response.status}`);
+      log.error({ status: response.status }, 'Failed to download attachment');
       return null;
     }
 
@@ -52,10 +53,10 @@ async function downloadAttachment(attachment: Attachment): Promise<string | null
     const filepath = join(tempDir, filename);
     await writeFile(filepath, buffer);
 
-    console.log(`[Discord] Downloaded image to: ${filepath}`);
+    log.info({ filepath }, 'Downloaded image');
     return filepath;
   } catch (err) {
-    console.error('[Discord] Error downloading attachment:', err);
+    log.error({ err }, 'Error downloading attachment');
     return null;
   }
 }
@@ -75,7 +76,7 @@ export function createDiscordApp(config: DiscordConfig) {
   const discordSentMessages = new Set<string>();
 
   // Track tool call messages for threading results
-  const toolCallMessages = new Map<string, { messageId: string; toolName: string }>(); // toolUseId -> info
+  const toolCallMessages = new Map<string, { messageId: string; toolName: string; filePath?: string }>(); // toolUseId -> info
 
   // Tools whose results should be skipped in Discord (too verbose)
   const SKIP_RESULT_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Task']);
@@ -96,6 +97,9 @@ export function createDiscordApp(config: DiscordConfig) {
   // Track multiSelect selections before submit
   const pendingMultiSelections = new Map<string, string[]>(); // `${toolUseId}:${qIdx}` -> selected option indices
 
+  // Track answers for multi-question AskUserQuestion (accumulate until all answered)
+  const pendingAnswers = new Map<string, string>(); // `${toolUseId}:${qIdx}` -> answer string
+
   // Track pending permission requests
   interface PendingPermission {
     requestId: string;
@@ -109,21 +113,58 @@ export function createDiscordApp(config: DiscordConfig) {
   // YOLO mode: auto-approve all permission requests for this session
   const yoloSessions = new Set<string>(); // sessionId
 
+  // Typing indicator intervals for running sessions
+  const typingIntervals = new Map<string, NodeJS.Timeout>(); // sessionId -> interval
+
   // Helper to get thread for sending messages
   const getThread = async (sessionId: string) => {
     const session = channelManager.getSession(sessionId);
     if (!session) {
-      console.log(`[Discord] getThread: No session mapping for ${sessionId}`);
+      log.debug({ sessionId }, 'getThread: No session mapping');
       return null;
     }
     try {
       const thread = await client.channels.fetch(session.threadId);
       if (thread?.isThread()) return thread;
-      console.log(`[Discord] getThread: Channel ${session.threadId} is not a thread`);
+      log.debug({ threadId: session.threadId }, 'getThread: Channel is not a thread');
     } catch (err) {
-      console.log(`[Discord] getThread: Failed to fetch thread ${session.threadId}:`, err);
+      log.debug({ threadId: session.threadId, err }, 'getThread: Failed to fetch thread');
     }
     return null;
+  };
+
+  // Helper to check if all questions are answered and submit
+  const trySubmitAllAnswers = (toolUseId: string): boolean => {
+    const pending = pendingQuestions.get(toolUseId);
+    if (!pending) return false;
+
+    const totalQuestions = pending.questions.length;
+    const answers: Record<string, string> = {};
+
+    // Check if all questions have answers
+    for (let i = 0; i < totalQuestions; i++) {
+      const answerKey = `${toolUseId}:${i}`;
+      const answer = pendingAnswers.get(answerKey);
+      if (!answer) {
+        // Not all questions answered yet
+        log.debug({ toolUseId, answered: i, total: totalQuestions }, 'Not all questions answered yet');
+        return false;
+      }
+      answers[i.toString()] = answer;
+    }
+
+    // All questions answered, submit
+    log.info({ toolUseId, answers }, 'All questions answered, submitting');
+    sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+
+    // Cleanup
+    for (let i = 0; i < totalQuestions; i++) {
+      pendingAnswers.delete(`${toolUseId}:${i}`);
+      pendingMultiSelections.delete(`${toolUseId}:${i}`);
+    }
+    pendingQuestions.delete(toolUseId);
+
+    return true;
   };
 
   // Create session manager with event handlers that post to Discord
@@ -172,7 +213,7 @@ export function createDiscordApp(config: DiscordConfig) {
           //   await thread.setName(newName);
           // }
         } catch (err) {
-          console.error('[Discord] Failed to update thread name:', err);
+          log.error({ err }, 'Failed to update thread name');
         }
       }
     },
@@ -181,6 +222,32 @@ export function createDiscordApp(config: DiscordConfig) {
       const session = channelManager.getSession(sessionId);
       if (session) {
         channelManager.updateStatus(sessionId, status);
+
+        // Manage typing indicator based on status
+        if (status === 'running') {
+          // Start typing indicator if not already running
+          if (!typingIntervals.has(sessionId)) {
+            const sendTyping = async () => {
+              try {
+                const thread = await getThread(sessionId);
+                if (thread) {
+                  await thread.sendTyping();
+                }
+              } catch {}
+            };
+            // Send immediately and then every 8 seconds
+            sendTyping();
+            const interval = setInterval(sendTyping, 8000);
+            typingIntervals.set(sessionId, interval);
+          }
+        } else {
+          // Stop typing indicator
+          const interval = typingIntervals.get(sessionId);
+          if (interval) {
+            clearInterval(interval);
+            typingIntervals.delete(sessionId);
+          }
+        }
       }
     },
 
@@ -190,13 +257,13 @@ export function createDiscordApp(config: DiscordConfig) {
     },
 
     onMessage: async (sessionId, role, content) => {
-      console.log(`[Discord] onMessage: session=${sessionId}, role=${role}, content="${content.slice(0, 50)}..."`);
+      log.info({ sessionId, role, contentPreview: content.slice(0, 50) }, 'onMessage');
       const thread = await getThread(sessionId);
       if (!thread) {
-        console.log(`[Discord] ❌ No thread found for session ${sessionId}`);
+        log.warn({ sessionId }, 'No thread found for session');
         return;
       }
-      console.log(`[Discord] ✓ Found thread ${thread.id} for session ${sessionId}`);
+      log.debug({ threadId: thread.id, sessionId }, 'Found thread for session');
 
       const formatted = content;
 
@@ -205,7 +272,7 @@ export function createDiscordApp(config: DiscordConfig) {
         const contentKey = content.trim();
         if (discordSentMessages.has(contentKey)) {
           discordSentMessages.delete(contentKey);
-          console.log(`[Discord] Skipping Discord-originated message`);
+          log.debug('Skipping Discord-originated message');
           return;
         }
 
@@ -216,9 +283,9 @@ export function createDiscordApp(config: DiscordConfig) {
           for (const chunk of chunks) {
             await thread.send(`**User:** ${chunk}`);
           }
-          console.log(`[Discord] Sent user message to thread`);
+          log.debug('Sent user message to thread');
         } catch (err: any) {
-          console.error(`[Discord] ❌ Failed to send user message to thread ${thread.id}:`, err.message);
+          log.error({ threadId: thread.id, error: err.message }, 'Failed to send user message to thread');
         }
       } else {
         // Title updates disabled due to Discord rate limits
@@ -229,14 +296,16 @@ export function createDiscordApp(config: DiscordConfig) {
 
         // Claude's response - Discord has 4000 char limit
         const chunks = chunkMessage(formatted, 3900);
-        console.log(`[Discord] Sending ${chunks.length} chunks to thread`);
+        log.debug({ chunks: chunks.length, threadId: thread.id }, 'Sending chunks to thread');
         try {
           for (const chunk of chunks) {
-            await thread.send(chunk);
+            log.trace({ preview: chunk.slice(0, 80) }, 'Chunk preview');
+            const msg = await thread.send(chunk);
+            log.debug({ messageId: msg.id }, 'Sent message');
           }
-          console.log(`[Discord] ✓ Sent assistant message`);
+          log.debug('Sent assistant message');
         } catch (err: any) {
-          console.error(`[Discord] ❌ Failed to send assistant message to thread ${thread.id}:`, err.message);
+          log.error({ threadId: thread.id, error: err.message }, 'Failed to send assistant message');
         }
 
         // Extract and upload any images mentioned in the response
@@ -244,14 +313,14 @@ export function createDiscordApp(config: DiscordConfig) {
         const images = extractImagePaths(content, session?.cwd);
         for (const image of images) {
           try {
-            console.log(`[Discord] Uploading image: ${image.resolvedPath}`);
+            log.info({ path: image.resolvedPath }, 'Uploading image');
             const attachment = new AttachmentBuilder(image.resolvedPath);
             await thread.send({
               content: `📎 ${image.originalPath}`,
               files: [attachment],
             });
           } catch (err) {
-            console.error('[Discord] Failed to upload image:', err);
+            log.error({ err }, 'Failed to upload image');
           }
         }
       }
@@ -266,23 +335,23 @@ export function createDiscordApp(config: DiscordConfig) {
             await thread.send(`**Tasks:**\n${todosText}`);
           }
         } catch (err) {
-          console.error('[Discord] Failed to post todos:', err);
+          log.error({ err }, 'Failed to post todos');
         }
       }
     },
 
     onToolCall: async (sessionId, tool) => {
-      console.log(`[Discord] onToolCall: ${tool.name}, id=${tool.id}, input=${JSON.stringify(tool.input).slice(0, 200)}`);
+      log.info({ tool: tool.name, id: tool.id, inputPreview: JSON.stringify(tool.input).slice(0, 200) }, 'onToolCall');
 
       const thread = await getThread(sessionId);
       if (!thread) {
-        console.log(`[Discord] No thread for session ${sessionId}`);
+        log.debug({ sessionId }, 'No thread for session');
         return;
       }
 
       // Special handling for AskUserQuestion
       if (tool.name === 'AskUserQuestion' && tool.input.questions) {
-        console.log(`[Discord] AskUserQuestion detected with ${tool.input.questions.length} questions`);
+        log.info({ count: tool.input.questions.length }, 'AskUserQuestion detected');
         try {
           // Store pending question for interaction handling
           pendingQuestions.set(tool.id, {
@@ -363,7 +432,7 @@ export function createDiscordApp(config: DiscordConfig) {
             }
           }
         } catch (err) {
-          console.error('[Discord] Failed to post AskUserQuestion:', err);
+          log.error({ err }, 'Failed to post AskUserQuestion');
         }
         return;
       }
@@ -392,10 +461,11 @@ export function createDiscordApp(config: DiscordConfig) {
 
       try {
         const message = await thread.send(text);
-        // Store the message id and tool name for threading results
-        toolCallMessages.set(tool.id, { messageId: message.id, toolName: tool.name });
+        // Store the message id, tool name, and file path for Write tools
+        const filePath = (tool.name === 'Write' || tool.name === 'Edit') ? tool.input.file_path : undefined;
+        toolCallMessages.set(tool.id, { messageId: message.id, toolName: tool.name, filePath });
       } catch (err) {
-        console.error('[Discord] Failed to post tool call:', err);
+        log.error({ err }, 'Failed to post tool call');
       }
     },
 
@@ -410,6 +480,21 @@ export function createDiscordApp(config: DiscordConfig) {
 
       const thread = await getThread(sessionId);
       if (!thread) return;
+
+      // Upload file for Write/Edit tools on success
+      if (toolInfo?.filePath && !result.isError && (toolInfo.toolName === 'Write' || toolInfo.toolName === 'Edit')) {
+        try {
+          const attachment = new AttachmentBuilder(toolInfo.filePath);
+          await thread.send({
+            content: `📄 **File ${toolInfo.toolName === 'Write' ? 'created' : 'edited'}**`,
+            files: [attachment],
+          });
+          log.info({ filePath: toolInfo.filePath }, 'Uploaded file');
+        } catch (err) {
+          log.error({ err }, 'Failed to upload file');
+        }
+        return; // Skip text result for file operations
+      }
 
       // Truncate long results
       const maxLen = 800;
@@ -434,7 +519,7 @@ export function createDiscordApp(config: DiscordConfig) {
           await thread.send(text);
         }
       } catch (err) {
-        console.error('[Discord] Failed to post tool result:', err);
+        log.error({ err }, 'Failed to post tool result');
       }
     },
 
@@ -448,7 +533,7 @@ export function createDiscordApp(config: DiscordConfig) {
       try {
         await thread.send(`${emoji} ${status}`);
       } catch (err) {
-        console.error('[Discord] Failed to post plan mode change:', err);
+        log.error({ err }, 'Failed to post plan mode change');
       }
     },
 
@@ -456,15 +541,15 @@ export function createDiscordApp(config: DiscordConfig) {
       return new Promise((resolve) => {
         // YOLO mode: auto-approve without asking
         if (yoloSessions.has(request.sessionId)) {
-          console.log(`[Discord] YOLO mode: auto-approving ${request.toolName}`);
+          log.info({ tool: request.toolName }, 'YOLO mode: auto-approving');
           // Notify in thread
           getThread(request.sessionId).then(thread => {
             if (thread) {
               thread.send(`🔥 **YOLO**: Auto-approved \`${request.toolName}\``)
-                .then(() => console.log(`[Discord] YOLO notification sent`))
-                .catch((err) => console.error(`[Discord] YOLO notification failed:`, err.message));
+                .then(() => log.debug('YOLO notification sent'))
+                .catch((err) => log.error({ error: err.message }, 'YOLO notification failed'));
             } else {
-              console.log(`[Discord] YOLO: No thread found for session ${request.sessionId}`);
+              log.warn({ sessionId: request.sessionId }, 'YOLO: No thread found for session');
             }
           });
           resolve({ behavior: 'allow' });
@@ -516,7 +601,7 @@ export function createDiscordApp(config: DiscordConfig) {
             }
 
             // Fallback to first active session's thread
-            console.log('[Discord] No thread found for permission request, using first active session');
+            log.warn('No thread found for permission request, using first active session');
             const active = channelManager.getAllActive();
             if (active.length > 0) {
               const fallbackThread = await client.channels.fetch(active[0].threadId);
@@ -527,11 +612,11 @@ export function createDiscordApp(config: DiscordConfig) {
             }
 
             // No thread available, auto-deny
-            console.log('[Discord] No active threads, auto-denying permission');
+            log.warn('No active threads, auto-denying permission');
             resolve({ behavior: 'deny', message: 'No Discord thread available' });
             pendingPermissions.delete(request.requestId);
           } catch (err) {
-            console.error('[Discord] Failed to post permission request:', err);
+            log.error({ err }, 'Failed to post permission request');
             resolve({ behavior: 'deny', message: 'Failed to post to Discord' });
             pendingPermissions.delete(request.requestId);
           }
@@ -543,7 +628,7 @@ export function createDiscordApp(config: DiscordConfig) {
         const TIMEOUT_MS = 5 * 60 * 1000;
         setTimeout(() => {
           if (pendingPermissions.has(request.requestId)) {
-            console.log(`[Discord] Permission request ${request.requestId} timed out`);
+            log.warn({ requestId: request.requestId }, 'Permission request timed out');
             resolve({ behavior: 'deny', message: 'Request timed out' });
             pendingPermissions.delete(request.requestId);
           }
@@ -569,7 +654,7 @@ export function createDiscordApp(config: DiscordConfig) {
       return;
     }
 
-    console.log(`[Discord] Sending input to session ${sessionId}: ${message.content.slice(0, 50)}...`);
+    log.info({ sessionId, contentPreview: message.content.slice(0, 50) }, 'Sending input to session');
 
     // React with checkmark to acknowledge receipt
     await message.react('✅').catch(() => {});
@@ -588,7 +673,7 @@ export function createDiscordApp(config: DiscordConfig) {
     if (imagePaths.length > 0) {
       const imageRefs = imagePaths.map(p => `[Image: ${p}]`).join('\n');
       inputText = inputText ? `${inputText}\n\n${imageRefs}` : imageRefs;
-      console.log(`[Discord] Added ${imagePaths.length} image(s) to message`);
+      log.info({ count: imagePaths.length }, 'Added images to message');
     }
 
     // Track this message so we don't re-post it
@@ -603,7 +688,7 @@ export function createDiscordApp(config: DiscordConfig) {
 
   // When bot is ready
   client.once(Events.ClientReady, async (c) => {
-    console.log(`[Discord] Logged in as ${c.user.tag}`);
+    log.info({ tag: c.user.tag }, 'Logged in');
     await channelManager.initialize();
 
     // Register slash commands
@@ -640,9 +725,9 @@ export function createDiscordApp(config: DiscordConfig) {
       await rest.put(Routes.applicationCommands(c.user.id), {
         body: commands.map((cmd) => cmd.toJSON()),
       });
-      console.log('[Discord] Slash commands registered');
+      log.info('Slash commands registered');
     } catch (err) {
-      console.error('[Discord] Failed to register slash commands:', err);
+      log.error({ err }, 'Failed to register slash commands');
     }
   });
 
@@ -846,17 +931,19 @@ export function createDiscordApp(config: DiscordConfig) {
           return question.options[optIdx]?.label || val;
         });
 
-        // Allow pending permission with the answers
+        // Store the answer
         const answerText = selectedLabels.join(', ');
-        const answers: Record<string, string> = { [qIdx.toString()]: answerText };
-        sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+        const answerKey = `${toolUseId}:${qIdx}`;
+        pendingAnswers.set(answerKey, answerText);
 
         await interaction.update({
           content: `✅ **${question.header}**: ${answerText}`,
           components: [], // Remove all components
         });
-        pendingQuestions.delete(toolUseId);
         pendingMultiSelections.delete(selectionKey);
+
+        // Try to submit if all questions answered
+        trySubmitAllAnswers(toolUseId);
         return;
       }
 
@@ -908,15 +995,18 @@ export function createDiscordApp(config: DiscordConfig) {
         return;
       }
 
-      // Allow pending permission with the answer
-      const answers: Record<string, string> = { [qIdx.toString()]: selectedOption.label };
-      sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+      // Store the answer
+      const answerKey = `${toolUseId}:${qIdx}`;
+      pendingAnswers.set(answerKey, selectedOption.label);
 
+      // Update this message to show selected answer
       await interaction.update({
         content: `✅ **${question.header}**: ${selectedOption.label}`,
         components: [], // Remove buttons
       });
-      pendingQuestions.delete(toolUseId);
+
+      // Try to submit if all questions answered
+      trySubmitAllAnswers(toolUseId);
     }
 
     // Handle StringSelectMenu interactions for multiSelect questions - store selection for later submit
@@ -982,14 +1072,16 @@ export function createDiscordApp(config: DiscordConfig) {
 
       const answer = interaction.fields.getTextInputValue('answer');
 
-      // Allow pending permission with the answer
-      const answers: Record<string, string> = { [qIdx.toString()]: answer };
-      sessionManager.allowPendingAskUserQuestion(pending.sessionId, answers);
+      // Store the answer
+      const answerKey = `${toolUseId}:${qIdx}`;
+      pendingAnswers.set(answerKey, answer);
 
       await interaction.reply({
         content: `✅ **${question.header}**: ${answer}`,
       });
-      pendingQuestions.delete(toolUseId);
+
+      // Try to submit if all questions answered
+      trySubmitAllAnswers(toolUseId);
     }
   });
 

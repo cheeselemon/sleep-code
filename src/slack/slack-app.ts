@@ -10,6 +10,7 @@ import {
   formatTodos,
 } from './message-formatter.js';
 import { extractImagePaths } from '../utils/image-extractor.js';
+import { slackLogger as log } from '../utils/logger.js';
 
 // Rate-limited message queue to avoid Slack API limits
 class MessageQueue {
@@ -108,7 +109,7 @@ export function createSlackApp(config: SlackConfig) {
             topic: `Claude Code session: ${name}`,
           });
         } catch (err) {
-          console.error('[Slack] Failed to update channel topic:', err);
+          log.error({ err }, 'Failed to update channel topic');
         }
       }
     },
@@ -152,7 +153,7 @@ export function createSlackApp(config: SlackConfig) {
                 })
               );
             } catch (err) {
-              console.error('[Slack] Failed to post message:', err);
+              log.error({ err }, 'Failed to post message');
             }
           }
         } else {
@@ -170,7 +171,7 @@ export function createSlackApp(config: SlackConfig) {
                 })
               );
             } catch (err) {
-              console.error('[Slack] Failed to post message:', err);
+              log.error({ err }, 'Failed to post message');
             }
           }
 
@@ -179,7 +180,7 @@ export function createSlackApp(config: SlackConfig) {
           const images = extractImagePaths(content, session?.cwd);
           for (const image of images) {
             try {
-              console.log(`[Slack] Uploading image: ${image.resolvedPath}`);
+              log.info({ path: image.resolvedPath }, 'Uploading image');
               await messageQueue.add(() =>
                 app.client.files.uploadV2({
                   channel_id: channel.channelId,
@@ -189,7 +190,7 @@ export function createSlackApp(config: SlackConfig) {
                 })
               );
             } catch (err) {
-              console.error('[Slack] Failed to upload image:', err);
+              log.error({ err }, 'Failed to upload image');
             }
           }
         }
@@ -209,7 +210,7 @@ export function createSlackApp(config: SlackConfig) {
             })
           );
         } catch (err) {
-          console.error('[Slack] Failed to post todos:', err);
+          log.error({ err }, 'Failed to post todos');
         }
       }
     },
@@ -238,7 +239,7 @@ export function createSlackApp(config: SlackConfig) {
           })
         );
       } catch (err) {
-        console.error('[Slack] Failed to post plan mode change:', err);
+        log.error({ err }, 'Failed to post plan mode change');
       }
     },
   });
@@ -265,7 +266,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    console.log(`[Slack] Sending input to session ${sessionId}: ${message.text.slice(0, 50)}...`);
+    log.info({ sessionId, preview: message.text.slice(0, 50) }, 'Sending input to session');
 
     // React with checkmark to acknowledge receipt
     if ('ts' in message && message.ts) {
@@ -482,7 +483,7 @@ export function createSlackApp(config: SlackConfig) {
         },
       });
     } catch (err) {
-      console.error('[Slack] Failed to publish home view:', err);
+      log.error({ err }, 'Failed to publish home view');
     }
   });
 

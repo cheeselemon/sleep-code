@@ -1,6 +1,7 @@
 import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
+import { cliLogger as log } from '../utils/logger.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const DISCORD_CONFIG_FILE = `${CONFIG_DIR}/discord.env`;
@@ -158,8 +159,8 @@ export async function discordRun(): Promise<void> {
   const localEnvExists = await fileExists(`${process.cwd()}/.env`);
   const globalEnvExists = await fileExists(DISCORD_CONFIG_FILE);
   const source = localEnvExists ? '.env' : globalEnvExists ? DISCORD_CONFIG_FILE : 'environment';
-  console.log(`[Sleep Code] Loaded config from ${source}`);
-  console.log('[Sleep Code] Starting Discord bot...');
+  log.info({ source }, 'Loaded config');
+  log.info('Starting Discord bot...');
 
   const discordConfig = {
     botToken: config.DISCORD_BOT_TOKEN,
@@ -171,21 +172,20 @@ export async function discordRun(): Promise<void> {
   // Start session manager (Unix socket server for CLI connections)
   try {
     await sessionManager.start();
-    console.log('[Sleep Code] Session manager started');
+    log.info('Session manager started');
   } catch (err) {
-    console.error('[Sleep Code] Failed to start session manager:', err);
+    log.error({ err }, 'Failed to start session manager');
     process.exit(1);
   }
 
   // Start Discord bot
   try {
     await client.login(config.DISCORD_BOT_TOKEN);
-    console.log('[Sleep Code] Discord bot is running!');
-    console.log('');
+    log.info('Discord bot is running!');
     console.log('Start a Claude Code session with: sleep-code run -- claude');
     console.log('Each session will create a #sleep-* channel');
   } catch (err) {
-    console.error('[Sleep Code] Failed to start Discord bot:', err);
+    log.error({ err }, 'Failed to start Discord bot');
     process.exit(1);
   }
 }

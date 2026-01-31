@@ -11,6 +11,7 @@ import { readFile, stat, unlink } from 'fs/promises';
 import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
 import type { TodoItem } from '../types.js';
+import { sessionLogger as log } from '../utils/logger.js';
 
 const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
 const MAX_SEEN_MESSAGES = 10000; // Prevent memory leak
@@ -111,19 +112,19 @@ export class SessionManager {
             const parsed = JSON.parse(line);
             this.handleSessionMessage(socket, parsed);
           } catch (error) {
-            console.error('[SessionManager] Error parsing message:', error);
+            log.error({ err: error }, 'Error parsing message');
           }
         }
       });
 
       socket.on('error', (error) => {
-        console.error('[SessionManager] Socket error:', error);
+        log.error({ err: error }, 'Socket error');
       });
 
       socket.on('close', () => {
         for (const [id, session] of this.sessions) {
           if (session.socket === socket) {
-            console.log(`[SessionManager] Session disconnected: ${id}`);
+            log.info({ sessionId: id }, 'Session disconnected');
             this.stopWatching(session);
             this.sessions.delete(id);
             this.events.onSessionEnd(id);
@@ -134,7 +135,7 @@ export class SessionManager {
     });
 
     this.server.listen(DAEMON_SOCKET, () => {
-      console.log(`[SessionManager] Listening on ${DAEMON_SOCKET}`);
+      log.info({ socket: DAEMON_SOCKET }, 'Listening');
     });
   }
 
@@ -151,14 +152,14 @@ export class SessionManager {
   sendInput(sessionId: string, text: string): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.error(`[SessionManager] Session not found: ${sessionId}`);
+      log.error({ sessionId }, 'Session not found');
       return false;
     }
 
     try {
       session.socket.write(JSON.stringify({ type: 'input', text }) + '\n');
     } catch (err) {
-      console.error(`[SessionManager] Failed to send input to ${sessionId}:`, err);
+      log.error({ sessionId, err }, 'Failed to send input');
       this.stopWatching(session);
       this.sessions.delete(sessionId);
       this.events.onSessionEnd(sessionId);
@@ -208,9 +209,9 @@ export class SessionManager {
         try {
           const fileStat = await stat(jsonlPath);
           lastProcessedSize = fileStat.size;
-          console.log(`[SessionManager] Existing JSONL found, size: ${lastProcessedSize} bytes`);
+          log.info({ size: lastProcessedSize }, 'Existing JSONL found');
         } catch {
-          console.log(`[SessionManager] JSONL file not found yet (will be created by Claude)`);
+          log.info('JSONL file not found yet (will be created by Claude)');
         }
 
         const session: InternalSession = {
@@ -232,8 +233,8 @@ export class SessionManager {
         };
 
         this.sessions.set(message.id, session);
-        console.log(`[SessionManager] Session started: ${message.id}`);
-        console.log(`[SessionManager] Watching: ${jsonlPath}`);
+        log.info({ sessionId: message.id }, 'Session started');
+        log.info({ path: jsonlPath }, 'Watching JSONL');
 
         await this.events.onSessionStart({
           id: session.id,
@@ -251,7 +252,7 @@ export class SessionManager {
       case 'session_end': {
         const session = this.sessions.get(message.sessionId);
         if (session) {
-          console.log(`[SessionManager] Session ended: ${message.sessionId}`);
+          log.info({ sessionId: message.sessionId }, 'Session ended');
           this.stopWatching(session);
           this.sessions.delete(message.sessionId);
           this.events.onSessionEnd(message.sessionId);
@@ -262,7 +263,7 @@ export class SessionManager {
       case 'title_update': {
         const session = this.sessions.get(message.sessionId);
         if (session && message.title) {
-          console.log(`[SessionManager] Title update for ${message.sessionId}: ${message.title}`);
+          log.info({ sessionId: message.sessionId, title: message.title }, 'Title update');
           if (this.events.onTitleChange) {
             this.events.onTitleChange(message.sessionId, message.title);
           }
@@ -271,12 +272,12 @@ export class SessionManager {
       }
 
       case 'permission_request': {
-        console.log(`[SessionManager] Permission request: ${message.requestId} - ${message.toolName}`);
+        log.info({ requestId: message.requestId, tool: message.toolName }, 'Permission request');
         this.pendingPermissions.set(message.requestId, socket);
 
         // AskUserQuestion: store mapping so we can allow when user answers via Discord UI
         if (message.toolName === 'AskUserQuestion') {
-          console.log(`[SessionManager] Pending AskUserQuestion permission: ${message.requestId}`);
+          log.info({ requestId: message.requestId }, 'Pending AskUserQuestion permission');
           this.pendingAskUserQuestions.set(message.sessionId, message.requestId);
           break;
         }
@@ -291,7 +292,7 @@ export class SessionManager {
             });
             this.sendPermissionDecision(message.requestId, decision);
           } catch (err) {
-            console.error('[SessionManager] Error handling permission request:', err);
+            log.error({ err }, 'Error handling permission request');
             this.sendPermissionDecision(message.requestId, { behavior: 'deny', message: 'Error processing request' });
           }
         } else {
@@ -305,7 +306,7 @@ export class SessionManager {
   sendPermissionDecision(requestId: string, decision: { behavior: 'allow' | 'deny'; message?: string }): void {
     const socket = this.pendingPermissions.get(requestId);
     if (!socket) {
-      console.error(`[SessionManager] No pending permission for request: ${requestId}`);
+      log.error({ requestId }, 'No pending permission for request');
       return;
     }
 
@@ -316,7 +317,7 @@ export class SessionManager {
         decision,
       }) + '\n');
     } catch (err) {
-      console.error('[SessionManager] Failed to send permission decision:', err);
+      log.error({ err }, 'Failed to send permission decision');
     }
 
     this.pendingPermissions.delete(requestId);
@@ -326,7 +327,7 @@ export class SessionManager {
   allowPendingAskUserQuestion(sessionId: string, answers: Record<string, string>): void {
     const requestId = this.pendingAskUserQuestions.get(sessionId);
     if (requestId) {
-      console.log(`[SessionManager] Allowing AskUserQuestion permission: ${requestId} with answers:`, answers);
+      log.info({ requestId, answers }, 'Allowing AskUserQuestion permission');
       this.sendAskUserQuestionResponse(requestId, answers);
       this.pendingAskUserQuestions.delete(sessionId);
     }
@@ -335,7 +336,7 @@ export class SessionManager {
   private sendAskUserQuestionResponse(requestId: string, answers: Record<string, string>): void {
     const socket = this.pendingPermissions.get(requestId);
     if (!socket) {
-      console.error(`[SessionManager] No pending permission for request: ${requestId}`);
+      log.error({ requestId }, 'No pending permission for request');
       return;
     }
 
@@ -349,7 +350,7 @@ export class SessionManager {
         },
       }) + '\n');
     } catch (err) {
-      console.error('[SessionManager] Failed to send AskUserQuestion response:', err);
+      log.error({ err }, 'Failed to send AskUserQuestion response');
     }
 
     this.pendingPermissions.delete(requestId);
@@ -394,20 +395,32 @@ export class SessionManager {
 
       // Only read new content
       const newBuffer = buffer.subarray(session.lastProcessedSize);
-      session.lastProcessedSize = buffer.length;
-
       const content = newBuffer.toString('utf-8');
-      const lines = content.split('\n').filter(Boolean);
+
+      // Split by newline, keeping track of incomplete last line
+      const parts = content.split('\n');
+      const lastPart = parts.pop() || '';
+
+      // If last part is not empty, it's an incomplete line - don't process it yet
+      const incompleteBytes = Buffer.byteLength(lastPart, 'utf-8');
+      session.lastProcessedSize = buffer.length - incompleteBytes;
+
+      const lines = parts.filter(Boolean);
+      log.debug({ lines: lines.length, buffered: incompleteBytes }, 'Processing new lines');
 
       for (const line of lines) {
         const lineHash = hash(line);
-        if (session.seenMessages.has(lineHash)) continue;
+        if (session.seenMessages.has(lineHash)) {
+          log.trace('Skipping duplicate line');
+          continue;
+        }
         this.addSeenMessage(session, lineHash);
 
         // Parse once, reuse result
         let data: any;
         try {
           data = JSON.parse(line);
+          log.trace({ type: data.type, role: data.message?.role, isMeta: data.isMeta, subtype: data.subtype }, 'Parsed line');
         } catch {
           continue;
         }
@@ -416,7 +429,7 @@ export class SessionManager {
         if (!session.slugFound && data.slug && typeof data.slug === 'string') {
           session.slugFound = true;
           session.name = data.slug;
-          console.log(`[SessionManager] Session ${session.id} name: ${data.slug}`);
+          log.info({ sessionId: session.id, name: data.slug }, 'Session name');
           this.events.onSessionUpdate(session.id, data.slug);
         }
 
@@ -441,13 +454,13 @@ export class SessionManager {
             if (msgContent.includes('<system-reminder>') && msgContent.includes('Plan mode is active')) {
               if (!session.inPlanMode) {
                 session.inPlanMode = true;
-                console.log(`[SessionManager] Session ${session.id} plan mode: true`);
+                log.info({ sessionId: session.id, planMode: true }, 'Plan mode changed');
                 this.events.onPlanModeChange(session.id, true);
               }
             } else if (msgContent.includes('Exited Plan Mode') || msgContent.includes('exited plan mode')) {
               if (session.inPlanMode) {
                 session.inPlanMode = false;
-                console.log(`[SessionManager] Session ${session.id} plan mode: false`);
+                log.info({ sessionId: session.id, planMode: false }, 'Plan mode changed');
                 this.events.onPlanModeChange(session.id, false);
               }
             }
@@ -458,7 +471,7 @@ export class SessionManager {
         if (data.type === 'assistant' && Array.isArray(data.message?.content)) {
           for (const block of data.message.content) {
             if (block.type === 'tool_use' && block.id && block.name) {
-              console.log(`[SessionManager] Tool call: ${block.name}`);
+              log.debug({ tool: block.name }, 'Tool call');
               this.events.onToolCall(session.id, {
                 id: block.id,
                 name: block.name,
@@ -508,15 +521,20 @@ export class SessionManager {
             if (textContent.trim()) {
               const messageTime = new Date(data.timestamp || Date.now());
               if (messageTime >= session.startedAt) {
+                log.info({ role: message.role, preview: textContent.slice(0, 50) }, 'Forwarding message');
                 this.events.onMessage(session.id, message.role, textContent.trim());
+              } else {
+                log.debug('Skipping old message (before session start)');
               }
+            } else {
+              log.trace({ role: message.role }, 'Message has no text content');
             }
           }
         }
       }
     } catch (err: any) {
       if (err.code !== 'ENOENT') {
-        console.error(`[SessionManager] Error processing JSONL:`, err);
+        log.error({ err }, 'Error processing JSONL');
       }
     } finally {
       session.processing = false;
@@ -536,21 +554,21 @@ export class SessionManager {
         }
       });
     } catch (err) {
-      console.error(`[SessionManager] Error setting up watcher:`, err);
+      log.error({ err }, 'Error setting up watcher');
     }
 
-    // Poll as backup (every 1 second)
+    // Poll as backup (every 2000ms to test if file locking is the issue)
     session.pollInterval = setInterval(async () => {
       if (!this.sessions.has(session.id)) {
         if (session.pollInterval) clearInterval(session.pollInterval);
         return;
       }
       await this.processJsonl(session);
-    }, 1000);
+    }, 2000);
 
     // Initial process
     this.processJsonl(session);
-    console.log(`[SessionManager] Now watching: ${session.jsonlPath}`);
+    log.info({ path: session.jsonlPath }, 'Now watching');
   }
 
   private stopWatching(session: InternalSession): void {

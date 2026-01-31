@@ -1,4 +1,5 @@
 import type { WebClient } from '@slack/web-api';
+import { slackLogger as log } from '../utils/logger.js';
 
 export interface ChannelMapping {
   sessionId: string;
@@ -76,7 +77,7 @@ export class ChannelManager {
     }
 
     if (!result?.channel?.id) {
-      console.error('[ChannelManager] Failed to create channel - no ID returned');
+      log.error('[ChannelManager] Failed to create channel - no ID returned');
       return null;
     }
 
@@ -99,7 +100,7 @@ export class ChannelManager {
         topic: `Claude Code session: ${sessionName}`,
       });
     } catch (err: any) {
-      console.error('[ChannelManager] Failed to set topic:', err.message);
+      log.error('[ChannelManager] Failed to set topic:', err.message);
     }
 
     // Invite user to channel
@@ -109,16 +110,16 @@ export class ChannelManager {
           channel: result.channel.id,
           users: this.userId,
         });
-        console.log(`[ChannelManager] Invited user to channel`);
+        log.info(`[ChannelManager] Invited user to channel`);
       } catch (err: any) {
         // Ignore "already_in_channel" error
         if (err.data?.error !== 'already_in_channel') {
-          console.error('[ChannelManager] Failed to invite user:', err.message);
+          log.error('[ChannelManager] Failed to invite user:', err.message);
         }
       }
     }
 
-    console.log(`[ChannelManager] Created channel #${channelName} for session ${sessionId}`);
+    log.info(`[ChannelManager] Created channel #${channelName} for session ${sessionId}`);
     return mapping;
   }
 
@@ -139,10 +140,10 @@ export class ChannelManager {
       await this.client.conversations.archive({
         channel: mapping.channelId,
       });
-      console.log(`[ChannelManager] Archived channel #${mapping.channelName}`);
+      log.info(`[ChannelManager] Archived channel #${mapping.channelName}`);
       return true;
     } catch (err: any) {
-      console.error('[ChannelManager] Failed to archive channel:', err.message);
+      log.error('[ChannelManager] Failed to archive channel:', err.message);
       return false;
     }
   }

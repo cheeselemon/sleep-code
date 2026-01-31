@@ -2,6 +2,7 @@ import { Bot, Context } from 'grammy';
 import type { TelegramConfig } from './types.js';
 import { SessionManager, type SessionInfo } from '../slack/session-manager.js';
 import { chunkMessage, formatTodos } from '../slack/message-formatter.js';
+import { telegramLogger as log } from '../utils/logger.js';
 
 // Telegram has a 4096 character limit per message
 const MAX_MESSAGE_LENGTH = 4000;
@@ -33,7 +34,7 @@ export function createTelegramApp(config: TelegramConfig) {
         try {
           await fn();
         } catch (err) {
-          console.error('[Telegram] Error sending message:', err);
+          log.error({ err }, 'Error sending message');
         }
         if (messageQueue.length > 0) {
           await new Promise((r) => setTimeout(r, 100));

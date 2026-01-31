@@ -1,5 +1,6 @@
 import { createSlackApp } from './slack-app.js';
 import type { SlackConfig } from './types.js';
+import { slackLogger as log } from '../utils/logger.js';
 
 async function main() {
   const config: SlackConfig = {
@@ -14,45 +15,42 @@ async function main() {
 
   const missing = required.filter((key) => !config[key]);
   if (missing.length > 0) {
-    console.error(`[Slack] Missing required config: ${missing.join(', ')}`);
-    console.error('');
+    log.error({ missing }, 'Missing required config');
     console.error('Required environment variables:');
     console.error('  SLACK_BOT_TOKEN     - Bot User OAuth Token (xoxb-...)');
     console.error('  SLACK_APP_TOKEN     - App-Level Token for Socket Mode (xapp-...)');
     console.error('  SLACK_USER_ID       - Your Slack user ID (U...)');
-    console.error('');
     console.error('Optional:');
     console.error('  SLACK_SIGNING_SECRET - Signing secret (for request verification)');
     process.exit(1);
   }
 
-  console.log('[Slack] Starting Sleep Code bot...');
+  log.info('Starting Sleep Code bot...');
 
   const { app, sessionManager } = createSlackApp(config);
 
   // Start session manager (Unix socket server for CLI connections)
   try {
     await sessionManager.start();
-    console.log('[Slack] Session manager started');
+    log.info('Session manager started');
   } catch (err) {
-    console.error('[Slack] Failed to start session manager:', err);
+    log.error({ err }, 'Failed to start session manager');
     process.exit(1);
   }
 
   // Start Slack app
   try {
     await app.start();
-    console.log('[Slack] Bot is running!');
-    console.log('');
+    log.info('Bot is running!');
     console.log('Start a Claude Code session with: sleep-code run -- claude');
     console.log('Each session will create a private #sleep-* channel');
   } catch (err) {
-    console.error('[Slack] Failed to start app:', err);
+    log.error({ err }, 'Failed to start app');
     process.exit(1);
   }
 }
 
 main().catch((err) => {
-  console.error('[Slack] Fatal error:', err);
+  log.fatal({ err }, 'Fatal error');
   process.exit(1);
 });
