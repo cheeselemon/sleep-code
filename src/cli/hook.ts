@@ -8,7 +8,6 @@ import { createConnection } from 'net';
 import { randomUUID } from 'crypto';
 
 const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 interface HookInput {
   session_id: string;
@@ -89,11 +88,6 @@ function forwardToDiscord(
     const socket = createConnection(DAEMON_SOCKET);
     let messageBuffer = '';
 
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      resolve({ behavior: 'deny', message: 'Timeout waiting for response' });
-    }, TIMEOUT_MS);
-
     socket.on('connect', () => {
       // Send permission request to daemon
       socket.write(
@@ -117,7 +111,6 @@ function forwardToDiscord(
         try {
           const msg = JSON.parse(line);
           if (msg.type === 'permission_response' && msg.requestId === requestId) {
-            clearTimeout(timeout);
             socket.end();
             resolve(msg.decision);
           }
@@ -126,13 +119,8 @@ function forwardToDiscord(
     });
 
     socket.on('error', () => {
-      clearTimeout(timeout);
       // Daemon not running - exit without output to passthrough to default behavior
       process.exit(0);
-    });
-
-    socket.on('close', () => {
-      clearTimeout(timeout);
     });
   });
 }

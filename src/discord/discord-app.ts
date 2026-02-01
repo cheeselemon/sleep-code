@@ -628,11 +628,12 @@ export function createDiscordApp(config: DiscordConfig) {
               return;
             }
 
-            // Fallback 1: first active session's thread
-            log.warn('No thread found for permission request, trying active sessions');
+            // Fallback 1: find matching session in active sessions
+            log.warn({ sessionId: request.sessionId }, 'No thread found for permission request, trying active sessions');
             const active = channelManager.getAllActive();
-            if (active.length > 0) {
-              const fallbackThread = await client.channels.fetch(active[0].threadId);
+            const matchingActive = active.find(s => s.sessionId === request.sessionId);
+            if (matchingActive) {
+              const fallbackThread = await client.channels.fetch(matchingActive.threadId);
               if (fallbackThread?.isThread()) {
                 await fallbackThread.send({ content: text, components: [row] });
                 return;
@@ -640,9 +641,8 @@ export function createDiscordApp(config: DiscordConfig) {
             }
 
             // Fallback 2: persisted mappings (after PM2 restart)
-            log.warn('No active sessions, trying persisted mappings');
-            const persisted = channelManager.getPersistedMapping(request.sessionId)
-              || channelManager.getAllPersisted()[0];
+            log.warn({ sessionId: request.sessionId }, 'No active sessions, trying persisted mappings');
+            const persisted = channelManager.getPersistedMapping(request.sessionId);
             if (persisted) {
               try {
                 const persistedThread = await client.channels.fetch(persisted.threadId);
@@ -674,15 +674,7 @@ export function createDiscordApp(config: DiscordConfig) {
 
         sendToThread();
 
-        // Timeout after 5 minutes
-        const TIMEOUT_MS = 5 * 60 * 1000;
-        setTimeout(() => {
-          if (pendingPermissions.has(request.requestId)) {
-            log.warn({ requestId: request.requestId }, 'Permission request timed out');
-            resolve({ behavior: 'deny', message: 'Request timed out' });
-            pendingPermissions.delete(request.requestId);
-          }
-        }, TIMEOUT_MS);
+        // No timeout - wait indefinitely for user response
       });
     },
   });

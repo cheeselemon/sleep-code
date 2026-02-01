@@ -523,6 +523,15 @@ export class SessionManager {
               if (messageTime >= session.startedAt) {
                 log.info({ role: message.role, preview: textContent.slice(0, 50) }, 'Forwarding message');
                 this.events.onMessage(session.id, message.role, textContent.trim());
+
+                // Update status based on message role
+                if (message.role === 'assistant' && session.status !== 'running') {
+                  session.status = 'running';
+                  this.events.onSessionStatus(session.id, 'running');
+                } else if (message.role === 'user' && session.status !== 'idle') {
+                  session.status = 'idle';
+                  this.events.onSessionStatus(session.id, 'idle');
+                }
               } else {
                 log.debug('Skipping old message (before session start)');
               }
