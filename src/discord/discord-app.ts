@@ -121,6 +121,9 @@ export function createDiscordApp(config: DiscordConfig) {
   // Typing indicator intervals for running sessions
   const typingIntervals = new Map<string, NodeJS.Timeout>(); // sessionId -> interval
 
+  // Store full results for "View Full" button
+  const pendingFullResults = new Map<string, { content: string; toolName: string }>(); // resultId -> full content
+
   // Helper to get thread for sending messages
   const getThread = async (sessionId: string) => {
     const session = channelManager.getSession(sessionId);
@@ -503,25 +506,45 @@ export function createDiscordApp(config: DiscordConfig) {
 
       // Truncate long results
       const maxLen = 800;
-      let content = result.content;
-      if (content.length > maxLen) {
-        content = content.slice(0, maxLen) + '\n... (truncated)';
+      const fullContent = result.content;
+      const isTruncated = fullContent.length > maxLen;
+      let content = fullContent;
+      if (isTruncated) {
+        content = fullContent.slice(0, maxLen) + '\n... (truncated)';
       }
 
       const prefix = result.isError ? '❌ Error:' : '✅ Result:';
       const text = `${prefix}\n\`\`\`\n${content}\n\`\`\``;
+
+      // Create "View Full" button if truncated
+      let components: ActionRowBuilder<ButtonBuilder>[] = [];
+      if (isTruncated) {
+        const resultId = `${result.toolUseId}-${Date.now()}`;
+        pendingFullResults.set(resultId, { content: fullContent, toolName: toolInfo?.toolName || 'unknown' });
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`fullresult:${resultId}`)
+            .setLabel('View Full')
+            .setStyle(ButtonStyle.Secondary)
+        );
+        components = [row];
+
+        // Auto-expire after 30 minutes
+        setTimeout(() => pendingFullResults.delete(resultId), 30 * 60 * 1000);
+      }
 
       try {
         if (toolInfo?.messageId) {
           // Reply to the tool call message
           const parentMessage = await thread.messages.fetch(toolInfo.messageId);
           if (parentMessage) {
-            await parentMessage.reply(text);
+            await parentMessage.reply({ content: text, components });
           } else {
-            await thread.send(text);
+            await thread.send({ content: text, components });
           }
         } else {
-          await thread.send(text);
+          await thread.send({ content: text, components });
         }
       } catch (err) {
         log.error({ err }, 'Failed to post tool result');
@@ -892,6 +915,38 @@ export function createDiscordApp(config: DiscordConfig) {
       // Handle button clicks
       if (interaction.isButton()) {
       const customId = interaction.customId;
+
+      // Handle "View Full" button for truncated results
+      if (customId.startsWith('fullresult:')) {
+        const resultId = customId.slice('fullresult:'.length);
+        const fullResult = pendingFullResults.get(resultId);
+
+        if (!fullResult) {
+          await interaction.reply({ content: '⚠️ This result has expired.', ephemeral: true });
+          return;
+        }
+
+        // Create .txt file with full content
+        const buffer = Buffer.from(fullResult.content, 'utf-8');
+        const attachment = new AttachmentBuilder(buffer, {
+          name: `${fullResult.toolName}-result.txt`,
+        });
+
+        await interaction.reply({
+          content: `📄 **Full result for ${fullResult.toolName}**`,
+          files: [attachment],
+        });
+
+        // Clean up
+        pendingFullResults.delete(resultId);
+
+        // Remove button from original message
+        try {
+          await interaction.message.edit({ components: [] });
+        } catch {}
+
+        return;
+      }
 
       // Handle permission request buttons
       if (customId.startsWith('perm:')) {
