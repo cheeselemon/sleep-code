@@ -170,7 +170,7 @@ export class SessionManager {
       try {
         session.socket.write(JSON.stringify({ type: 'input', text: '\r' }) + '\n');
       } catch {}
-    }, 50);
+    }, 100);
 
     return true;
   }
@@ -266,6 +266,28 @@ export class SessionManager {
           log.info({ sessionId: message.sessionId, title: message.title }, 'Title update');
           if (this.events.onTitleChange) {
             this.events.onTitleChange(message.sessionId, message.title);
+          }
+        }
+        break;
+      }
+
+      case 'pty_output': {
+        const session = this.sessions.get(message.sessionId);
+        if (session && message.content) {
+          // PTY output을 backup source로 사용 - JSONL에서 못 잡은 메시지 보완
+          const content = message.content.trim();
+          if (content) {
+            // 중복 방지: content hash로 최근 전송된 메시지와 비교
+            const contentHash = hash(content.slice(0, 100)); // 앞 100자로 hash
+            const recentKey = `pty:${session.id}:${contentHash}`;
+
+            if (!session.seenMessages.has(recentKey)) {
+              this.addSeenMessage(session, recentKey);
+              log.info({ sessionId: session.id, preview: content.slice(0, 50), source: 'pty' }, 'Forwarding PTY message');
+              this.events.onMessage(session.id, 'assistant', content);
+            } else {
+              log.debug({ sessionId: session.id, preview: content.slice(0, 30) }, 'Skipping duplicate PTY message');
+            }
           }
         }
         break;
@@ -521,14 +543,27 @@ export class SessionManager {
             if (textContent.trim()) {
               const messageTime = new Date(data.timestamp || Date.now());
               if (messageTime >= session.startedAt) {
-                log.info({ role: message.role, preview: textContent.slice(0, 50) }, 'Forwarding message');
-                this.events.onMessage(session.id, message.role, textContent.trim());
+                // 중복 방지: content hash로 PTY에서 이미 보낸 메시지인지 확인
+                const trimmedContent = textContent.trim();
+                const contentHash = hash(trimmedContent.slice(0, 100));
+                const contentKey = `pty:${session.id}:${contentHash}`;
+
+                if (session.seenMessages.has(contentKey)) {
+                  log.debug({ role: message.role, preview: trimmedContent.slice(0, 30) }, 'Skipping (already sent via PTY)');
+                } else {
+                  // JSONL 소스로 마킹하여 PTY에서 중복 전송 방지
+                  this.addSeenMessage(session, contentKey);
+                  log.info({ role: message.role, preview: trimmedContent.slice(0, 50), source: 'jsonl' }, 'Forwarding message');
+                  this.events.onMessage(session.id, message.role, trimmedContent);
+                }
 
                 // Update status based on message role
-                if (message.role === 'assistant' && session.status !== 'running') {
+                // user message → Claude starts thinking → typing indicator ON
+                // assistant message → Claude is responding → typing indicator OFF
+                if (message.role === 'user' && session.status !== 'running') {
                   session.status = 'running';
                   this.events.onSessionStatus(session.id, 'running');
-                } else if (message.role === 'user' && session.status !== 'idle') {
+                } else if (message.role === 'assistant' && session.status !== 'idle') {
                   session.status = 'idle';
                   this.events.onSessionStatus(session.id, 'idle');
                 }
