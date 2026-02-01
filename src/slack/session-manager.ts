@@ -6,8 +6,8 @@
  * So we just watch each session's specific file directly.
  */
 
-import { watch, type FSWatcher } from 'fs';
 import { readFile, stat, unlink } from 'fs/promises';
+import chokidar, { type FSWatcher } from 'chokidar';
 import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
 import type { TodoItem } from '../types.js';
@@ -553,20 +553,33 @@ export class SessionManager {
   private startWatching(session: InternalSession): void {
     if (!session.jsonlPath) return;
 
-    // Extract just the filename for comparison
-    const jsonlFilename = session.jsonlPath.split('/').pop();
-
     try {
-      session.watcher = watch(session.projectDir, { recursive: false }, async (_, filename) => {
-        if (filename === jsonlFilename) {
-          await this.processJsonl(session);
-        }
+      session.watcher = chokidar.watch(session.jsonlPath, {
+        persistent: true,
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: 100,  // 100ms 동안 변화 없으면 완료로 간주
+          pollInterval: 50,
+        },
+      });
+
+      session.watcher.on('change', async () => {
+        await this.processJsonl(session);
+      });
+
+      session.watcher.on('add', async () => {
+        // 파일이 새로 생성된 경우
+        await this.processJsonl(session);
+      });
+
+      session.watcher.on('error', (err) => {
+        log.error({ err }, 'Chokidar watcher error');
       });
     } catch (err) {
-      log.error({ err }, 'Error setting up watcher');
+      log.error({ err }, 'Error setting up chokidar watcher');
     }
 
-    // Poll as backup (every 2000ms to test if file locking is the issue)
+    // Poll as backup (chokidar가 놓칠 수 있는 경우 대비)
     session.pollInterval = setInterval(async () => {
       if (!this.sessions.has(session.id)) {
         if (session.pollInterval) clearInterval(session.pollInterval);
@@ -577,7 +590,7 @@ export class SessionManager {
 
     // Initial process
     this.processJsonl(session);
-    log.info({ path: session.jsonlPath }, 'Now watching');
+    log.info({ path: session.jsonlPath }, 'Now watching with chokidar');
   }
 
   private stopWatching(session: InternalSession): void {
