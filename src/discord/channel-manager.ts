@@ -8,7 +8,7 @@ import { discordLogger as log } from '../utils/logger.js';
 const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
 
-interface PersistedMapping {
+export interface PersistedMapping {
   sessionId: string;
   threadId: string;
   channelId: string;
@@ -515,5 +515,19 @@ export class ChannelManager {
 
   getAllActive(): ChannelMapping[] {
     return Array.from(this.sessions.values()).filter((s) => s.status !== 'ended');
+  }
+
+  /**
+   * Get all persisted mappings (for fallback when session not in memory)
+   */
+  getAllPersisted(): PersistedMapping[] {
+    return Array.from(this.persistedMappings.values());
+  }
+
+  /**
+   * Get a specific persisted mapping by sessionId
+   */
+  getPersistedMapping(sessionId: string): PersistedMapping | undefined {
+    return this.persistedMappings.get(sessionId);
   }
 }

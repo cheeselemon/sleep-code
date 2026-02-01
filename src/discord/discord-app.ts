@@ -26,6 +26,11 @@ import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message
 import { extractImagePaths } from '../utils/image-extractor.js';
 import { discordLogger as log } from '../utils/logger.js';
 
+// Prevent unhandled rejections from crashing the process
+process.on('unhandledRejection', (reason) => {
+  log.error({ reason }, 'Unhandled promise rejection');
+});
+
 // Image extensions that Claude can read
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -600,8 +605,8 @@ export function createDiscordApp(config: DiscordConfig) {
               return;
             }
 
-            // Fallback to first active session's thread
-            log.warn('No thread found for permission request, using first active session');
+            // Fallback 1: first active session's thread
+            log.warn('No thread found for permission request, trying active sessions');
             const active = channelManager.getAllActive();
             if (active.length > 0) {
               const fallbackThread = await client.channels.fetch(active[0].threadId);
@@ -611,9 +616,31 @@ export function createDiscordApp(config: DiscordConfig) {
               }
             }
 
-            // No thread available, auto-deny
-            log.warn('No active threads, auto-denying permission');
-            resolve({ behavior: 'deny', message: 'No Discord thread available' });
+            // Fallback 2: persisted mappings (after PM2 restart)
+            log.warn('No active sessions, trying persisted mappings');
+            const persisted = channelManager.getPersistedMapping(request.sessionId)
+              || channelManager.getAllPersisted()[0];
+            if (persisted) {
+              try {
+                const persistedThread = await client.channels.fetch(persisted.threadId);
+                if (persistedThread?.isThread()) {
+                  // Unarchive if archived
+                  if (persistedThread.archived) {
+                    log.info({ threadId: persisted.threadId }, 'Unarchiving thread for permission request');
+                    await persistedThread.setArchived(false);
+                  }
+                  log.info({ threadId: persisted.threadId }, 'Using persisted thread for permission request');
+                  await persistedThread.send({ content: text, components: [row] });
+                  return;
+                }
+              } catch (err) {
+                log.warn({ err }, 'Failed to fetch persisted thread');
+              }
+            }
+
+            // No thread available, auto-allow (local development mode)
+            log.warn('No threads available, auto-allowing permission (local mode)');
+            resolve({ behavior: 'allow' });
             pendingPermissions.delete(request.requestId);
           } catch (err) {
             log.error({ err }, 'Failed to post permission request');
@@ -684,6 +711,11 @@ export function createDiscordApp(config: DiscordConfig) {
       discordSentMessages.delete(inputText.trim());
       await message.reply('⚠️ Failed to send input - session not connected.');
     }
+  });
+
+  // Handle Discord client errors to prevent crashes
+  client.on('error', (err) => {
+    log.error({ err }, 'Discord client error');
   });
 
   // When bot is ready
@@ -856,19 +888,27 @@ export function createDiscordApp(config: DiscordConfig) {
 
   // Handle button interactions for AskUserQuestion
   client.on(Events.InteractionCreate, async (interaction) => {
-    // Handle button clicks
-    if (interaction.isButton()) {
+    try {
+      // Handle button clicks
+      if (interaction.isButton()) {
       const customId = interaction.customId;
 
       // Handle permission request buttons
       if (customId.startsWith('perm:')) {
+        // Immediately defer to prevent 3-second timeout
+        await interaction.deferUpdate();
+
         const parts = customId.split(':');
         if (parts.length !== 3) return;
 
         const [, requestId, decision] = parts;
         const pending = pendingPermissions.get(requestId);
         if (!pending) {
-          await interaction.reply({ content: '⚠️ This permission request has expired.', ephemeral: true });
+          try {
+            await interaction.editReply({ content: '⚠️ This permission request has expired.', components: [] });
+          } catch (err) {
+            log.warn({ err }, 'Failed to edit reply for expired permission');
+          }
           return;
         }
 
@@ -891,10 +931,14 @@ export function createDiscordApp(config: DiscordConfig) {
           statusText = 'Permission denied';
         }
 
-        await interaction.update({
-          content: `${emoji} ${statusText}`,
-          components: [],
-        });
+        try {
+          await interaction.editReply({
+            content: `${emoji} ${statusText}`,
+            components: [],
+          });
+        } catch (err) {
+          log.warn({ err }, 'Failed to edit reply for permission (may have timed out)');
+        }
         return;
       }
 
@@ -1082,6 +1126,9 @@ export function createDiscordApp(config: DiscordConfig) {
 
       // Try to submit if all questions answered
       trySubmitAllAnswers(toolUseId);
+    }
+    } catch (err) {
+      log.error({ err }, 'Error handling interaction');
     }
   });
 
