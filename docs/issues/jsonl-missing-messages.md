@@ -45,13 +45,38 @@ All assistant messages displayed in the terminal should be written to the JSONL 
 ## Pattern Observed
 
 Messages are more likely to be missing when:
-- Short text responses (1-2 sentences)
-- Immediately after tool results
-- Possibly after extended thinking time
+- **Immediately after Bash tool results** (confirmed trigger)
+- NOT language-specific (both Korean and English affected)
+- NOT length-specific (both short and long responses affected)
+- NOT format-specific (both plain text and markdown affected)
+
+### Confirmed Missing Messages
+
+| Index | Trigger | Content Length | Language | Markdown |
+|-------|---------|----------------|----------|----------|
+| [027] | After Bash (sleep) | Short | Korean | No |
+| [046] | After Bash (git add && commit) | Long | Korean | Yes |
+| [049] | After Bash (grep) | Long | Korean | Yes |
+| [052] | After Bash (grep) | Long | Korean | Yes |
+| [057] | After Bash (grep) | Long | English | Yes (table) |
+| [058] | After Bash (wc -l) | Short ("check") | English | No |
+
+### Key Finding
+
+**Language does NOT matter.** Both Korean and English messages are dropped.
+
+The common pattern is:
+1. Bash tool execution completes
+2. Assistant responds with text (any language, any length)
+3. Message is displayed in terminal but NOT written to JSONL
+
+The issue appears to be timing-related with Bash tool results, not content-related.
 
 ## Additional Context
 
 We're building a Discord bot that monitors Claude Code sessions via JSONL. This missing message issue causes users to miss important responses.
+
+Tested with English-only responses - same issue occurs. Language is NOT a factor.
 
 ---
 
