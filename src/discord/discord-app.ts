@@ -505,7 +505,7 @@ export function createDiscordApp(config: DiscordConfig) {
       }
 
       // Truncate long results
-      const maxLen = 800;
+      const maxLen = 300;
       const fullContent = result.content;
       const isTruncated = fullContent.length > maxLen;
       let content = fullContent;
