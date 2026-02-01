@@ -127,8 +127,8 @@ function forwardToDiscord(
 
     socket.on('error', () => {
       clearTimeout(timeout);
-      // Daemon not running - default to deny
-      resolve({ behavior: 'deny', message: 'Sleep-code daemon not running' });
+      // Daemon not running - exit without output to passthrough to default behavior
+      process.exit(0);
     });
 
     socket.on('close', () => {
