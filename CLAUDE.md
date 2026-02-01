@@ -1,46 +1,61 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project: Sleep Code
 
-Interact with Claude Code sessions from Slack, Discord, and Telegram.
+Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while away.
 
-### Architecture
-- **CLI**: `src/cli/` - Commands for `npm run telegram`, `npm run discord`, `npm run slack`, `npm run claude`
-- **Slack**: `src/slack/` - Slack bot integration
-- **Discord**: `src/discord/` - Discord bot integration
-- **Telegram**: `src/telegram/` - Telegram bot integration via grammY
+## Build & Run
 
-### Running
 ```bash
-# Telegram setup (first time)
-npm run telegram:setup
-
-# Start the Telegram bot
-npm run telegram
-
-# Discord setup (first time)
-npm run discord:setup
-
-# Start the Discord bot
-npm run discord
-
-# Slack setup (first time)
-npm run slack:setup
-
-# Start the Slack bot
-npm run slack
-
-# Start a monitored Claude Code session (in another terminal)
-npm run claude
+npm run build           # Build with tsup (required before running)
+npm run telegram:setup  # Configure Telegram credentials
+npm run telegram        # Start the Telegram bot
+npm run discord:setup   # Configure Discord credentials
+npm run discord         # Start the Discord bot
+npm run slack:setup     # Configure Slack credentials
+npm run slack           # Start the Slack bot
+npm run claude          # Start a monitored Claude Code session
 ```
 
-### Key Files
-- `src/cli/index.ts` - CLI entry point
-- `src/cli/run.ts` - Session runner (PTY + JSONL watching)
-- `src/cli/slack.ts` - Slack setup and run commands
-- `src/cli/discord.ts` - Discord setup and run commands
-- `src/cli/telegram.ts` - Telegram setup and run commands
-- `src/slack/session-manager.ts` - JSONL watching and session tracking (shared)
-- `src/slack/slack-app.ts` - Slack Bolt app and event handlers
-- `src/discord/discord-app.ts` - Discord.js app and event handlers
-- `src/telegram/telegram-app.ts` - Telegram grammY app and event handlers
-- `slack-manifest.json` - Slack app manifest for easy setup
-- `ecosystem.config.cjs` - PM2 configuration for background execution
+### PM2 Background Execution
+
+```bash
+pm2 start ecosystem.config.cjs --only sleep-telegram  # Or sleep-discord, sleep-slack
+pm2 restart sleep-telegram
+pm2 logs sleep-telegram
+```
+
+## Architecture
+
+```
+src/
+├── cli/           # CLI entry point and commands
+│   ├── index.ts   # Main CLI entry
+│   ├── run.ts     # Session runner (PTY + JSONL watching)
+│   ├── hook.ts    # Claude Code permission hook handler
+│   └── {telegram,discord,slack}.ts  # Platform-specific setup/run
+├── slack/
+│   ├── slack-app.ts        # Slack Bolt app and event handlers
+│   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
+├── discord/
+│   ├── discord-app.ts      # Discord.js app and event handlers
+│   └── channel-manager.ts  # Thread/channel management
+└── telegram/
+    └── telegram-app.ts     # grammY app and event handlers
+```
+
+### How It Works
+
+1. `npm run {platform}` starts a bot with a Unix socket daemon
+2. `npm run claude` spawns Claude in a PTY and connects via socket
+3. Session manager watches Claude's `~/.claude/projects/*/session.jsonl` files
+4. Messages relay bidirectionally: JSONL → Bot → Chat, Chat → Bot → PTY
+5. Permission requests are handled via `hook.ts` (forwards to daemon for Discord/Slack button interactions)
+
+### Key Patterns
+
+- **SessionManager** (`src/slack/session-manager.ts`): Shared across all platforms. Watches JSONL files, emits events for messages, tool calls, permissions
+- **Platform Apps**: Each creates their own UI (threads/channels/chats) and handles platform-specific interactions
+- **Permission Hook**: `src/cli/hook.ts` connects to daemon socket, forwards Claude Code's permission prompts to chat platforms for interactive approval
