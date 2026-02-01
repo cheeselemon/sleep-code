@@ -51,7 +51,8 @@
     "node-pty": "^1.0.0",
     "pino": "^10.3.0",
     "rotating-file-stream": "^3.2.7",
-    "stream-json": "^1.9.1"
+    "stream-json": "^1.9.1",
+    "strip-ansi": "^7.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.19.30",

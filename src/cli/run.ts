@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { createConnection, type Socket } from 'net';
 import * as pty from 'node-pty';
+// import { PtyOutputParser } from '../shared/pty-output-parser.js';
 
 const DAEMON_SOCKET = '/tmp/sleep-code-daemon.sock';
 const RECONNECT_INTERVAL = 2000;
@@ -113,6 +114,20 @@ class DaemonConnection {
           type: 'title_update',
           sessionId: this.config.sessionId,
           title,
+        }) + '\n');
+      } catch {}
+    }
+  }
+
+  sendPtyOutput(content: string, isThinking: boolean): void {
+    if (this.connected && this.socket && content) {
+      try {
+        this.socket.write(JSON.stringify({
+          type: 'pty_output',
+          sessionId: this.config.sessionId,
+          content,
+          isThinking,
+          timestamp: Date.now(),
         }) + '\n');
       } catch {}
     }
@@ -255,9 +270,16 @@ export async function run(command: string[]): Promise<void> {
     daemon.sendTitle(title);
   });
 
+  // PTY output parsing disabled - user input also appears in stdout
+  // TODO: Need to filter out user input before enabling
+  // const ptyOutputParser = new PtyOutputParser((output) => {
+  //   daemon.sendPtyOutput(output.content, output.isThinking);
+  // });
+
   ptyProcess.onData((data: string) => {
     process.stdout.write(data);
     titleExtractor.process(data);
+    // ptyOutputParser.process(data);
   });
 
   const onStdinData = (data: Buffer) => {
