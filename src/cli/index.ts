@@ -54,16 +54,26 @@ async function main() {
       // Find -- separator and get command after it
       const separatorIndex = args.indexOf('--');
       if (separatorIndex === -1) {
-        console.error('Usage: sleep-code run -- <command> [args...]');
+        console.error('Usage: sleep-code run [--session-id <uuid>] -- <command> [args...]');
         console.error('Example: sleep-code run -- claude');
         process.exit(1);
       }
+
+      // Parse options before --
+      const runOptions = args.slice(1, separatorIndex);
+      let providedSessionId: string | undefined;
+
+      const sessionIdIndex = runOptions.indexOf('--session-id');
+      if (sessionIdIndex !== -1 && runOptions[sessionIdIndex + 1]) {
+        providedSessionId = runOptions[sessionIdIndex + 1];
+      }
+
       const cmd = args.slice(separatorIndex + 1);
       if (cmd.length === 0) {
         console.error('No command specified after --');
         process.exit(1);
       }
-      await run(cmd);
+      await run(cmd, providedSessionId);
       break;
     }
 
@@ -120,6 +130,7 @@ Commands:
   slack setup        Configure Slack integration
   hook setup         Configure Claude Code permission hook
   run -- <cmd>       Start a monitored session
+  run --session-id <uuid> -- <cmd>  Start with specific session ID
   help               Show this help message
 
 Examples:
@@ -131,6 +142,14 @@ Examples:
   sleep-code slack            # Start the Slack bot
   sleep-code hook setup       # Configure permission forwarding
   sleep-code run -- claude    # Start a Claude Code session
+
+Discord Commands (after /claude add-dir):
+  /claude start      Start session in a whitelisted directory
+  /claude stop       Stop a running session
+  /claude status     Show all managed sessions
+  /claude add-dir    Add directory to whitelist
+  /claude remove-dir Remove directory from whitelist
+  /claude list-dirs  List whitelisted directories
 `);
       break;
     }

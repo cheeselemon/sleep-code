@@ -117,11 +117,21 @@ export class ChannelManager {
   }
 
   /**
-   * Remove a persisted mapping
+   * Remove a persisted mapping (public for startup reconciliation)
+   * Also cleans up in-memory maps if the session exists there
    */
-  private async removePersistedMapping(sessionId: string): Promise<void> {
+  async removePersistedMapping(sessionId: string): Promise<void> {
+    // Clean up persisted mapping
     this.persistedMappings.delete(sessionId);
     await this.saveMappings();
+
+    // Also clean up in-memory maps if session exists (Issue 8)
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.threadToSession.delete(session.threadId);
+      this.sessions.delete(sessionId);
+      log.info(`[ChannelManager] Removed in-memory session mapping for ${sessionId}`);
+    }
   }
 
   /**

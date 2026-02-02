@@ -19,6 +19,7 @@ interface DaemonConnectionConfig {
   cwd: string;
   command: string[];
   jsonlFile: string;
+  pid: number;
   onInput: (text: string) => void;
 }
 
@@ -59,6 +60,7 @@ class DaemonConnection {
         command: this.config.command,
         name: this.config.command.join(' '),
         jsonlFile: this.config.jsonlFile,
+        pid: this.config.pid,
       }) + '\n');
     });
 
@@ -224,9 +226,9 @@ class TitleExtractor {
 }
 
 
-export async function run(command: string[]): Promise<void> {
-  // Use full UUID - Claude Code requires valid UUID for --session-id
-  const sessionId = randomUUID();
+export async function run(command: string[], providedSessionId?: string): Promise<void> {
+  // Use provided session ID or generate a new one
+  const sessionId = providedSessionId || randomUUID();
   const cwd = process.cwd();
   const projectDir = getClaudeProjectDir(cwd);
 
@@ -253,6 +255,7 @@ export async function run(command: string[]): Promise<void> {
     cwd,
     command,
     jsonlFile,
+    pid: ptyProcess.pid,
     onInput: (text) => {
       ptyProcess.write(text);
     },

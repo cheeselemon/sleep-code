@@ -23,9 +23,10 @@ export interface SessionInfo {
   projectDir: string;
   status: 'running' | 'idle' | 'ended';
   startedAt: Date;
+  pid: number;
 }
 
-interface InternalSession extends SessionInfo {
+interface InternalSession extends Omit<SessionInfo, 'pid'> {
   socket: Socket;
   watcher?: FSWatcher;
   pollInterval?: NodeJS.Timeout;
@@ -37,6 +38,7 @@ interface InternalSession extends SessionInfo {
   inPlanMode: boolean;
   lastProcessedSize: number;      // Track last read position
   processing: boolean;            // Prevent concurrent processing
+  pid: number;                    // Process ID
 }
 
 export interface ChatMessage {
@@ -185,6 +187,7 @@ export class SessionManager {
       projectDir: session.projectDir,
       status: session.status,
       startedAt: session.startedAt,
+      pid: session.pid,
     };
   }
 
@@ -196,6 +199,7 @@ export class SessionManager {
       projectDir: s.projectDir,
       status: s.status,
       startedAt: s.startedAt,
+      pid: s.pid,
     }));
   }
 
@@ -230,6 +234,7 @@ export class SessionManager {
           jsonlPath,
           lastProcessedSize,
           processing: false,
+          pid: message.pid || 0,
         };
 
         this.sessions.set(message.id, session);
@@ -243,6 +248,7 @@ export class SessionManager {
           projectDir: session.projectDir,
           status: session.status,
           startedAt: session.startedAt,
+          pid: session.pid,
         });
 
         this.startWatching(session);

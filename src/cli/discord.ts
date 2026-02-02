@@ -2,6 +2,8 @@ import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
 import { cliLogger as log } from '../utils/logger.js';
+import { ProcessManager } from '../discord/process-manager.js';
+import { SettingsManager } from '../discord/settings-manager.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const DISCORD_CONFIG_FILE = `${CONFIG_DIR}/discord.env`;
@@ -162,12 +164,36 @@ export async function discordRun(): Promise<void> {
   log.info({ source }, 'Loaded config');
   log.info('Starting Discord bot...');
 
+  // Initialize settings manager first (needed by process manager)
+  const settingsManager = new SettingsManager();
+
+  // Initialize process manager with callbacks
+  const processManager = new ProcessManager({
+    onStatusChange: (entry, oldStatus) => {
+      log.info({ sessionId: entry.sessionId, status: entry.status, oldStatus }, 'Session status changed');
+      // TODO: Could notify Discord thread here if entry.threadId exists
+    },
+    getAutoCleanupOrphans: () => settingsManager.shouldAutoCleanupOrphans(),
+  });
+
+  try {
+    await processManager.initialize();
+    await settingsManager.initialize();
+    log.info('Managers initialized');
+  } catch (err) {
+    log.error({ err }, 'Failed to initialize managers');
+    process.exit(1);
+  }
+
   const discordConfig = {
     botToken: config.DISCORD_BOT_TOKEN,
     userId: config.DISCORD_USER_ID,
   };
 
-  const { client, sessionManager } = createDiscordApp(discordConfig);
+  const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {
+    processManager,
+    settingsManager,
+  });
 
   // Start session manager (Unix socket server for CLI connections)
   try {
@@ -183,9 +209,95 @@ export async function discordRun(): Promise<void> {
     await client.login(config.DISCORD_BOT_TOKEN);
     log.info('Discord bot is running!');
     console.log('Start a Claude Code session with: sleep-code run -- claude');
+    console.log('Or use /claude start in Discord to spawn sessions remotely');
     console.log('Each session will create a #sleep-* channel');
+
+    // Wait for channelManager to be ready before running reconciliation (Issue 3)
+    log.info('Waiting for channel manager initialization...');
+    const isReady = await channelManager.waitForInit();
+    if (isReady) {
+      await runStartupReconciliation();
+    } else {
+      log.warn('Channel manager failed to initialize, skipping reconciliation');
+    }
   } catch (err) {
     log.error({ err }, 'Failed to start Discord bot');
     process.exit(1);
   }
+
+  // Startup reconciliation: notify Discord threads about sessions that died during downtime
+  async function runStartupReconciliation() {
+    const deadSessions = processManager.getDeadSessionsNeedingNotification();
+    if (deadSessions.length === 0) {
+      log.info('Startup reconciliation: no dead sessions to notify');
+      return;
+    }
+
+    log.info({ count: deadSessions.length }, 'Startup reconciliation: notifying dead sessions');
+
+    // Mark all sessions being reconciled to prevent race condition with onSessionConnected
+    for (const entry of deadSessions) {
+      processManager.markAsReconciling(entry.sessionId);
+    }
+
+    try {
+      for (const entry of deadSessions) {
+        if (!entry.threadId) continue;
+
+        try {
+          const channel = await client.channels.fetch(entry.threadId);
+          if (channel?.isThread()) {
+            // Unarchive if needed to send message
+            if (channel.archived) {
+              await channel.setArchived(false);
+            }
+
+            // Send notification
+            const statusEmoji = entry.status === 'orphaned' ? '💀' : '🛑';
+            const reason = entry.status === 'orphaned'
+              ? 'Session crashed or became unresponsive'
+              : 'Session ended';
+            await channel.send(
+              `${statusEmoji} **Session Lost During Bot Downtime**\n` +
+              `Reason: ${reason}\n` +
+              `Session: \`${entry.sessionId.slice(0, 8)}...\`\n` +
+              `Directory: \`${entry.cwd}\``
+            );
+
+            // Archive the thread
+            await channel.setArchived(true);
+            log.info({ sessionId: entry.sessionId, threadId: entry.threadId }, 'Notified dead session thread');
+          }
+        } catch (err) {
+          log.error({ err, sessionId: entry.sessionId, threadId: entry.threadId }, 'Failed to notify dead session');
+        }
+
+        // Clean up the entry from registry
+        await processManager.removeEntry(entry.sessionId);
+
+        // Clean up channel manager mapping (Issue 2: add await)
+        await channelManager.removePersistedMapping(entry.sessionId);
+      }
+    } finally {
+      // Unmark all sessions from reconciliation
+      for (const entry of deadSessions) {
+        processManager.unmarkAsReconciling(entry.sessionId);
+      }
+    }
+
+    log.info('Startup reconciliation complete');
+  }
+
+  // Graceful shutdown
+  const shutdown = () => {
+    log.info('Shutting down...');
+    cleanup(); // Clean up intervals (Issue 6)
+    processManager.shutdown();
+    sessionManager.stop();
+    client.destroy();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

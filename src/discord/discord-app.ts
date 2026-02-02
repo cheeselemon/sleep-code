@@ -14,10 +14,11 @@ import {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  EmbedBuilder,
   type Attachment,
 } from 'discord.js';
 import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import type { DiscordConfig } from './types.js';
 import { SessionManager } from '../slack/session-manager.js';
@@ -25,6 +26,8 @@ import { ChannelManager } from './channel-manager.js';
 import { chunkMessage, formatSessionStatus, formatTodos } from '../slack/message-formatter.js';
 import { extractImagePaths } from '../utils/image-extractor.js';
 import { discordLogger as log } from '../utils/logger.js';
+import { ProcessManager, type ProcessEntry } from './process-manager.js';
+import { SettingsManager } from './settings-manager.js';
 
 // Prevent unhandled rejections from crashing the process
 process.on('unhandledRejection', (reason) => {
@@ -66,7 +69,15 @@ async function downloadAttachment(attachment: Attachment): Promise<string | null
   }
 }
 
-export function createDiscordApp(config: DiscordConfig) {
+export interface DiscordAppOptions {
+  config: DiscordConfig;
+  processManager?: ProcessManager;
+  settingsManager?: SettingsManager;
+}
+
+export function createDiscordApp(config: DiscordConfig, options?: Partial<DiscordAppOptions>) {
+  const processManager = options?.processManager;
+  const settingsManager = options?.settingsManager;
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -121,8 +132,24 @@ export function createDiscordApp(config: DiscordConfig) {
   // Typing indicator intervals for running sessions
   const typingIntervals = new Map<string, NodeJS.Timeout>(); // sessionId -> interval
 
-  // Store full results for "View Full" button
-  const pendingFullResults = new Map<string, { content: string; toolName: string }>(); // resultId -> full content
+  // Store full results for "View Full" button (with timestamp for cleanup)
+  const pendingFullResults = new Map<string, { content: string; toolName: string; createdAt: number }>(); // resultId -> full content
+
+  // Periodic cleanup of expired pendingFullResults (every 5 minutes)
+  const FULL_RESULT_TTL = 30 * 60 * 1000; // 30 minutes
+  const fullResultsCleanupInterval = setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [resultId, data] of pendingFullResults) {
+      if (now - data.createdAt > FULL_RESULT_TTL) {
+        pendingFullResults.delete(resultId);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      log.debug({ cleaned }, 'Cleaned expired pending full results');
+    }
+  }, 5 * 60 * 1000);
 
   // Helper to get thread for sending messages
   const getThread = async (sessionId: string) => {
@@ -178,13 +205,41 @@ export function createDiscordApp(config: DiscordConfig) {
   // Create session manager with event handlers that post to Discord
   const sessionManager = new SessionManager({
     onSessionStart: async (session) => {
+      // Notify ProcessManager that session connected (transitions 'starting' -> 'running')
+      // Also track manually started sessions
+      if (processManager) {
+        const result = await processManager.onSessionConnected(session.id, session.cwd);
+
+        // If session wasn't in registry, add it (manual start via CLI)
+        if (!result.found) {
+          await processManager.addManualSession(session.id, session.cwd, session.pid);
+        }
+      }
+
       const mapping = await channelManager.createSession(session.id, session.name, session.cwd);
       if (mapping) {
+        // Store threadId in ProcessManager registry for recovery after bot restart
+        if (processManager && mapping.threadId) {
+          await processManager.setThreadId(session.id, mapping.threadId);
+        }
+
         const thread = await getThread(session.id);
         if (thread) {
-          await thread.send(
-            `${formatSessionStatus(session.status)} **Session started**\n\`${session.cwd}\``
+          // Send session started message with control buttons
+          const controlButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`interrupt:${session.id}`)
+              .setLabel('🛑 Interrupt')
+              .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+              .setCustomId(`yolo:${session.id}`)
+              .setLabel('🛡️ YOLO: OFF')
+              .setStyle(ButtonStyle.Secondary)
           );
+          await thread.send({
+            content: `${formatSessionStatus(session.status)} **Session started**\n\`${session.cwd}\``,
+            components: [controlButtons],
+          });
 
           // Apply pending title if one was received before thread creation
           // Title updates disabled due to Discord rate limits
@@ -197,6 +252,18 @@ export function createDiscordApp(config: DiscordConfig) {
     },
 
     onSessionEnd: async (sessionId) => {
+      // Clean up typing indicator to prevent resource leak
+      const typingInterval = typingIntervals.get(sessionId);
+      if (typingInterval) {
+        clearInterval(typingInterval);
+        typingIntervals.delete(sessionId);
+      }
+
+      // Update ProcessManager status
+      if (processManager) {
+        await processManager.updateStatus(sessionId, 'stopped');
+      }
+
       const session = channelManager.getSession(sessionId);
       if (session) {
         const thread = await getThread(sessionId);
@@ -520,7 +587,11 @@ export function createDiscordApp(config: DiscordConfig) {
       let components: ActionRowBuilder<ButtonBuilder>[] = [];
       if (isTruncated) {
         const resultId = `${result.toolUseId}-${Date.now()}`;
-        pendingFullResults.set(resultId, { content: fullContent, toolName: toolInfo?.toolName || 'unknown' });
+        pendingFullResults.set(resultId, {
+          content: fullContent,
+          toolName: toolInfo?.toolName || 'unknown',
+          createdAt: Date.now(),
+        });
 
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
@@ -529,9 +600,7 @@ export function createDiscordApp(config: DiscordConfig) {
             .setStyle(ButtonStyle.Secondary)
         );
         components = [row];
-
-        // Auto-expire after 30 minutes
-        setTimeout(() => pendingFullResults.delete(resultId), 30 * 60 * 1000);
+        // Cleanup is handled by periodic interval, not per-entry setTimeout
       }
 
       try {
@@ -765,6 +834,32 @@ export function createDiscordApp(config: DiscordConfig) {
       new SlashCommandBuilder()
         .setName('yolo-sleep')
         .setDescription('Toggle YOLO mode - auto-approve all permission requests'),
+      // Process management commands
+      new SlashCommandBuilder()
+        .setName('claude')
+        .setDescription('Manage Claude Code sessions')
+        .addSubcommand(sub =>
+          sub.setName('start')
+            .setDescription('Start a new Claude Code session'))
+        .addSubcommand(sub =>
+          sub.setName('stop')
+            .setDescription('Stop a running Claude Code session'))
+        .addSubcommand(sub =>
+          sub.setName('status')
+            .setDescription('Show all managed sessions'))
+        .addSubcommand(sub =>
+          sub.setName('add-dir')
+            .setDescription('Add a directory to the whitelist')
+            .addStringOption(opt =>
+              opt.setName('path')
+                .setDescription('Absolute directory path')
+                .setRequired(true)))
+        .addSubcommand(sub =>
+          sub.setName('remove-dir')
+            .setDescription('Remove a directory from the whitelist'))
+        .addSubcommand(sub =>
+          sub.setName('list-dirs')
+            .setDescription('List all whitelisted directories')),
     ];
 
     try {
@@ -899,6 +994,208 @@ export function createDiscordApp(config: DiscordConfig) {
         await interaction.reply('🔥 **YOLO mode ON** - All permissions auto-approved!');
       }
     }
+
+    // Handle /claude subcommands
+    if (commandName === 'claude') {
+      const subcommand = interaction.options.getSubcommand();
+
+      // /claude start - show directory selection
+      if (subcommand === 'start') {
+        if (!processManager || !settingsManager) {
+          await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const dirs = settingsManager.getAllowedDirectories();
+        if (dirs.length === 0) {
+          await interaction.reply({
+            content: '⚠️ No directories configured. Use `/claude add-dir` first.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        // Create select menu for directories
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('claude_start_dir')
+          .setPlaceholder('Select a directory...');
+
+        for (const dir of dirs.slice(0, 25)) { // Discord limit: 25 options
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(basename(dir))
+              .setDescription(dir.slice(0, 100))
+              .setValue(dir)
+          );
+        }
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: '📁 **Start Claude Session**\nSelect a directory:',
+          components: [row],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // /claude stop - show session selection
+      if (subcommand === 'stop') {
+        if (!processManager) {
+          await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const running = await processManager.getAllRunning();
+        if (running.length === 0) {
+          await interaction.reply({ content: '✅ No running sessions to stop.', ephemeral: true });
+          return;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('claude_stop_session')
+          .setPlaceholder('Select a session to stop...');
+
+        for (const entry of running.slice(0, 25)) {
+          const label = `${basename(entry.cwd)} (${entry.sessionId.slice(0, 8)})`;
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(label.slice(0, 100))
+              .setDescription(`PID ${entry.pid} - ${entry.status}`)
+              .setValue(entry.sessionId)
+          );
+        }
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: '🛑 **Stop Claude Session**\nSelect a session:',
+          components: [row],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // /claude status - show all sessions
+      if (subcommand === 'status') {
+        if (!processManager) {
+          await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const entries = processManager.getAllEntries();
+        if (entries.length === 0) {
+          await interaction.reply({ content: '📋 No managed sessions.', ephemeral: true });
+          return;
+        }
+
+        const statusEmoji: Record<string, string> = {
+          starting: '🔄',
+          running: '🟢',
+          stopping: '🟡',
+          stopped: '⚫',
+          orphaned: '🔴',
+        };
+
+        const lines = entries.map(e => {
+          const emoji = statusEmoji[e.status] || '❓';
+          const age = Math.floor((Date.now() - new Date(e.startedAt).getTime()) / 60000);
+          return `${emoji} **${basename(e.cwd)}** (${e.sessionId.slice(0, 8)})\n   PID: ${e.pid} | Status: ${e.status} | Age: ${age}m`;
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle('📊 Claude Sessions')
+          .setDescription(lines.join('\n\n'))
+          .setColor(0x7289DA)
+          .setTimestamp();
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+        return;
+      }
+
+      // /claude add-dir - add directory to whitelist
+      if (subcommand === 'add-dir') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const path = interaction.options.getString('path', true);
+        const result = await settingsManager.addDirectory(path);
+
+        if (result.success) {
+          await interaction.reply({ content: `✅ Added \`${path}\` to whitelist.`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
+        }
+        return;
+      }
+
+      // /claude remove-dir - show directory selection for removal
+      if (subcommand === 'remove-dir') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const dirs = settingsManager.getAllowedDirectories();
+        if (dirs.length === 0) {
+          await interaction.reply({ content: '📁 No directories in whitelist.', ephemeral: true });
+          return;
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('claude_remove_dir')
+          .setPlaceholder('Select a directory to remove...');
+
+        for (const dir of dirs.slice(0, 25)) {
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(basename(dir))
+              .setDescription(dir.slice(0, 100))
+              .setValue(dir)
+          );
+        }
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: '🗑️ **Remove Directory**\nSelect a directory to remove:',
+          components: [row],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // /claude list-dirs - list whitelisted directories
+      if (subcommand === 'list-dirs') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const dirs = settingsManager.getAllowedDirectories();
+        if (dirs.length === 0) {
+          await interaction.reply({
+            content: '📁 **Whitelisted Directories**\nNo directories configured. Use `/claude add-dir` to add one.',
+            ephemeral: true,
+          });
+          return;
+        }
+
+        const defaultDir = settingsManager.getDefaultDirectory();
+        const lines = dirs.map(d => {
+          const isDefault = d === defaultDir;
+          return `• \`${d}\`${isDefault ? ' ⭐ (default)' : ''}`;
+        });
+
+        await interaction.reply({
+          content: `📁 **Whitelisted Directories**\n${lines.join('\n')}`,
+          ephemeral: true,
+        });
+        return;
+      }
+    }
   });
 
   // Handle button interactions for AskUserQuestion
@@ -937,6 +1234,47 @@ export function createDiscordApp(config: DiscordConfig) {
           await interaction.message.edit({ components: [] });
         } catch {}
 
+        return;
+      }
+
+      // Handle interrupt button
+      if (customId.startsWith('interrupt:')) {
+        const sessionId = customId.slice('interrupt:'.length);
+        const sent = sessionManager.sendInput(sessionId, '\x1b'); // Escape
+        if (sent) {
+          await interaction.reply({ content: '🛑 Interrupt sent', ephemeral: true });
+        } else {
+          await interaction.reply({ content: '⚠️ Session not found', ephemeral: true });
+        }
+        return;
+      }
+
+      // Handle YOLO toggle button
+      if (customId.startsWith('yolo:')) {
+        const sessionId = customId.slice('yolo:'.length);
+        const isYolo = yoloSessions.has(sessionId);
+
+        // Toggle state
+        if (isYolo) {
+          yoloSessions.delete(sessionId);
+        } else {
+          yoloSessions.add(sessionId);
+        }
+        const newState = !isYolo;
+
+        // Update button label
+        const updatedButton = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`interrupt:${sessionId}`)
+            .setLabel('🛑 Interrupt')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId(`yolo:${sessionId}`)
+            .setLabel(newState ? '🔥 YOLO: ON' : '🛡️ YOLO: OFF')
+            .setStyle(newState ? ButtonStyle.Success : ButtonStyle.Secondary)
+        );
+
+        await interaction.update({ components: [updatedButton] });
         return;
       }
 
@@ -1100,43 +1438,157 @@ export function createDiscordApp(config: DiscordConfig) {
       trySubmitAllAnswers(toolUseId);
     }
 
-    // Handle StringSelectMenu interactions for multiSelect questions - store selection for later submit
+    // Handle StringSelectMenu interactions
     if (interaction.isStringSelectMenu()) {
       const customId = interaction.customId;
-      if (!customId.startsWith('askq_select:')) return;
 
-      const parts = customId.split(':');
-      if (parts.length !== 3) return;
+      // Handle claude_start_dir selection
+      if (customId === 'claude_start_dir') {
+        if (!processManager || !settingsManager) {
+          await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
+          return;
+        }
 
-      const [, toolUseId, qIdxStr] = parts;
-      const pending = pendingQuestions.get(toolUseId);
-      if (!pending) {
-        await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+        const cwd = interaction.values[0];
+
+        // Re-validate directory is still in whitelist (could have been removed since menu was shown)
+        if (!settingsManager.isDirectoryAllowed(cwd)) {
+          await interaction.update({
+            content: `❌ Directory \`${cwd}\` is no longer in the whitelist.`,
+            components: [],
+          });
+          return;
+        }
+
+        // Check maxConcurrentSessions limit
+        const maxSessions = settingsManager.getMaxSessions();
+        if (maxSessions !== undefined) {
+          const running = await processManager.getAllRunning();
+          if (running.length >= maxSessions) {
+            await interaction.update({
+              content: `❌ Maximum concurrent sessions limit reached (${maxSessions}). Stop a session first.`,
+              components: [],
+            });
+            return;
+          }
+        }
+
+        const sessionId = processManager.generateSessionId();
+
+        try {
+          await interaction.update({
+            content: `🚀 Starting Claude session in \`${cwd}\`...`,
+            components: [],
+          });
+
+          const entry = await processManager.spawn(cwd, sessionId);
+          log.info({ sessionId, cwd, pid: entry.pid }, 'Started Claude session via Discord');
+
+          await interaction.followUp({
+            content: `✅ **Session started**\nPID: ${entry.pid}\nSession: ${sessionId.slice(0, 8)}...\nDirectory: \`${cwd}\`\n\nWaiting for connection...`,
+            ephemeral: true,
+          });
+        } catch (err) {
+          log.error({ err, cwd }, 'Failed to start session');
+          await interaction.followUp({
+            content: `❌ Failed to start session: ${(err as Error).message}`,
+            ephemeral: true,
+          });
+        }
         return;
       }
 
-      const qIdx = parseInt(qIdxStr, 10);
-      const question = pending.questions[qIdx];
-      if (!question) {
-        await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+      // Handle claude_stop_session selection
+      if (customId === 'claude_stop_session') {
+        if (!processManager) {
+          await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const sessionId = interaction.values[0];
+
+        try {
+          await interaction.update({
+            content: `🛑 Stopping session ${sessionId.slice(0, 8)}...`,
+            components: [],
+          });
+
+          const success = await processManager.kill(sessionId);
+          if (success) {
+            await interaction.followUp({
+              content: `✅ Session ${sessionId.slice(0, 8)} stopped.`,
+              ephemeral: true,
+            });
+          } else {
+            await interaction.followUp({
+              content: `❌ Failed to stop session.`,
+              ephemeral: true,
+            });
+          }
+        } catch (err) {
+          log.error({ err, sessionId }, 'Failed to stop session');
+          await interaction.followUp({
+            content: `❌ Error: ${(err as Error).message}`,
+            ephemeral: true,
+          });
+        }
         return;
       }
 
-      // Store selected values for later submit
-      const selectionKey = `${toolUseId}:${qIdx}`;
-      pendingMultiSelections.set(selectionKey, interaction.values);
+      // Handle claude_remove_dir selection
+      if (customId === 'claude_remove_dir') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
 
-      // Get selected option labels for display
-      const selectedLabels = interaction.values.map((val) => {
-        const optIdx = parseInt(val, 10);
-        return question.options[optIdx]?.label || val;
-      });
+        const dir = interaction.values[0];
+        const success = await settingsManager.removeDirectory(dir);
 
-      // Update message to show current selection (don't submit yet)
-      await interaction.update({
-        content: `❓ **${question.header}**\n${question.question}\n\n✏️ Selected: ${selectedLabels.join(', ')}\n\n*Click Submit to confirm*`,
-      });
-      return;
+        await interaction.update({
+          content: success
+            ? `✅ Removed \`${dir}\` from whitelist.`
+            : `❌ Failed to remove directory.`,
+          components: [],
+        });
+        return;
+      }
+
+      // Handle multiSelect questions - store selection for later submit
+      if (customId.startsWith('askq_select:')) {
+        const parts = customId.split(':');
+        if (parts.length !== 3) return;
+
+        const [, toolUseId, qIdxStr] = parts;
+        const pending = pendingQuestions.get(toolUseId);
+        if (!pending) {
+          await interaction.reply({ content: '⚠️ This question has expired.', ephemeral: true });
+          return;
+        }
+
+        const qIdx = parseInt(qIdxStr, 10);
+        const question = pending.questions[qIdx];
+        if (!question) {
+          await interaction.reply({ content: '⚠️ Invalid question.', ephemeral: true });
+          return;
+        }
+
+        // Store selected values for later submit
+        const selectionKey = `${toolUseId}:${qIdx}`;
+        pendingMultiSelections.set(selectionKey, interaction.values);
+
+        // Get selected option labels for display
+        const selectedLabels = interaction.values.map((val) => {
+          const optIdx = parseInt(val, 10);
+          return question.options[optIdx]?.label || val;
+        });
+
+        // Update message to show current selection (don't submit yet)
+        await interaction.update({
+          content: `❓ **${question.header}**\n${question.question}\n\n✏️ Selected: ${selectedLabels.join(', ')}\n\n*Click Submit to confirm*`,
+        });
+        return;
+      }
     }
 
     // Handle modal submissions
@@ -1179,5 +1631,15 @@ export function createDiscordApp(config: DiscordConfig) {
     }
   });
 
-  return { client, sessionManager, channelManager };
+  // Cleanup function for intervals
+  const cleanup = () => {
+    clearInterval(fullResultsCleanupInterval);
+    // Clean up typing intervals
+    for (const interval of typingIntervals.values()) {
+      clearInterval(interval);
+    }
+    typingIntervals.clear();
+  };
+
+  return { client, sessionManager, channelManager, cleanup };
 }
