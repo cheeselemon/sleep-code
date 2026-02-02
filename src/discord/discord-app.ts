@@ -848,6 +848,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       new SlashCommandBuilder()
         .setName('yolo-sleep')
         .setDescription('Toggle YOLO mode - auto-approve all permission requests'),
+      new SlashCommandBuilder()
+        .setName('panel')
+        .setDescription('Show session control panel with Interrupt and YOLO buttons'),
       // Process management commands
       new SlashCommandBuilder()
         .setName('claude')
@@ -1007,6 +1010,37 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         yoloSessions.add(sessionId);
         await interaction.reply('🔥 **YOLO mode ON** - All permissions auto-approved!');
       }
+    }
+
+    if (commandName === 'panel') {
+      const sessionId = channelManager.getSessionByChannel(channelId);
+      if (!sessionId) {
+        await interaction.reply('⚠️ This channel is not associated with an active session.');
+        return;
+      }
+
+      const channel = channelManager.getChannel(sessionId);
+      if (!channel || channel.status === 'ended') {
+        await interaction.reply('⚠️ This session has ended.');
+        return;
+      }
+
+      const isYolo = yoloSessions.has(sessionId);
+      const controlButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`interrupt:${sessionId}`)
+          .setLabel('🛑 Interrupt')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`yolo:${sessionId}`)
+          .setLabel(isYolo ? '🔥 YOLO: ON' : '🛡️ YOLO: OFF')
+          .setStyle(isYolo ? ButtonStyle.Success : ButtonStyle.Secondary)
+      );
+
+      await interaction.reply({
+        content: '**Session Control Panel**',
+        components: [controlButtons],
+      });
     }
 
     // Handle /claude subcommands

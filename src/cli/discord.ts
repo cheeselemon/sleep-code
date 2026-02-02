@@ -60,6 +60,7 @@ Step 3: Invite the Bot
 2. Select scopes: "bot"
 3. Select permissions:
    • Send Messages
+   • Manage Messages (for pinning)
    • Manage Channels
    • Read Message History
 4. Copy the URL and open it to invite the bot to your server
