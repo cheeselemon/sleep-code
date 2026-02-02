@@ -1092,12 +1092,18 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           return;
         }
 
+        // Get current session if command is run from a session thread
+        const currentSessionId = channelManager.getSessionByChannel(channelId);
+
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('claude_stop_session')
           .setPlaceholder('Select a session to stop...');
 
         for (const entry of running.slice(0, 25)) {
-          const label = `${basename(entry.cwd)} (${entry.sessionId.slice(0, 8)})`;
+          const isCurrent = entry.sessionId === currentSessionId;
+          const label = isCurrent
+            ? `⭐ ${basename(entry.cwd)} (current)`
+            : `${basename(entry.cwd)} (${entry.sessionId.slice(0, 8)})`;
           selectMenu.addOptions(
             new StringSelectMenuOptionBuilder()
               .setLabel(label.slice(0, 100))
