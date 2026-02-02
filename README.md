@@ -253,6 +253,10 @@ YOLO mode (`/yolo-sleep` or the YOLO button) auto-approves **all** permission re
 
 Only enable YOLO mode if you fully trust the task and understand the risks. **You are responsible for any actions taken while YOLO mode is enabled.**
 
+## Known Issues
+
+- **Missing assistant messages**: Claude Code occasionally fails to write assistant messages to its JSONL log file. When this happens, some responses may not appear in chat. This is a Claude Code bug, not a Sleep Code issue.
+
 ## Disclaimer
 
 This project is not affiliated with Anthropic. Use at your own risk.
