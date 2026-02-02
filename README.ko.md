@@ -261,6 +261,10 @@ YOLO 모드(`/yolo-sleep` 또는 YOLO 버튼)는 **모든** 권한 요청을 확
 
 이 프로젝트는 Anthropic과 관련이 없습니다. 사용에 따른 책임은 본인에게 있습니다.
 
+## 감사의 말
+
+이 프로젝트는 @clharman의 [afk-code](https://github.com/clharman/afk-code)에서 영감을 받아 초기 설정을 기반으로 시작되었습니다. 좋은 기반을 만들어주셔서 감사합니다!
+
 ## 라이선스
 
 MIT

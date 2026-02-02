@@ -261,6 +261,10 @@ Only enable YOLO mode if you fully trust the task and understand the risks. **Yo
 
 This project is not affiliated with Anthropic. Use at your own risk.
 
+## Acknowledgments
+
+This project was inspired by and initially based on [afk-code](https://github.com/clharman/afk-code) by @clharman. Thanks for the great foundation!
+
 ## License
 
 MIT
