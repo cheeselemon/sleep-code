@@ -6,6 +6,10 @@
 
 <img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 
+## See Also
+
+**Using OpenCode instead of Claude Code?** Check out [Disunday](https://github.com/code-xhyun/disunday) - a Discord bot that lets you control OpenCode coding sessions from Discord. Same concept, different AI backend.
+
 ## Features
 
 - **Real-time messaging** - Send and receive messages to/from Claude Code

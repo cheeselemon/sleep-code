@@ -6,6 +6,10 @@
 
 <img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 
+## 참고
+
+**Claude Code 대신 OpenCode를 사용하시나요?** [Disunday](https://github.com/code-xhyun/disunday)를 확인해보세요 - Discord에서 OpenCode 코딩 세션을 제어할 수 있는 Discord 봇입니다. 같은 컨셉, 다른 AI 백엔드.
+
 ## 주요 기능
 
 - **실시간 메시징** - Claude Code와 메시지 송수신
