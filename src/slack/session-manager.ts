@@ -146,6 +146,8 @@ export class SessionManager {
       this.stopWatching(session);
     }
     this.sessions.clear();
+    this.pendingPermissions.clear();
+    this.pendingAskUserQuestions.clear();
     if (this.server) {
       this.server.close();
     }
