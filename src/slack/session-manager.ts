@@ -282,11 +282,11 @@ export class SessionManager {
       case 'pty_output': {
         const session = this.sessions.get(message.sessionId);
         if (session && message.content) {
-          // PTY output을 backup source로 사용 - JSONL에서 못 잡은 메시지 보완
+          // Use PTY output as backup source - supplement messages missed by JSONL
           const content = message.content.trim();
           if (content) {
-            // 중복 방지: content hash로 최근 전송된 메시지와 비교
-            const contentHash = hash(content.slice(0, 100)); // 앞 100자로 hash
+            // Dedup: compare with recently sent messages using content hash
+            const contentHash = hash(content.slice(0, 100)); // hash first 100 chars
             const recentKey = `pty:${session.id}:${contentHash}`;
 
             if (!session.seenMessages.has(recentKey)) {
@@ -551,7 +551,7 @@ export class SessionManager {
             if (textContent.trim()) {
               const messageTime = new Date(data.timestamp || Date.now());
               if (messageTime >= session.startedAt) {
-                // 중복 방지: content hash로 PTY에서 이미 보낸 메시지인지 확인
+                // Dedup: check if message was already sent via PTY using content hash
                 const trimmedContent = textContent.trim();
                 const contentHash = hash(trimmedContent.slice(0, 100));
                 const contentKey = `pty:${session.id}:${contentHash}`;
@@ -559,7 +559,7 @@ export class SessionManager {
                 if (session.seenMessages.has(contentKey)) {
                   log.debug({ role: message.role, preview: trimmedContent.slice(0, 30) }, 'Skipping (already sent via PTY)');
                 } else {
-                  // JSONL 소스로 마킹하여 PTY에서 중복 전송 방지
+                  // Mark as JSONL source to prevent duplicate sends from PTY
                   this.addSeenMessage(session, contentKey);
                   log.info({ role: message.role, preview: trimmedContent.slice(0, 50), source: 'jsonl' }, 'Forwarding message');
                   this.events.onMessage(session.id, message.role, trimmedContent);
@@ -601,7 +601,7 @@ export class SessionManager {
         persistent: true,
         ignoreInitial: true,
         awaitWriteFinish: {
-          stabilityThreshold: 100,  // 100ms 동안 변화 없으면 완료로 간주
+          stabilityThreshold: 100,  // Consider complete if no changes for 100ms
           pollInterval: 50,
         },
       });
@@ -611,7 +611,7 @@ export class SessionManager {
       });
 
       session.watcher.on('add', async () => {
-        // 파일이 새로 생성된 경우
+        // When file is newly created
         await this.processJsonl(session);
       });
 
@@ -622,7 +622,7 @@ export class SessionManager {
       log.error({ err }, 'Error setting up chokidar watcher');
     }
 
-    // Poll as backup (chokidar가 놓칠 수 있는 경우 대비)
+    // Poll as backup (in case chokidar misses events)
     session.pollInterval = setInterval(async () => {
       if (!this.sessions.has(session.id)) {
         if (session.pollInterval) clearInterval(session.pollInterval);

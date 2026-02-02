@@ -6,12 +6,15 @@ import { discordLogger as log } from '../utils/logger.js';
 const CONFIG_DIR = join(homedir(), '.sleep-code');
 const SETTINGS_FILE = join(CONFIG_DIR, 'settings.json');
 
+export type TerminalApp = 'terminal' | 'iterm2' | 'background';
+
 export interface SleepCodeSettings {
   version: 1;
   allowedDirectories: string[];
   defaultDirectory?: string;
   autoCleanupOrphans: boolean;
   maxConcurrentSessions?: number;
+  terminalApp?: TerminalApp;
 }
 
 export class SettingsManager {
@@ -128,6 +131,22 @@ export class SettingsManager {
   }
 
   /**
+   * Get terminal app setting (default: background)
+   */
+  getTerminalApp(): TerminalApp {
+    return this.settings.terminalApp || 'background';
+  }
+
+  /**
+   * Set terminal app
+   */
+  async setTerminalApp(app: TerminalApp): Promise<void> {
+    this.settings.terminalApp = app;
+    await this.saveSettings();
+    log.info({ terminalApp: app }, 'Terminal app setting updated');
+  }
+
+  /**
    * Load settings from disk
    */
   private async loadSettings(): Promise<void> {
@@ -143,6 +162,7 @@ export class SettingsManager {
         defaultDirectory: loaded.defaultDirectory,
         autoCleanupOrphans: loaded.autoCleanupOrphans ?? true,
         maxConcurrentSessions: loaded.maxConcurrentSessions,
+        terminalApp: loaded.terminalApp,
       };
 
       log.info({ directories: this.settings.allowedDirectories.length }, 'Loaded settings');

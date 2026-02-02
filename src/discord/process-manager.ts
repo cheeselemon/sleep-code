@@ -1,9 +1,10 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../utils/logger.js';
+import type { TerminalApp } from './settings-manager.js';
 
 const CONFIG_DIR = join(homedir(), '.sleep-code');
 const REGISTRY_FILE = join(CONFIG_DIR, 'process-registry.json');
@@ -68,30 +69,42 @@ export class ProcessManager {
   }
 
   /**
-   * Spawn a new Claude Code session in detached mode
+   * Spawn a new Claude Code session
+   * @param cwd Working directory
+   * @param sessionId Session ID
+   * @param terminalApp Terminal app to use (default: background)
    */
-  async spawn(cwd: string, sessionId: string): Promise<ProcessEntry> {
+  async spawn(cwd: string, sessionId: string, terminalApp: TerminalApp = 'background'): Promise<ProcessEntry> {
     // Get the path to the sleep-code script
     const sleepCodePath = process.argv[1];
     const command = ['node', sleepCodePath, 'run', '--session-id', sessionId, '--', 'claude'];
 
-    log.info({ cwd, sessionId, command: command.join(' ') }, 'Spawning detached process');
+    log.info({ cwd, sessionId, terminalApp, command: command.join(' ') }, 'Spawning process');
 
-    const child = spawn(command[0], command.slice(1), {
-      cwd,
-      detached: true,
-      stdio: ['ignore', 'ignore', 'ignore'],
-      env: { ...process.env, FORCE_COLOR: '1' },
-    });
+    let pid: number;
 
-    if (!child.pid) {
-      throw new Error('Failed to spawn process - no PID');
+    if (terminalApp === 'background') {
+      // Original detached background mode
+      const child = spawn(command[0], command.slice(1), {
+        cwd,
+        detached: true,
+        stdio: ['ignore', 'ignore', 'ignore'],
+        env: { ...process.env, FORCE_COLOR: '1' },
+      });
+
+      if (!child.pid) {
+        throw new Error('Failed to spawn process - no PID');
+      }
+
+      child.unref(); // Allow parent to exit independently
+      pid = child.pid;
+    } else {
+      // Open in terminal app (macOS)
+      pid = await this.spawnInTerminal(cwd, command, terminalApp);
     }
 
-    child.unref(); // Allow parent to exit independently
-
     const entry: ProcessEntry = {
-      pid: child.pid,
+      pid,
       sessionId,
       cwd,
       startedAt: new Date().toISOString(),
@@ -102,8 +115,54 @@ export class ProcessManager {
     this.registry.entries.push(entry);
     await this.saveRegistry();
 
-    log.info({ pid: child.pid, sessionId }, 'Process spawned');
+    log.info({ pid, sessionId, terminalApp }, 'Process spawned');
     return entry;
+  }
+
+  /**
+   * Spawn process in a terminal app (macOS)
+   */
+  private async spawnInTerminal(cwd: string, command: string[], terminalApp: TerminalApp): Promise<number> {
+    const fullCommand = command.join(' ');
+
+    // Escape single quotes for AppleScript
+    const escapedCwd = cwd.replace(/'/g, "'\\''");
+    const escapedCommand = fullCommand.replace(/'/g, "'\\''");
+
+    let script: string;
+
+    if (terminalApp === 'iterm2') {
+      // iTerm2 AppleScript
+      script = `
+        tell application "iTerm"
+          activate
+          set newWindow to (create window with default profile)
+          tell current session of newWindow
+            write text "cd '${escapedCwd}' && ${escapedCommand}"
+          end tell
+        end tell
+      `;
+    } else {
+      // Terminal.app AppleScript
+      script = `
+        tell application "Terminal"
+          activate
+          do script "cd '${escapedCwd}' && ${escapedCommand}"
+        end tell
+      `;
+    }
+
+    try {
+      execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`);
+      log.info({ terminalApp, cwd }, 'Opened terminal window');
+
+      // We can't get the PID directly from osascript, so return 0
+      // The session will connect via socket and we'll track it then
+      return 0;
+    } catch (err) {
+      log.error({ err, terminalApp }, 'Failed to open terminal');
+      throw new Error(`Failed to open ${terminalApp}: ${(err as Error).message}`);
+    }
   }
 
   /**

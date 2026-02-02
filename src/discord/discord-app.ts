@@ -18,6 +18,7 @@ import {
   type Attachment,
 } from 'discord.js';
 import { writeFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
 import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import type { DiscordConfig } from './types.js';
@@ -67,6 +68,17 @@ async function downloadAttachment(attachment: Attachment): Promise<string | null
     log.error({ err }, 'Error downloading attachment');
     return null;
   }
+}
+
+/**
+ * Check which terminal apps are installed (macOS)
+ */
+function getInstalledTerminals(): { terminal: boolean; iterm2: boolean } {
+  return {
+    terminal: existsSync('/System/Applications/Utilities/Terminal.app') ||
+              existsSync('/Applications/Utilities/Terminal.app'),
+    iterm2: existsSync('/Applications/iTerm.app'),
+  };
 }
 
 export interface DiscordAppOptions {
@@ -119,6 +131,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Track pending permission requests
   interface PendingPermission {
     requestId: string;
+    sessionId: string;
     resolve: (decision: { behavior: 'allow' | 'deny'; message?: string }) => void;
   }
   const pendingPermissions = new Map<string, PendingPermission>(); // requestId -> resolver
@@ -645,6 +658,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         // Store the resolver for when user clicks a button
         pendingPermissions.set(request.requestId, {
           requestId: request.requestId,
+          sessionId: request.sessionId,
           resolve,
         });
 
@@ -661,15 +675,15 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
         const text = `🔐 **Permission Request: ${request.toolName}**\n${inputSummary}`;
 
-        // Create buttons: Allow, Always Allow, Deny
+        // Create buttons: Allow, YOLO, Deny
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder()
             .setCustomId(`perm:${request.requestId}:allow`)
             .setLabel('Allow')
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
-            .setCustomId(`perm:${request.requestId}:always`)
-            .setLabel('Always Allow')
+            .setCustomId(`perm:${request.requestId}:yolo`)
+            .setLabel('🔥 YOLO')
             .setStyle(ButtonStyle.Primary),
           new ButtonBuilder()
             .setCustomId(`perm:${request.requestId}:deny`)
@@ -851,7 +865,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             .setDescription('Remove a directory from the whitelist'))
         .addSubcommand(sub =>
           sub.setName('list-dirs')
-            .setDescription('List all whitelisted directories')),
+            .setDescription('List all whitelisted directories'))
+        .addSubcommand(sub =>
+          sub.setName('set-terminal')
+            .setDescription('Set terminal app for new sessions')),
     ];
 
     try {
@@ -1218,6 +1235,67 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         });
         return;
       }
+
+      // /claude set-terminal - set terminal app for new sessions
+      if (subcommand === 'set-terminal') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const installed = getInstalledTerminals();
+        const currentApp = settingsManager.getTerminalApp();
+
+        const currentLabel: Record<string, string> = {
+          terminal: 'Terminal.app',
+          iterm2: 'iTerm2',
+          background: 'Background',
+        };
+
+        const selectMenu = new StringSelectMenuBuilder()
+          .setCustomId('claude_set_terminal')
+          .setPlaceholder('Select terminal app...');
+
+        // Always add background option
+        selectMenu.addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Background (no window)')
+            .setDescription('Run in background without terminal window')
+            .setValue('background')
+            .setDefault(currentApp === 'background')
+        );
+
+        // Add Terminal.app if installed
+        if (installed.terminal) {
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel('Terminal.app')
+              .setDescription('macOS default terminal')
+              .setValue('terminal')
+              .setDefault(currentApp === 'terminal')
+          );
+        }
+
+        // Add iTerm2 if installed
+        if (installed.iterm2) {
+          selectMenu.addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel('iTerm2')
+              .setDescription('Popular third-party terminal')
+              .setValue('iterm2')
+              .setDefault(currentApp === 'iterm2')
+          );
+        }
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        await interaction.reply({
+          content: `🖥️ **Terminal Settings**\nCurrent: **${currentLabel[currentApp]}**\n\nSelect where to open new sessions:`,
+          components: [row],
+          ephemeral: true,
+        });
+        return;
+      }
     }
   });
 
@@ -1320,8 +1398,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           return;
         }
 
-        // 'allow' and 'always' both grant permission, 'deny' rejects
-        const behavior = (decision === 'allow' || decision === 'always') ? 'allow' : 'deny';
+        // 'allow' and 'yolo' both grant permission, 'deny' rejects
+        const behavior = (decision === 'allow' || decision === 'yolo') ? 'allow' : 'deny';
         pending.resolve({ behavior });
         pendingPermissions.delete(requestId);
 
@@ -1330,10 +1408,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         if (decision === 'allow') {
           emoji = '✅';
           statusText = 'Permission granted';
-        } else if (decision === 'always') {
-          emoji = '✅';
-          statusText = 'Permission granted (always allow)';
-          // TODO: Add to Claude Code's settings.json for persistent permission
+        } else if (decision === 'yolo') {
+          emoji = '🔥';
+          statusText = 'Permission granted + YOLO mode ON';
+          // Enable YOLO mode for this session
+          yoloSessions.add(pending.sessionId);
         } else {
           emoji = '❌';
           statusText = 'Permission denied';
@@ -1504,8 +1583,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             components: [],
           });
 
-          const entry = await processManager.spawn(cwd, sessionId);
-          log.info({ sessionId, cwd, pid: entry.pid }, 'Started Claude session via Discord');
+          const terminalApp = settingsManager.getTerminalApp();
+          const entry = await processManager.spawn(cwd, sessionId, terminalApp);
+          log.info({ sessionId, cwd, pid: entry.pid, terminalApp }, 'Started Claude session via Discord');
 
           await interaction.followUp({
             content: `✅ **Session started**\nPID: ${entry.pid}\nSession: ${sessionId.slice(0, 8)}...\nDirectory: \`${cwd}\`\n\nWaiting for connection...`,
@@ -1518,6 +1598,34 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             ephemeral: true,
           });
         }
+        return;
+      }
+
+      // Handle claude_set_terminal selection
+      if (customId === 'claude_set_terminal') {
+        if (!settingsManager) {
+          await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+          return;
+        }
+
+        const app = interaction.values[0] as 'terminal' | 'iterm2' | 'background';
+        await settingsManager.setTerminalApp(app);
+
+        const appNames: Record<string, string> = {
+          terminal: 'Terminal.app',
+          iterm2: 'iTerm2',
+          background: 'Background (no window)',
+        };
+
+        // Add permission notice for terminal apps
+        const permissionNotice = app !== 'background'
+          ? `\n\n⚠️ **macOS will request permission on first run.**\nClick "Allow" to let AppleScript control ${appNames[app]}.`
+          : '';
+
+        await interaction.update({
+          content: `✅ Terminal app set to **${appNames[app]}**\n\nNew sessions will open in ${app === 'background' ? 'the background' : 'a new terminal window'}.${permissionNotice}`,
+          components: [],
+        });
         return;
       }
 
