@@ -240,6 +240,19 @@ src/
     └── telegram-app.ts     # grammY app and event handlers
 ```
 
+## Warning: YOLO Mode
+
+> **Use YOLO mode at your own risk.**
+
+YOLO mode (`/yolo-sleep` or the YOLO button) auto-approves **all** permission requests without confirmation. This means Claude can:
+
+- Execute any shell commands
+- Read, write, and delete files
+- Make network requests
+- Install packages
+
+Only enable YOLO mode if you fully trust the task and understand the risks. **You are responsible for any actions taken while YOLO mode is enabled.**
+
 ## Disclaimer
 
 This project is not affiliated with Anthropic. Use at your own risk.
