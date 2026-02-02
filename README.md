@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md)
 
-Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while away.
+**Code from your bed.** Monitor and control Claude Code sessions from Slack, Discord, or Telegram.
 
 <img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 

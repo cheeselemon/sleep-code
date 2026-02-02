@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md)
 
-Slack, Discord, Telegram에서 Claude Code 세션을 모니터링하고 상호작용하세요. 자리를 비워도 폰으로 응답할 수 있습니다.
+**누워서 코딩하세요.** Slack, Discord, Telegram에서 Claude Code 세션을 모니터링하고 제어하세요.
 
 <img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 
