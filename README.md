@@ -1,43 +1,31 @@
 # Sleep Code
 
+[English](README.md) | [한국어](README.ko.md)
+
 Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while away.
 
-<img width="1024" height="1024" alt="Gemini_Generated_Image_7arp2y7arp2y7arp" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+<img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 
+## Features
 
-## Client Comparison
+- **Real-time messaging** - Send and receive messages to/from Claude Code
+- **Permission handling** - Approve or deny tool permissions from chat (Discord)
+- **YOLO mode** - Auto-approve all permission requests
+- **Session management** - Start, stop, and monitor sessions from Discord
+- **Terminal app support** - Open sessions in Terminal.app or iTerm2 (macOS)
+- **Multi-platform** - Works with Telegram, Discord, and Slack
 
-Telegram and Discord are recommended.
+## Platform Comparison
 
 | | Telegram | Discord | Slack |
 |---|---|---|---|
 | Siri integration | Receive & Send | Receive only | Receive only |
 | Multi-session support | One at a time (switchable) | Yes | Yes |
+| Permission handling | - | Yes (buttons) | Yes (buttons) |
+| Session management | - | Yes (start/stop from chat) | - |
 | Permissions required | Personal | Personal | Admin |
 
-## Quick Start (Telegram)
-
-```bash
-# 1. Create a bot with @BotFather on Telegram
-#    - Send /newbot and follow the prompts
-#    - Copy the bot token
-
-# 2. Get your Chat ID
-#    - Message your bot, then visit:
-#    - https://api.telegram.org/bot<TOKEN>/getUpdates
-#    - Find "chat":{"id":YOUR_CHAT_ID}
-
-# 3. Clone and setup
-git clone https://github.com/cheeselemon/sleep-code.git
-cd sleep-code && npm install && npm run build
-
-# 4. Configure and run
-npm run telegram:setup   # Enter your credentials
-npm run telegram         # Start the bot
-
-# 5. In another terminal, start a monitored Claude session
-npm run claude
-```
+**Recommended:** Discord for full features, Telegram for Siri integration.
 
 ## Quick Start (Discord)
 
@@ -51,9 +39,33 @@ npm run claude
 
 # 2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
 
-# 3. Configure and run
+# 3. Clone and setup
+git clone https://github.com/cheeselemon/sleep-code.git
+cd sleep-code && npm install && npm run build
+
+# 4. Configure and run
 npm run discord:setup   # Enter your credentials
 npm run discord         # Start the bot
+
+# 5. In another terminal, start a monitored Claude session
+npm run claude
+```
+
+## Quick Start (Telegram)
+
+```bash
+# 1. Create a bot with @BotFather on Telegram
+#    - Send /newbot and follow the prompts
+#    - Copy the bot token
+
+# 2. Get your Chat ID
+#    - Message your bot, then visit:
+#    - https://api.telegram.org/bot<TOKEN>/getUpdates
+#    - Find "chat":{"id":YOUR_CHAT_ID}
+
+# 3. Configure and run
+npm run telegram:setup   # Enter your credentials
+npm run telegram         # Start the bot
 
 # 4. In another terminal, start a monitored Claude session
 npm run claude
@@ -78,127 +90,155 @@ npm run slack         # Start the bot
 npm run claude
 ```
 
-A new channel is created for each session. Messages relay bidirectionally.
+A new channel/thread is created for each session. Messages relay bidirectionally.
+
+## Discord Commands
+
+### Session Management
+| Command | Description |
+|---------|-------------|
+| `/claude start` | Start a new Claude session (select directory) |
+| `/claude stop` | Stop a running session |
+| `/claude status` | Show all managed sessions |
+| `/sessions` | List active sessions |
+
+### In-Session Controls
+| Command | Description |
+|---------|-------------|
+| `/interrupt` | Interrupt Claude (Escape) |
+| `/background` | Send to background mode (Ctrl+B) |
+| `/mode` | Toggle plan/execute mode (Shift+Tab) |
+| `/compact` | Compact the conversation |
+| `/model <name>` | Switch model (opus, sonnet, haiku) |
+| `/panel` | Show control panel with buttons |
+| `/yolo-sleep` | Toggle YOLO mode (auto-approve all) |
+
+### Settings
+| Command | Description |
+|---------|-------------|
+| `/claude add-dir <path>` | Add directory to whitelist |
+| `/claude remove-dir` | Remove directory from whitelist |
+| `/claude list-dirs` | List whitelisted directories |
+| `/claude set-terminal` | Set terminal app (Terminal.app, iTerm2, or background) |
+
+### Other
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all available commands |
+
+## All Platform Commands
+
+| Command | Slack | Discord | Telegram | Description |
+|---------|:-----:|:-------:|:--------:|-------------|
+| `/sessions` | ✓ | ✓ | ✓ | List active sessions |
+| `/switch <name>` | - | - | ✓ | Switch session (Telegram only) |
+| `/model <name>` | ✓ | ✓ | ✓ | Switch model |
+| `/compact` | ✓ | ✓ | ✓ | Compact conversation |
+| `/background` | ✓ | ✓ | ✓ | Background mode (Ctrl+B) |
+| `/interrupt` | ✓ | ✓ | ✓ | Interrupt (Escape) |
+| `/mode` | ✓ | ✓ | ✓ | Toggle mode (Shift+Tab) |
 
 ## Global Install
 
-전역 명령어로 설치하면 어디서든 `sleep-code` 명령어를 사용할 수 있습니다.
+Install globally to use `sleep-code` command anywhere:
 
 ```bash
 cd sleep-code
 npm link
 ```
 
-이제 어디서든 사용 가능:
+Now available anywhere:
 
 ```bash
-sleep-code telegram setup   # Telegram 설정
-sleep-code telegram         # Telegram 봇 실행
-sleep-code discord setup    # Discord 설정
-sleep-code discord          # Discord 봇 실행
-sleep-code slack setup      # Slack 설정
-sleep-code slack            # Slack 봇 실행
-sleep-code claude           # Claude 세션 시작
-sleep-code help             # 도움말
+sleep-code telegram setup   # Configure Telegram
+sleep-code telegram         # Run Telegram bot
+sleep-code discord setup    # Configure Discord
+sleep-code discord          # Run Discord bot
+sleep-code slack setup      # Configure Slack
+sleep-code slack            # Run Slack bot
+sleep-code claude           # Start Claude session
+sleep-code help             # Show help
 ```
-
-## Commands (npm run)
-
-프로젝트 폴더 내에서 npm으로 실행할 수도 있습니다:
-
-```bash
-npm run telegram:setup   # Configure Telegram credentials
-npm run telegram         # Run the Telegram bot
-npm run discord:setup    # Configure Discord credentials
-npm run discord          # Run the Discord bot
-npm run slack:setup      # Configure Slack credentials
-npm run slack            # Run the Slack bot
-npm run claude           # Start a monitored session
-```
-
-### Slash Commands
-
-| Command | Slack | Discord | Telegram | Description |
-|---------|:-----:|:-------:|:--------:|-------------|
-| `/sessions` | ✓ | ✓ | ✓ | List active sessions |
-| `/switch <name>` | - | - | ✓ | Switch session (Telegram only) |
-| `/model <name>` | ✓ | ✓ | ✓ | Switch model (opus, sonnet, haiku) |
-| `/compact` | ✓ | ✓ | ✓ | Compact the conversation |
-| `/background` | ✓ | ✓ | ✓ | Send Ctrl+B (background mode) |
-| `/interrupt` | ✓ | ✓ | ✓ | Send Escape (interrupt) |
-| `/mode` | ✓ | ✓ | ✓ | Toggle mode (Shift+Tab) |
 
 ## PM2 Background Execution
 
-PM2를 사용하면 봇을 백그라운드에서 실행하고, 시스템 부팅 시 자동으로 시작할 수 있습니다.
+Use PM2 to run bots in background and auto-start on boot.
 
-### 1. PM2 설치
+### Install PM2
 
 ```bash
 npm install -g pm2
 ```
 
-### 2. 봇 실행
+### Start Bots
 
 ```bash
 cd /path/to/sleep-code
 
-# Telegram 봇만 실행
+# Start specific bot
 pm2 start ecosystem.config.cjs --only sleep-telegram
-
-# Discord 봇만 실행
 pm2 start ecosystem.config.cjs --only sleep-discord
-
-# Slack 봇만 실행
 pm2 start ecosystem.config.cjs --only sleep-slack
 
-# 모든 봇 동시 실행
+# Start all bots
 pm2 start ecosystem.config.cjs
 ```
 
-### 3. 상태 확인 및 관리
+### Monitor & Manage
 
 ```bash
-pm2 status                # 실행 중인 프로세스 목록
-pm2 logs                  # 모든 로그 보기
-pm2 logs sleep-telegram   # 특정 봇 로그만 보기
-pm2 monit                 # 실시간 모니터링 대시보드
+pm2 status                # List running processes
+pm2 logs                  # View all logs
+pm2 logs sleep-discord    # View specific bot logs
+pm2 monit                 # Real-time monitoring dashboard
 ```
 
-### 4. 프로세스 제어
+### Process Control
 
 ```bash
-pm2 restart sleep-telegram  # 특정 봇 재시작
-pm2 restart all             # 모든 봇 재시작
-pm2 stop sleep-telegram     # 특정 봇 중지
-pm2 stop all                # 모든 봇 중지
-pm2 delete sleep-telegram   # 특정 봇 삭제
-pm2 delete all              # 모든 봇 삭제
+pm2 restart sleep-discord   # Restart specific bot
+pm2 restart all             # Restart all bots
+pm2 stop sleep-discord      # Stop specific bot
+pm2 stop all                # Stop all bots
 ```
 
-### 5. 시스템 부팅 시 자동 시작
+### Auto-Start on Boot
 
 ```bash
-# 시작 스크립트 생성 (한 번만 실행)
+# Generate startup script (run once)
 pm2 startup
 
-# 현재 실행 중인 프로세스 저장
+# Save current process list
 pm2 save
 ```
 
-이후 컴퓨터를 재부팅해도 봇이 자동으로 시작됩니다.
-
 ## How It Works
 
-1. `npm run telegram/discord/slack` starts a bot that listens for sessions
+1. `npm run discord/telegram/slack` starts a bot that listens for sessions
 2. `npm run claude` spawns Claude in a PTY and connects to the bot via Unix socket
 3. The bot watches Claude's JSONL files for messages and relays them to chat
 4. Messages you send in chat are forwarded to the terminal
+5. Permission requests are forwarded to chat for approval (Discord/Slack)
 
-## Limitations
+## Architecture
 
-- Does not support plan mode or responding to Claude Code's form-based questions (AskUserQuestion)
-- Does not send tool calls or results
+```
+src/
+├── cli/           # CLI entry point and commands
+│   ├── index.ts   # Main CLI entry
+│   ├── run.ts     # Session runner (PTY + JSONL watching)
+│   └── {telegram,discord,slack}.ts  # Platform setup/run
+├── discord/
+│   ├── discord-app.ts      # Discord.js app and event handlers
+│   ├── channel-manager.ts  # Thread/channel management
+│   ├── process-manager.ts  # Session spawning and lifecycle
+│   └── settings-manager.ts # User settings (directories, terminal app)
+├── slack/
+│   ├── slack-app.ts        # Slack Bolt app
+│   └── session-manager.ts  # JSONL watching, shared across platforms
+└── telegram/
+    └── telegram-app.ts     # grammY app and event handlers
+```
 
 ## Disclaimer
 
