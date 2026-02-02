@@ -2,7 +2,8 @@
 
 Monitor and interact with Claude Code sessions from Slack, Discord, or Telegram. Respond from your phone while away.
 
-<img src="https://github.com/user-attachments/assets/83083b63-9ca2-4ef0-b83d-fcc51bd2fff9" alt="Sleep Code iPhone Slack screenshot" width="400">
+<img width="1024" height="1024" alt="Gemini_Generated_Image_7arp2y7arp2y7arp" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+
 
 ## Client Comparison
 
