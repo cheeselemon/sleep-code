@@ -132,9 +132,6 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Typing indicator intervals for running sessions
   const typingIntervals = new Map<string, NodeJS.Timeout>(); // sessionId -> interval
 
-  // Store pinned control message ID for each session
-  const controlMessages = new Map<string, string>(); // sessionId -> messageId
-
   // Store full results for "View Full" button (with timestamp for cleanup)
   const pendingFullResults = new Map<string, { content: string; toolName: string; createdAt: number }>(); // resultId -> full content
 
@@ -228,29 +225,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
         const thread = await getThread(session.id);
         if (thread) {
-          // Send session started message with control buttons
-          const controlButtons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`interrupt:${session.id}`)
-              .setLabel('🛑 Interrupt')
-              .setStyle(ButtonStyle.Danger),
-            new ButtonBuilder()
-              .setCustomId(`yolo:${session.id}`)
-              .setLabel('🛡️ YOLO: OFF')
-              .setStyle(ButtonStyle.Secondary)
+          // Send session started message
+          await thread.send(
+            `${formatSessionStatus(session.status)} **Session started**\n\`${session.cwd}\`\nUse \`/panel\` for controls`
           );
-          const controlMsg = await thread.send({
-            content: `${formatSessionStatus(session.status)} **Session started**\n\`${session.cwd}\``,
-            components: [controlButtons],
-          });
-
-          // Pin the control message and store its ID
-          try {
-            await controlMsg.pin();
-            controlMessages.set(session.id, controlMsg.id);
-          } catch (err) {
-            log.error({ err }, 'Failed to pin control message');
-          }
 
           // Apply pending title if one was received before thread creation
           // Title updates disabled due to Discord rate limits
@@ -269,9 +247,6 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         clearInterval(typingInterval);
         typingIntervals.delete(sessionId);
       }
-
-      // Clean up control message reference
-      controlMessages.delete(sessionId);
 
       // Update ProcessManager status
       if (processManager) {
