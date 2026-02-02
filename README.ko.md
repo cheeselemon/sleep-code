@@ -4,7 +4,7 @@
 
 **누워서 코딩하세요.** Slack, Discord, Telegram에서 Claude Code 세션을 모니터링하고 제어하세요.
 
-<img width="1024" height="1024" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+<img width="512" height="512" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 
 ## 참고
 
