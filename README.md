@@ -4,7 +4,9 @@
 
 **Code from your bed.** Monitor and control Claude Code sessions from Slack, Discord, or Telegram.
 
-<img width="512" height="512" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+<p align="center">
+  <img width="512" height="512" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+</p>
 
 ## See Also
 
