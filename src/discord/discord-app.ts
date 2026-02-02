@@ -220,8 +220,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     onSessionStart: async (session) => {
       // Notify ProcessManager that session connected (transitions 'starting' -> 'running')
       // Also track manually started sessions
+      // Pass session.pid to update PID 0 entries from terminal app spawns
       if (processManager) {
-        const result = await processManager.onSessionConnected(session.id, session.cwd);
+        const result = await processManager.onSessionConnected(session.id, session.cwd, session.pid);
 
         // If session wasn't in registry, add it (manual start via CLI)
         if (!result.found) {

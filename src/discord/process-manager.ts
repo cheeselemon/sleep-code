@@ -18,6 +18,8 @@ export interface ProcessEntry {
   threadId?: string;
   command: string[];
   lastVerified?: string;
+  terminalApp?: 'terminal' | 'iterm2';
+  terminalWindowId?: number;
 }
 
 interface ProcessRegistry {
@@ -83,6 +85,8 @@ export class ProcessManager {
 
     let pid: number;
 
+    let terminalWindowId: number | undefined;
+
     if (terminalApp === 'background') {
       // Original detached background mode
       const child = spawn(command[0], command.slice(1), {
@@ -100,7 +104,9 @@ export class ProcessManager {
       pid = child.pid;
     } else {
       // Open in terminal app (macOS)
-      pid = await this.spawnInTerminal(cwd, command, terminalApp);
+      const result = await this.spawnInTerminal(cwd, command, terminalApp);
+      pid = result.pid;
+      terminalWindowId = result.windowId;
     }
 
     const entry: ProcessEntry = {
@@ -110,6 +116,8 @@ export class ProcessManager {
       startedAt: new Date().toISOString(),
       status: 'starting',
       command,
+      terminalApp: terminalApp !== 'background' ? terminalApp : undefined,
+      terminalWindowId,
     };
 
     this.registry.entries.push(entry);
@@ -121,8 +129,9 @@ export class ProcessManager {
 
   /**
    * Spawn process in a terminal app (macOS)
+   * Returns { pid: 0, windowId: number } - PID is unknown until session connects
    */
-  private async spawnInTerminal(cwd: string, command: string[], terminalApp: TerminalApp): Promise<number> {
+  private async spawnInTerminal(cwd: string, command: string[], terminalApp: TerminalApp): Promise<{ pid: number; windowId: number }> {
     const fullCommand = command.join(' ');
 
     // Escape single quotes for AppleScript
@@ -132,36 +141,69 @@ export class ProcessManager {
     let script: string;
 
     if (terminalApp === 'iterm2') {
-      // iTerm2 AppleScript
+      // iTerm2 AppleScript - returns window id
       script = `
         tell application "iTerm"
           activate
           set newWindow to (create window with default profile)
+          set winId to id of newWindow
           tell current session of newWindow
             write text "cd '${escapedCwd}' && ${escapedCommand}"
           end tell
+          return winId
         end tell
       `;
     } else {
-      // Terminal.app AppleScript
+      // Terminal.app AppleScript - returns "tab X of window id Y"
       script = `
         tell application "Terminal"
           activate
-          do script "cd '${escapedCwd}' && ${escapedCommand}"
+          set newTab to do script "cd '${escapedCwd}' && ${escapedCommand}"
+          return newTab
         end tell
       `;
     }
 
     try {
-      execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`);
-      log.info({ terminalApp, cwd }, 'Opened terminal window');
+      const result = execSync(`osascript -e '${script.replace(/'/g, "'\"'\"'")}'`).toString().trim();
+      log.info({ terminalApp, cwd, result }, 'Opened terminal window');
 
-      // We can't get the PID directly from osascript, so return 0
-      // The session will connect via socket and we'll track it then
-      return 0;
+      // Parse window ID from result
+      let windowId = 0;
+      if (terminalApp === 'iterm2') {
+        // iTerm2 returns just the window id number
+        windowId = parseInt(result, 10);
+      } else {
+        // Terminal.app returns "tab X of window id Y"
+        const match = result.match(/window id (\d+)/);
+        if (match) {
+          windowId = parseInt(match[1], 10);
+        }
+      }
+
+      log.info({ terminalApp, windowId }, 'Tracked terminal window');
+      return { pid: 0, windowId };
     } catch (err) {
       log.error({ err, terminalApp }, 'Failed to open terminal');
       throw new Error(`Failed to open ${terminalApp}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Close terminal window by ID
+   */
+  private closeTerminalWindow(terminalApp: 'terminal' | 'iterm2', windowId: number): void {
+    if (!windowId) return;
+
+    const appName = terminalApp === 'iterm2' ? 'iTerm' : 'Terminal';
+    const script = `tell application "${appName}" to close window id ${windowId}`;
+
+    try {
+      execSync(`osascript -e '${script}'`);
+      log.info({ terminalApp, windowId }, 'Closed terminal window');
+    } catch (err) {
+      // Window might already be closed
+      log.debug({ err, terminalApp, windowId }, 'Failed to close terminal window (may already be closed)');
     }
   }
 
@@ -199,6 +241,11 @@ export class ProcessManager {
 
       entry.status = 'stopped';
       await this.saveRegistry();
+
+      // Close terminal window if tracked
+      if (entry.terminalApp && entry.terminalWindowId) {
+        this.closeTerminalWindow(entry.terminalApp, entry.terminalWindowId);
+      }
 
       if (this.onStatusChange) {
         this.onStatusChange(entry, oldStatus);
@@ -468,8 +515,11 @@ export class ProcessManager {
   /**
    * Called when session connects via socket - update status to running
    * Returns true if session was found in registry, false if it's a new/manual session
+   * @param sessionId Session ID
+   * @param cwd Working directory
+   * @param pid Process ID (used to update PID 0 entries from terminal app spawns)
    */
-  async onSessionConnected(sessionId: string, cwd?: string): Promise<{ found: boolean; entry?: ProcessEntry }> {
+  async onSessionConnected(sessionId: string, cwd?: string, pid?: number): Promise<{ found: boolean; entry?: ProcessEntry }> {
     // Skip sessions that are being reconciled (cleaned up after bot restart)
     if (this.reconcilingSessionIds.has(sessionId)) {
       log.info({ sessionId }, 'Session connect ignored - being reconciled');
@@ -482,6 +532,12 @@ export class ProcessManager {
     if (entry) {
       const oldStatus = entry.status;
       let statusChanged = false;
+
+      // Update PID if entry has PID 0 (from terminal app spawn)
+      if (pid && pid > 0 && entry.pid === 0) {
+        entry.pid = pid;
+        log.info({ sessionId, pid }, 'Updated session PID from terminal spawn');
+      }
 
       // Transition from 'starting' to 'running'
       if (entry.status === 'starting') {
