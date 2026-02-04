@@ -393,7 +393,7 @@ export class ChannelManager {
       try {
         thread = await channel.threads.create({
           name: threadName.slice(0, 100),
-          autoArchiveDuration: 1440, // 24 hours
+          autoArchiveDuration: 10080, // 7 days
           reason: `Claude Code session ${sessionId}`,
         });
         isNewThread = true;
