@@ -106,6 +106,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     // Ignore DMs
     if (!message.guild) return;
 
+    // Ignore messages in channels (only process thread messages)
+    if (!message.channel.isThread()) return;
+
     const sessionId = channelManager.getSessionByChannel(message.channelId);
     if (!sessionId) return; // Not a session channel
 
