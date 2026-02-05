@@ -84,6 +84,13 @@ export function createToolCallHandler(context: HandlerContext) {
             });
           } else {
             // Use buttons for single-select questions (max 5 per row, max 4 options + Other)
+            // Build option list with descriptions since buttons don't support descriptions
+            const optionsList = q.options
+              .map((opt: { label: string; description: string }, idx: number) =>
+                `${idx + 1}. **${opt.label}** - ${opt.description}`)
+              .join('\n');
+            const questionTextWithOptions = `${questionText}\n\n${optionsList}`;
+
             const rows: ActionRowBuilder<ButtonBuilder>[] = [];
             const currentRow = new ActionRowBuilder<ButtonBuilder>();
 
@@ -107,7 +114,7 @@ export function createToolCallHandler(context: HandlerContext) {
             rows.push(currentRow);
 
             await thread.send({
-              content: questionText,
+              content: questionTextWithOptions,
               components: rows,
             });
           }
