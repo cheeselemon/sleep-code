@@ -1,6 +1,33 @@
 import type { TodoItem } from '../types.js';
 
 /**
+ * Format Claude Code command messages (slash commands like /context, /compact, etc.)
+ * Raw format: <command-name>/cmd</command-name><command-message>msg</command-message><command-args>args</command-args>
+ * Formatted: > 🔧 `/cmd` args
+ */
+export function formatCommandMessage(content: string): string | null {
+  const nameMatch = content.match(/<command-name>(.*?)<\/command-name>/s);
+  if (!nameMatch) return null;
+
+  const commandName = nameMatch[1].trim();
+  const messageMatch = content.match(/<command-message>(.*?)<\/command-message>/s);
+  const argsMatch = content.match(/<command-args>(.*?)<\/command-args>/s);
+
+  const args = argsMatch?.[1]?.trim();
+  const message = messageMatch?.[1]?.trim();
+
+  // Build display: show command name, then args or message if they add info
+  let display = `\`${commandName}\``;
+  if (args) {
+    display += ` ${args}`;
+  } else if (message && message !== commandName.replace(/^\//, '')) {
+    display += ` ${message}`;
+  }
+
+  return display;
+}
+
+/**
  * Convert GitHub-flavored markdown to Slack mrkdwn format
  */
 export function markdownToSlack(markdown: string): string {

@@ -94,9 +94,11 @@ export const handleModel: CommandHandler = async (interaction, context) => {
   }
 
   const modelArg = interaction.options.getString('name', true);
-  const sent = context.sessionManager.sendInput(result.sessionId, `/model ${modelArg}\n`);
+  const command = `/model ${modelArg}`;
+  // Don't add \n - sendInput will add \r after 100ms
+  const sent = context.sessionManager.sendInput(result.sessionId, command);
   if (sent) {
-    await interaction.reply(`🧠 Sent /model ${modelArg}`);
+    await interaction.reply(`🧠 Sent ${command}`);
   } else {
     await interaction.reply('⚠️ Failed to send command - session not connected.');
   }

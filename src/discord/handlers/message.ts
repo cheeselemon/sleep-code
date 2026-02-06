@@ -6,7 +6,7 @@
 
 import { AttachmentBuilder } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
-import { chunkMessage, formatTodos } from '../../slack/message-formatter.js';
+import { chunkMessage, formatCommandMessage, formatTodos } from '../../slack/message-formatter.js';
 import { extractImagePaths } from '../../utils/image-extractor.js';
 import { getThread } from '../utils.js';
 import type { HandlerContext } from './types.js';
@@ -36,8 +36,12 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
       }
 
       // User message from terminal
+      // Format slash commands nicely
+      const commandFormatted = formatCommandMessage(formatted);
+      const displayContent = commandFormatted ?? formatted;
+
       // Discord has 4000 char limit, leave room for "**User:** " prefix
-      const chunks = chunkMessage(formatted, 3900);
+      const chunks = chunkMessage(displayContent, 3900);
       try {
         for (const chunk of chunks) {
           await thread.send(`**User:** ${chunk}`);

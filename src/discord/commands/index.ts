@@ -40,8 +40,14 @@ export const commands = [
     .setDescription('Switch Claude model')
     .addStringOption(option =>
       option.setName('name')
-        .setDescription('Model name (opus, sonnet, haiku)')
-        .setRequired(true)),
+        .setDescription('Model name')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Default', value: 'default' },
+          { name: 'Opus', value: 'opus' },
+          { name: 'Sonnet', value: 'sonnet' },
+          { name: 'Haiku', value: 'haiku' },
+        )),
   new SlashCommandBuilder()
     .setName('yolo-sleep')
     .setDescription('Toggle YOLO mode - auto-approve all permission requests'),
