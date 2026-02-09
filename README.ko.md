@@ -53,7 +53,10 @@ cd sleep-code && npm install && npm run build
 npm run discord:setup   # 인증 정보 입력
 npm run discord         # 봇 시작
 
-# 5. 다른 터미널에서 모니터링되는 Claude 세션 시작
+# 5. 권한 훅 설정
+npm run hook:setup
+
+# 6. 다른 터미널에서 모니터링되는 Claude 세션 시작
 npm run claude
 ```
 
@@ -162,6 +165,7 @@ sleep-code discord setup    # Discord 설정
 sleep-code discord          # Discord 봇 실행
 sleep-code slack setup      # Slack 설정
 sleep-code slack            # Slack 봇 실행
+sleep-code hook setup       # 권한 훅 설정
 sleep-code claude           # Claude 세션 시작
 sleep-code help             # 도움말
 ```
@@ -218,13 +222,27 @@ pm2 startup
 pm2 save
 ```
 
+## 권한 훅 설정
+
+권한 훅은 Claude Code의 권한 요청(파일 쓰기, 쉘 명령어 실행 등)을 채팅 플랫폼으로 전달하여 원격으로 승인/거부할 수 있게 합니다.
+
+```bash
+npm run hook:setup
+# 또는
+sleep-code hook setup
+```
+
+이 명령은 `~/.claude/settings.json`에 `PermissionRequest` 훅을 추가하여 Claude Code와 Sleep Code 봇을 연결합니다. 이 설정이 없으면 권한 요청이 로컬 터미널에만 표시되며 봇이 채팅으로 전달할 수 없습니다.
+
+훅 타임아웃은 24시간으로 설정되어 있어, 한참 뒤에 돌아와서 응답해도 정상적으로 처리됩니다.
+
 ## 작동 방식
 
 1. `npm run discord/telegram/slack`으로 세션을 대기하는 봇 시작
 2. `npm run claude`로 PTY에서 Claude를 생성하고 Unix 소켓으로 봇에 연결
 3. 봇이 Claude의 JSONL 파일을 감시하고 메시지를 채팅으로 전달
 4. 채팅에서 보낸 메시지를 터미널로 전달
-5. 권한 요청을 채팅으로 전달하여 승인 (Discord/Slack)
+5. 훅을 통해 권한 요청을 채팅으로 전달하여 승인 (Discord/Slack)
 
 ## 아키텍처
 

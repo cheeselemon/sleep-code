@@ -53,7 +53,10 @@ cd sleep-code && npm install && npm run build
 npm run discord:setup   # Enter your credentials
 npm run discord         # Start the bot
 
-# 5. In another terminal, start a monitored Claude session
+# 5. Configure the permission hook
+npm run hook:setup
+
+# 6. In another terminal, start a monitored Claude session
 npm run claude
 ```
 
@@ -162,6 +165,7 @@ sleep-code discord setup    # Configure Discord
 sleep-code discord          # Run Discord bot
 sleep-code slack setup      # Configure Slack
 sleep-code slack            # Run Slack bot
+sleep-code hook setup       # Configure permission hook
 sleep-code claude           # Start Claude session
 sleep-code help             # Show help
 ```
@@ -218,13 +222,27 @@ pm2 startup
 pm2 save
 ```
 
+## Permission Hook Setup
+
+The permission hook forwards Claude Code's permission prompts (file writes, shell commands, etc.) to your chat platform so you can approve or deny them remotely.
+
+```bash
+npm run hook:setup
+# or
+sleep-code hook setup
+```
+
+This adds a `PermissionRequest` hook to `~/.claude/settings.json` that connects Claude Code to the Sleep Code bot. Without this, permission prompts will only appear in the local terminal and the bot cannot forward them to chat.
+
+The hook is configured with a 24-hour timeout, so you can respond to permission requests even if you come back much later.
+
 ## How It Works
 
 1. `npm run discord/telegram/slack` starts a bot that listens for sessions
 2. `npm run claude` spawns Claude in a PTY and connects to the bot via Unix socket
 3. The bot watches Claude's JSONL files for messages and relays them to chat
 4. Messages you send in chat are forwarded to the terminal
-5. Permission requests are forwarded to chat for approval (Discord/Slack)
+5. Permission requests are forwarded to chat for approval (Discord/Slack) via the hook
 
 ## Architecture
 

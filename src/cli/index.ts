@@ -34,6 +34,7 @@ async function setupHook(): Promise<void> {
         {
           type: 'command',
           command: hookCommand,
+          timeout: 86400,
         },
       ],
     },
