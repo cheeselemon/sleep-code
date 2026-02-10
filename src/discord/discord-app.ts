@@ -13,6 +13,7 @@ import {
   Client,
   GatewayIntentBits,
   Events,
+  MessageType,
   REST,
   Routes,
 } from 'discord.js';
@@ -102,6 +103,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   client.on(Events.MessageCreate, async (message) => {
     // Ignore bot's own messages
     if (message.author.bot) return;
+
+    // Ignore system messages (thread name changes, pins, etc.)
+    if (message.type !== MessageType.Default && message.type !== MessageType.Reply) return;
 
     // Ignore DMs
     if (!message.guild) return;
