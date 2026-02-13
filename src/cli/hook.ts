@@ -110,6 +110,11 @@ function forwardToDiscord(
         if (!line.trim()) continue;
         try {
           const msg = JSON.parse(line);
+          if (msg.type === 'permission_passthrough' && msg.requestId === requestId) {
+            // Session not tracked by sleep-code, exit without output for default behavior
+            socket.end();
+            process.exit(0);
+          }
           if (msg.type === 'permission_response' && msg.requestId === requestId) {
             socket.end();
             resolve(msg.decision);

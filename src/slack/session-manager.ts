@@ -170,11 +170,13 @@ export class SessionManager {
       return false;
     }
 
+    // Longer text needs more time for PTY to process before pressing Enter
+    const delay = Math.min(100 + Math.floor(text.length / 10), 2000);
     setTimeout(() => {
       try {
         session.socket.write(JSON.stringify({ type: 'input', text: '\r' }) + '\n');
       } catch {}
-    }, 100);
+    }, delay);
 
     return true;
   }
@@ -302,6 +304,13 @@ export class SessionManager {
       }
 
       case 'permission_request': {
+        // Only handle permissions for sessions tracked by sleep-code
+        if (!this.sessions.has(message.sessionId)) {
+          log.info({ sessionId: message.sessionId, tool: message.toolName }, 'Permission request from untracked session, passing through');
+          socket.write(JSON.stringify({ type: 'permission_passthrough', requestId: message.requestId }) + '\n');
+          break;
+        }
+
         log.info({ requestId: message.requestId, tool: message.toolName }, 'Permission request');
         this.pendingPermissions.set(message.requestId, socket);
 
