@@ -161,7 +161,7 @@ export class SessionManager {
     }
 
     try {
-      session.socket.write(JSON.stringify({ type: 'input', text }) + '\n');
+      session.socket.write(JSON.stringify({ type: 'input', text, submit: true }) + '\n');
     } catch (err) {
       log.error({ sessionId, err }, 'Failed to send input');
       this.stopWatching(session);
@@ -169,14 +169,6 @@ export class SessionManager {
       this.events.onSessionEnd(sessionId);
       return false;
     }
-
-    // Longer text needs more time for PTY to process before pressing Enter
-    const delay = Math.min(100 + Math.floor(text.length / 10), 2000);
-    setTimeout(() => {
-      try {
-        session.socket.write(JSON.stringify({ type: 'input', text: '\r' }) + '\n');
-      } catch {}
-    }, delay);
 
     return true;
   }

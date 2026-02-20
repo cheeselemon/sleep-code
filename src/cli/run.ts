@@ -20,7 +20,7 @@ interface DaemonConnectionConfig {
   command: string[];
   jsonlFile: string;
   pid: number;
-  onInput: (text: string) => void;
+  onInput: (text: string, submit?: boolean) => void;
 }
 
 class DaemonConnection {
@@ -75,7 +75,7 @@ class DaemonConnection {
         try {
           const msg = JSON.parse(line);
           if (msg.type === 'input' && msg.text) {
-            this.config.onInput(msg.text);
+            this.config.onInput(msg.text, msg.submit);
           }
         } catch {}
       }
@@ -256,8 +256,35 @@ export async function run(command: string[], providedSessionId?: string): Promis
     command,
     jsonlFile,
     pid: ptyProcess.pid,
-    onInput: (text) => {
-      ptyProcess.write(text);
+    onInput: (text, submit) => {
+      if (!submit) {
+        ptyProcess.write(text);
+        return;
+      }
+
+      // Write text in chunks to avoid overwhelming PTY buffer, then press Enter
+      const CHUNK_SIZE = 1024;
+      const CHUNK_DELAY = 10; // ms between chunks
+
+      if (text.length <= CHUNK_SIZE) {
+        ptyProcess.write(text);
+        ptyProcess.write('\r');
+        return;
+      }
+
+      let offset = 0;
+      const writeNext = () => {
+        const chunk = text.slice(offset, offset + CHUNK_SIZE);
+        ptyProcess.write(chunk);
+        offset += CHUNK_SIZE;
+
+        if (offset < text.length) {
+          setTimeout(writeNext, CHUNK_DELAY);
+        } else {
+          setTimeout(() => ptyProcess.write('\r'), CHUNK_DELAY);
+        }
+      };
+      writeNext();
     },
   });
   daemon.start();
