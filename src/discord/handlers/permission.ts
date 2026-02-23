@@ -18,8 +18,9 @@ export function createPermissionRequestHandler(context: HandlerContext) {
 
   return (request: PermissionRequestInfo): Promise<{ behavior: 'allow' | 'deny'; message?: string }> => {
     return new Promise((resolve) => {
-      // YOLO mode: auto-approve without asking
-      if (state.yoloSessions.has(request.sessionId)) {
+      // YOLO mode: auto-approve without asking (except tools that need user decision)
+      const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
+      if (state.yoloSessions.has(request.sessionId) && !YOLO_EXCLUDED_TOOLS.has(request.toolName)) {
         log.info({ tool: request.toolName }, 'YOLO mode: auto-approving');
         // Notify in thread
         getThread(client, channelManager, request.sessionId).then(thread => {
