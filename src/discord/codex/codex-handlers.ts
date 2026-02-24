@@ -148,24 +148,25 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       const thread = await getCodexThread(client, channelManager, sessionId);
       if (!thread) return;
 
-      let text = `\`\`\`\n$ ${info.command}\n`;
-      if (info.output) {
-        const maxOutput = 1500;
+      const isError = info.exitCode !== undefined && info.exitCode !== 0;
+      const duration = info.durationMs ? `, ${(info.durationMs / 1000).toFixed(1)}s` : '';
+      const exitLabel = info.exitCode !== undefined ? `exit: ${info.exitCode}` : 'done';
+
+      let text: string;
+      if (isError && info.output) {
+        // Show error output (truncated)
+        const maxOutput = 500;
         const output = info.output.length > maxOutput
           ? info.output.slice(0, maxOutput) + '\n... (truncated)'
           : info.output;
-        text += output + '\n';
+        text = `⚙️ \`${info.command}\` (${exitLabel}${duration})\n\`\`\`\n${output}\n\`\`\``;
+      } else {
+        // One-line summary for successful commands
+        text = `⚙️ \`${info.command}\` (${exitLabel}${duration})`;
       }
-      if (info.exitCode !== undefined && info.exitCode !== 0) {
-        text += `Exit code: ${info.exitCode}\n`;
-      }
-      text += '```';
 
       try {
-        const chunks = chunkMessage(text, 3900);
-        for (const chunk of chunks) {
-          await thread.send(chunk);
-        }
+        await thread.send(text.slice(0, 3900));
       } catch (err: any) {
         log.error({ threadId: thread.id, error: err.message }, 'Failed to send Codex command execution');
       }
@@ -175,24 +176,20 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       const thread = await getCodexThread(client, channelManager, sessionId);
       if (!thread) return;
 
-      const changeLines = info.changes.map(c => {
-        let line = `• \`${c.path}\` (${c.kind})`;
-        if (c.diff) {
-          const diffPreview = c.diff.length > 200
-            ? c.diff.slice(0, 200) + '...'
-            : c.diff;
-          line += `\n\`\`\`diff\n${diffPreview}\n\`\`\``;
-        }
-        return line;
-      });
+      const count = info.changes.length;
+      const maxInline = 5;
 
-      const text = `📝 **File changes:**\n${changeLines.join('\n')}`;
+      let text: string;
+      if (count <= maxInline) {
+        const names = info.changes.map(c => `\`${c.path.split('/').pop()}\``).join(', ');
+        text = `📝 ${count} file${count > 1 ? 's' : ''} changed: ${names}`;
+      } else {
+        const shown = info.changes.slice(0, maxInline).map(c => `\`${c.path.split('/').pop()}\``).join(', ');
+        text = `📝 ${count} files changed: ${shown} +${count - maxInline} more`;
+      }
 
       try {
-        const chunks = chunkMessage(text, 3900);
-        for (const chunk of chunks) {
-          await thread.send(chunk);
-        }
+        await thread.send(text.slice(0, 3900));
       } catch (err: any) {
         log.error({ threadId: thread.id, error: err.message }, 'Failed to send Codex file change');
       }
