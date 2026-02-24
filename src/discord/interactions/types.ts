@@ -13,6 +13,7 @@ import type { ProcessManager } from '../process-manager.js';
 import type { SettingsManager } from '../settings-manager.js';
 import type { SessionManager } from '../../slack/session-manager.js';
 import type { DiscordState } from '../state.js';
+import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 
 export interface InteractionContext {
   client: Client;
@@ -20,6 +21,7 @@ export interface InteractionContext {
   sessionManager: SessionManager;
   processManager?: ProcessManager;
   settingsManager?: SettingsManager;
+  codexSessionManager?: CodexSessionManager;
   state: DiscordState;
 }
 

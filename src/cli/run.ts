@@ -265,10 +265,16 @@ export async function run(command: string[], providedSessionId?: string): Promis
       // Write text in chunks to avoid overwhelming PTY buffer, then press Enter
       const CHUNK_SIZE = 1024;
       const CHUNK_DELAY = 10; // ms between chunks
+      const SUBMIT_DELAY = 50; // ms before pressing Enter
+
+      const pressEnter = () => {
+        // Try both \r and \n to handle different terminal modes
+        ptyProcess.write('\r');
+      };
 
       if (text.length <= CHUNK_SIZE) {
         ptyProcess.write(text);
-        ptyProcess.write('\r');
+        setTimeout(pressEnter, SUBMIT_DELAY);
         return;
       }
 
@@ -281,7 +287,7 @@ export async function run(command: string[], providedSessionId?: string): Promis
         if (offset < text.length) {
           setTimeout(writeNext, CHUNK_DELAY);
         } else {
-          setTimeout(() => ptyProcess.write('\r'), CHUNK_DELAY);
+          setTimeout(pressEnter, SUBMIT_DELAY);
         }
       };
       writeNext();

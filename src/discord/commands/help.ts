@@ -33,6 +33,16 @@ export const handleHelp: CommandHandler = async (interaction) => {
         ].join('\n'),
       },
       {
+        name: '🟢 Codex (OpenAI)',
+        value: [
+          '`/codex start` - Start a new Codex session',
+          '`/codex stop` - Stop a running Codex session',
+          '`/codex status` - Show all Codex sessions',
+          'Use `x:` or `codex:` prefix to route messages to Codex',
+          'Use `c:` or `claude:` prefix to route messages to Claude',
+        ].join('\n'),
+      },
+      {
         name: '⚙️ Settings',
         value: [
           '`/claude add-dir <path>` - Add directory to whitelist',

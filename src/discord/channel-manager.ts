@@ -7,6 +7,7 @@ import { discordLogger as log } from '../utils/logger.js';
 
 const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
+const CODEX_MAPPINGS_FILE = join(MAPPINGS_DIR, 'codex-session-mappings.json');
 
 export interface PersistedMapping {
   sessionId: string;
@@ -65,6 +66,11 @@ export class ChannelManager {
   private threadToSession = new Map<string, string>();        // threadId -> sessionId
   private cwdToChannel = new Map<string, string>();           // cwd -> channelId
   private persistedMappings = new Map<string, PersistedMapping>(); // sessionId -> persisted data
+
+  // Codex session tracking (parallel to Claude)
+  private codexSessions = new Map<string, ChannelMapping>();       // sessionId -> mapping
+  private threadToCodexSession = new Map<string, string>();        // threadId -> sessionId
+  private codexPersistedMappings = new Map<string, PersistedMapping>();
   private client: Client;
   private userId: string;
   private guild: Guild | null = null;
@@ -170,6 +176,7 @@ export class ChannelManager {
   private async doInitialize(): Promise<void> {
     // Load persisted session mappings first
     await this.loadMappings();
+    await this.loadCodexMappings();
 
     // Find the first guild the bot is in
     const guilds = await this.client.guilds.fetch();
@@ -539,5 +546,202 @@ export class ChannelManager {
    */
   getPersistedMapping(sessionId: string): PersistedMapping | undefined {
     return this.persistedMappings.get(sessionId);
+  }
+
+  // ── Codex session methods ───────────────────────────────────
+
+  /**
+   * Create a Codex session mapping, optionally reusing an existing thread
+   */
+  async createCodexSession(
+    sessionId: string,
+    sessionName: string,
+    cwd: string,
+    existingThreadId?: string,
+  ): Promise<ChannelMapping | null> {
+    if (!this.initialized) {
+      const ready = await this.waitForInit();
+      if (!ready) return null;
+    }
+
+    if (this.codexSessions.has(sessionId)) {
+      return this.codexSessions.get(sessionId)!;
+    }
+
+    let threadId = existingThreadId;
+    let channelId = '';
+    let threadName = '';
+    let channelName = '';
+
+    if (existingThreadId) {
+      // Reuse an existing thread (multi-agent scenario)
+      try {
+        const thread = await this.client.channels.fetch(existingThreadId);
+        if (thread?.isThread()) {
+          threadId = thread.id;
+          threadName = thread.name;
+          channelId = thread.parentId || '';
+          await thread.send(`🤖 **Codex session joined this thread**\nCWD: \`${cwd}\``);
+        }
+      } catch {
+        log.warn({ existingThreadId }, 'Failed to fetch existing thread for Codex');
+        return null;
+      }
+    } else {
+      // Create new channel + thread (same as Claude flow)
+      const channel = await this.getOrCreateChannel(cwd);
+      if (!channel) return null;
+
+      channelId = channel.id;
+      channelName = channel.name;
+
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+      const name = `codex-${sessionId.slice(0, 8)} - ${timestamp}`;
+
+      try {
+        const thread = await channel.threads.create({
+          name: name.slice(0, 100),
+          autoArchiveDuration: 10080,
+          reason: `Codex session ${sessionId}`,
+        });
+        threadId = thread.id;
+        threadName = thread.name;
+
+        if (this.userId) {
+          await thread.members.add(this.userId).catch(() => {});
+        }
+
+        await thread.send(
+          `🤖 **Codex Session Started**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+        );
+      } catch (err: any) {
+        log.error({ err: err.message }, 'Failed to create Codex thread');
+        return null;
+      }
+    }
+
+    if (!threadId) return null;
+
+    const mapping: ChannelMapping = {
+      sessionId,
+      channelId,
+      threadId,
+      channelName,
+      threadName,
+      sessionName,
+      cwd,
+      status: 'running',
+      createdAt: new Date(),
+    };
+
+    this.codexSessions.set(sessionId, mapping);
+    this.threadToCodexSession.set(threadId, sessionId);
+
+    // Persist
+    this.codexPersistedMappings.set(sessionId, { sessionId, threadId, channelId, cwd });
+    await this.saveCodexMappings();
+
+    log.info({ sessionId, threadId }, 'Codex session mapping stored');
+    return mapping;
+  }
+
+  getCodexSession(sessionId: string): ChannelMapping | undefined {
+    return this.codexSessions.get(sessionId);
+  }
+
+  /**
+   * Update a Codex session's ID (used when 'pending' placeholder is replaced with real ID)
+   */
+  updateCodexSessionId(oldId: string, newId: string): void {
+    const mapping = this.codexSessions.get(oldId);
+    if (!mapping) return;
+
+    mapping.sessionId = newId;
+    this.codexSessions.delete(oldId);
+    this.codexSessions.set(newId, mapping);
+
+    // Update thread mapping
+    this.threadToCodexSession.set(mapping.threadId, newId);
+
+    // Update persisted mappings
+    const persisted = this.codexPersistedMappings.get(oldId);
+    if (persisted) {
+      this.codexPersistedMappings.delete(oldId);
+      persisted.sessionId = newId;
+      this.codexPersistedMappings.set(newId, persisted);
+      this.saveCodexMappings();
+    }
+
+    log.info({ oldId, newId }, 'Updated Codex session ID');
+  }
+
+  getCodexSessionByThread(threadId: string): string | undefined {
+    return this.threadToCodexSession.get(threadId);
+  }
+
+  /**
+   * Get which agents are active in a thread
+   */
+  getAgentsInThread(threadId: string): { claude?: string; codex?: string } {
+    return {
+      claude: this.threadToSession.get(threadId),
+      codex: this.threadToCodexSession.get(threadId),
+    };
+  }
+
+  async archiveCodexSession(sessionId: string): Promise<boolean> {
+    const mapping = this.codexSessions.get(sessionId);
+    if (!mapping) return false;
+
+    mapping.status = 'ended';
+
+    // Only archive thread if no Claude session is active in it
+    const claudeInThread = this.threadToSession.get(mapping.threadId);
+    const claudeMapping = claudeInThread ? this.sessions.get(claudeInThread) : undefined;
+    const claudeActive = claudeMapping && claudeMapping.status !== 'ended';
+
+    if (!claudeActive) {
+      try {
+        const thread = await this.client.channels.fetch(mapping.threadId);
+        if (thread?.isThread()) {
+          await thread.setArchived(true);
+        }
+      } catch (err: any) {
+        log.error({ err: err.message }, 'Failed to archive Codex thread');
+      }
+    }
+
+    this.threadToCodexSession.delete(mapping.threadId);
+    this.codexSessions.delete(sessionId);
+    this.codexPersistedMappings.delete(sessionId);
+    await this.saveCodexMappings();
+    return true;
+  }
+
+  private async saveCodexMappings(): Promise<void> {
+    try {
+      await mkdir(MAPPINGS_DIR, { recursive: true });
+      const mappings = Array.from(this.codexPersistedMappings.values());
+      await writeFile(CODEX_MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
+    } catch (err: any) {
+      log.error({ err: err.message }, 'Error saving Codex mappings');
+    }
+  }
+
+  private async loadCodexMappings(): Promise<void> {
+    try {
+      const data = await readFile(CODEX_MAPPINGS_FILE, 'utf-8');
+      const mappings: PersistedMapping[] = JSON.parse(data);
+      for (const m of mappings) {
+        this.codexPersistedMappings.set(m.sessionId, m);
+      }
+      log.info(`Loaded ${mappings.length} persisted Codex mappings`);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        log.error({ err: err.message }, 'Error loading Codex mappings');
+      }
+    }
   }
 }

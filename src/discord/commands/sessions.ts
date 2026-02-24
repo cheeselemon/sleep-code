@@ -6,17 +6,32 @@ import { formatSessionStatus } from '../../slack/message-formatter.js';
 import type { CommandHandler } from './types.js';
 
 export const handleSessions: CommandHandler = async (interaction, context) => {
-  const { channelManager } = context;
+  const { channelManager, codexSessionManager } = context;
 
-  const active = channelManager.getAllActive();
-  if (active.length === 0) {
-    await interaction.reply('No active sessions. Start a session with `sleep-code run -- claude`');
+  const claudeActive = channelManager.getAllActive();
+  const codexSessions = codexSessionManager?.getAllSessions().filter(s => s.status !== 'ended') ?? [];
+
+  if (claudeActive.length === 0 && codexSessions.length === 0) {
+    await interaction.reply('No active sessions. Start a session with `/claude start` or `/codex start`');
     return;
   }
 
-  const text = active
-    .map((s) => `<#${s.threadId}> (in <#${s.channelId}>) - ${formatSessionStatus(s.status)}`)
-    .join('\n');
+  const lines: string[] = [];
 
-  await interaction.reply(`**Active Sessions:**\n${text}`);
+  if (claudeActive.length > 0) {
+    lines.push('**Claude Sessions:**');
+    for (const s of claudeActive) {
+      lines.push(`  <#${s.threadId}> (in <#${s.channelId}>) - ${formatSessionStatus(s.status)}`);
+    }
+  }
+
+  if (codexSessions.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('**Codex Sessions:**');
+    for (const s of codexSessions) {
+      lines.push(`  <#${s.discordThreadId}> - ${s.status}`);
+    }
+  }
+
+  await interaction.reply(lines.join('\n'));
 };

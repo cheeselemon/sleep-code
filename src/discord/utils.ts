@@ -111,6 +111,41 @@ export function getInstalledTerminals(): { terminal: boolean; iterm2: boolean } 
 }
 
 /**
+ * Parse agent prefix from message content for routing
+ */
+export type AgentType = 'claude' | 'codex';
+
+export interface PrefixParseResult {
+  target: AgentType;
+  cleanContent: string;
+}
+
+export function parseAgentPrefix(
+  content: string,
+  context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
+): PrefixParseResult {
+  const lower = content.trimStart().toLowerCase();
+
+  // Check explicit prefixes
+  if (lower.startsWith('x:') || lower.startsWith('codex:')) {
+    const colonIdx = content.indexOf(':');
+    return { target: 'codex', cleanContent: content.slice(colonIdx + 1).trimStart() };
+  }
+  if (lower.startsWith('c:') || lower.startsWith('claude:')) {
+    const colonIdx = content.indexOf(':');
+    return { target: 'claude', cleanContent: content.slice(colonIdx + 1).trimStart() };
+  }
+
+  // No prefix - use default
+  if (context.hasClaude && !context.hasCodex) return { target: 'claude', cleanContent: content };
+  if (context.hasCodex && !context.hasClaude) return { target: 'codex', cleanContent: content };
+
+  // Both agents - use last active, fallback to Claude
+  const defaultAgent = context.lastActive || 'claude';
+  return { target: defaultAgent, cleanContent: content };
+}
+
+/**
  * Helper to get thread for sending messages
  */
 export async function getThread(

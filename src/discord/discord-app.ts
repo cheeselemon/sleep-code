@@ -23,12 +23,14 @@ import { ChannelManager } from './channel-manager.js';
 import { discordLogger as log } from '../utils/logger.js';
 import type { ProcessManager } from './process-manager.js';
 import type { SettingsManager } from './settings-manager.js';
+import { CodexSessionManager } from './codex/codex-session-manager.js';
+import { createCodexEvents } from './codex/codex-handlers.js';
 
 // Import state management
 import { createState, cleanupState } from './state.js';
 
 // Import utils
-import { downloadAttachment, downloadTextAttachment } from './utils.js';
+import { downloadAttachment, downloadTextAttachment, parseAgentPrefix } from './utils.js';
 
 // Import command handlers
 import { commands, handleCommand } from './commands/index.js';
@@ -50,11 +52,13 @@ export interface DiscordAppOptions {
   config: DiscordConfig;
   processManager?: ProcessManager;
   settingsManager?: SettingsManager;
+  enableCodex?: boolean;
 }
 
 export function createDiscordApp(config: DiscordConfig, options?: Partial<DiscordAppOptions>) {
   const processManager = options?.processManager;
   const settingsManager = options?.settingsManager;
+  const enableCodex = options?.enableCodex ?? false;
 
   const client = new Client({
     intents: [
@@ -67,11 +71,20 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   const channelManager = new ChannelManager(client, config.userId);
   const state = createState();
 
+  // Initialize Codex session manager if enabled
+  let codexSessionManager: CodexSessionManager | undefined;
+  if (enableCodex) {
+    const codexEvents = createCodexEvents({ client, channelManager, state });
+    codexSessionManager = new CodexSessionManager(codexEvents);
+    log.info('Codex session manager initialized');
+  }
+
   // Create handler context
   const handlerContext = {
     client,
     channelManager,
     processManager,
+    codexSessionManager,
     state,
   };
 
@@ -94,12 +107,13 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     sessionManager,
     processManager,
     settingsManager,
+    codexSessionManager,
     state,
   };
 
   const interactionContext: InteractionContext = commandContext;
 
-  // Handle messages in session channels (user sending input to Claude)
+  // Handle messages in session channels (user sending input to Claude or Codex)
   client.on(Events.MessageCreate, async (message) => {
     // Ignore bot's own messages
     if (message.author.bot) return;
@@ -113,16 +127,24 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     // Ignore messages in channels (only process thread messages)
     if (!message.channel.isThread()) return;
 
-    const sessionId = channelManager.getSessionByChannel(message.channelId);
-    if (!sessionId) return; // Not a session channel
+    const threadId = message.channelId;
 
-    const channel = channelManager.getChannel(sessionId);
-    if (!channel || channel.status === 'ended') {
-      await message.reply('⚠️ This session has ended.');
-      return;
-    }
+    // Check which agents are active in this thread
+    const agents = channelManager.getAgentsInThread(threadId);
+    const claudeSessionId = agents.claude;
+    const codexSessionId = agents.codex;
 
-    log.info({ sessionId, contentPreview: message.content.slice(0, 50) }, 'Sending input to session');
+    // Not a session thread
+    if (!claudeSessionId && !codexSessionId) return;
+
+    // Parse agent prefix to determine routing target
+    const { target, cleanContent } = parseAgentPrefix(message.content, {
+      hasClaude: !!claudeSessionId,
+      hasCodex: !!codexSessionId,
+      lastActive: state.lastActiveAgent.get(threadId),
+    });
+
+    log.info({ threadId, target, contentPreview: cleanContent.slice(0, 50) }, 'Routing message');
 
     // React with checkmark to acknowledge receipt
     await message.react('✅').catch(() => {});
@@ -157,13 +179,13 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     // Report errors if any
     if (errors.length > 0) {
       await message.reply(`⚠️ ${errors.join('\n')}`);
-      if (textContents.length === 0 && imagePaths.length === 0 && !message.content.trim()) {
+      if (textContents.length === 0 && imagePaths.length === 0 && !cleanContent.trim()) {
         return; // Nothing to send
       }
     }
 
     // Build message with attachments
-    let inputText = message.content;
+    let inputText = cleanContent;
     if (imagePaths.length > 0) {
       const imageRefs = imagePaths.map(p => `[Image: ${p}]`).join('\n');
       inputText = inputText ? `${inputText}\n\n${imageRefs}` : imageRefs;
@@ -174,13 +196,71 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       log.info({ count: textContents.length }, 'Added text files to message');
     }
 
-    // Track this message so we don't re-post it
-    state.discordSentMessages.add(inputText.trim());
+    // Route to the correct agent
+    if (target === 'codex') {
+      if (!codexSessionManager) {
+        await message.reply('⚠️ Codex is not enabled.');
+        return;
+      }
 
-    const sent = sessionManager.sendInput(sessionId, inputText);
-    if (!sent) {
-      state.discordSentMessages.delete(inputText.trim());
-      await message.reply('⚠️ Failed to send input - session not connected.');
+      // Auto-create Codex session if not in thread yet
+      let effectiveCodexSessionId = codexSessionId;
+      if (!effectiveCodexSessionId) {
+        // Get CWD from the existing Claude session
+        const claudeMapping = claudeSessionId ? channelManager.getChannel(claudeSessionId) : null;
+        if (!claudeMapping) {
+          await message.reply('⚠️ Cannot determine working directory for Codex.');
+          return;
+        }
+
+        try {
+          const mapping = await channelManager.createCodexSession('pending', 'codex-auto', claudeMapping.cwd, threadId);
+          if (!mapping) {
+            await message.reply('⚠️ Failed to create Codex session.');
+            return;
+          }
+          const entry = await codexSessionManager.startSession(claudeMapping.cwd, threadId);
+          channelManager.updateCodexSessionId('pending', entry.id);
+          effectiveCodexSessionId = entry.id;
+          log.info({ sessionId: entry.id, cwd: claudeMapping.cwd }, 'Auto-created Codex session in existing thread');
+        } catch (err) {
+          log.error({ err }, 'Failed to auto-create Codex session');
+          await message.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
+          return;
+        }
+      }
+
+      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, inputText);
+      if (!sent) {
+        await message.reply('⚠️ Failed to send input to Codex - session busy or ended.');
+      }
+      state.lastActiveAgent.set(threadId, 'codex');
+    } else {
+      // Route to Claude
+      let effectiveClaudeSessionId = claudeSessionId;
+
+      // Auto-create Claude session is not supported via message routing
+      // (Claude needs PTY + process spawning, too complex for auto-create)
+      if (!effectiveClaudeSessionId) {
+        await message.reply('⚠️ No Claude session in this thread. Use `/claude start` first.');
+        return;
+      }
+
+      const channel = channelManager.getChannel(effectiveClaudeSessionId);
+      if (!channel || channel.status === 'ended') {
+        await message.reply('⚠️ This Claude session has ended.');
+        return;
+      }
+
+      // Track this message so we don't re-post it
+      state.discordSentMessages.add(inputText.trim());
+
+      const sent = sessionManager.sendInput(effectiveClaudeSessionId, inputText);
+      if (!sent) {
+        state.discordSentMessages.delete(inputText.trim());
+        await message.reply('⚠️ Failed to send input - session not connected.');
+      }
+      state.lastActiveAgent.set(threadId, 'claude');
     }
   });
 
@@ -228,5 +308,5 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     cleanupState(state);
   };
 
-  return { client, sessionManager, channelManager, cleanup };
+  return { client, sessionManager, channelManager, codexSessionManager, cleanup };
 }

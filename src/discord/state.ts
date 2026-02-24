@@ -79,6 +79,9 @@ export interface DiscordState {
 
   // Cleanup interval reference
   fullResultsCleanupInterval: NodeJS.Timeout | null;
+
+  // Track which agent was last active in each thread (for default routing)
+  lastActiveAgent: Map<string, 'claude' | 'codex'>; // threadId -> agent type
 }
 
 /**
@@ -97,6 +100,7 @@ export function createState(): DiscordState {
     typingIntervals: new Map(),
     pendingFullResults: new Map(),
     fullResultsCleanupInterval: null,
+    lastActiveAgent: new Map(),
   };
 
   // Start periodic cleanup of expired pendingFullResults

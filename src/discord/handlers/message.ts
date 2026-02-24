@@ -58,12 +58,19 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
       }
 
       // Claude's response - Discord has 4000 char limit
-      const chunks = chunkMessage(formatted, 3900);
-      log.debug({ chunks: chunks.length, threadId: thread.id }, 'Sending chunks to thread');
+      // Add "Claude:" prefix when both agents are in the same thread
+      const multiAgent = !!(
+        channelManager.getAgentsInThread(thread.id).claude &&
+        channelManager.getAgentsInThread(thread.id).codex
+      );
+      const prefix = multiAgent ? '**Claude:** ' : '';
+      const maxLen = 3900 - prefix.length;
+      const chunks = chunkMessage(formatted, maxLen);
+      log.debug({ chunks: chunks.length, threadId: thread.id, multiAgent }, 'Sending chunks to thread');
       try {
         for (const chunk of chunks) {
           log.trace({ preview: chunk.slice(0, 80) }, 'Chunk preview');
-          const msg = await thread.send(chunk);
+          const msg = await thread.send(`${prefix}${chunk}`);
           log.debug({ messageId: msg.id }, 'Sent message');
         }
         log.debug('Sent assistant message');

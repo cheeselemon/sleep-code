@@ -191,9 +191,27 @@ export async function discordRun(): Promise<void> {
     userId: config.DISCORD_USER_ID,
   };
 
+  // Auto-detect Codex availability: OAuth tokens (~/.codex/auth.json) or API key
+  const openaiKey = config.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    process.env.OPENAI_API_KEY = openaiKey;
+  }
+
+  const codexAuthFile = `${homedir()}/.codex/auth.json`;
+  const hasCodexOAuth = await fileExists(codexAuthFile);
+  const enableCodex = hasCodexOAuth || !!openaiKey;
+
+  if (enableCodex) {
+    const method = hasCodexOAuth ? 'OAuth (~/.codex/auth.json)' : 'API key';
+    log.info({ method }, 'Codex integration enabled');
+  } else {
+    log.info('No Codex auth found (run `codex login` or set OPENAI_API_KEY), Codex disabled');
+  }
+
   const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {
     processManager,
     settingsManager,
+    enableCodex,
   });
 
   // Start session manager (Unix socket server for CLI connections)

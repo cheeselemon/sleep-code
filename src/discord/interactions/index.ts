@@ -21,6 +21,8 @@ import {
   handleStopSessionSelect,
   handleRemoveDirSelect,
   handleSetTerminalSelect,
+  handleCodexStartDirSelect,
+  handleCodexStopSessionSelect,
 } from './select-menus.js';
 import type { InteractionContext } from './types.js';
 
@@ -100,6 +102,18 @@ export async function handleSelectMenu(
   // Claude set terminal selection
   if (customId === 'claude_set_terminal') {
     await handleSetTerminalSelect(interaction, context);
+    return;
+  }
+
+  // Codex start directory selection
+  if (customId === 'codex_start_dir') {
+    await handleCodexStartDirSelect(interaction, context);
+    return;
+  }
+
+  // Codex stop session selection
+  if (customId === 'codex_stop_session') {
+    await handleCodexStopSessionSelect(interaction, context);
     return;
   }
 

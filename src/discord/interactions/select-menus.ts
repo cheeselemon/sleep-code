@@ -6,6 +6,7 @@
  * - claude_set_terminal
  */
 
+import { basename } from 'path';
 import { discordLogger as log } from '../../utils/logger.js';
 import type { SelectMenuHandler } from './types.js';
 
@@ -160,4 +161,98 @@ export const handleSetTerminalSelect: SelectMenuHandler = async (interaction, co
     content: `✅ Terminal app set to **${appNames[app]}**\n\nNew sessions will open in ${app === 'background' ? 'the background' : 'a new terminal window'}.${permissionNotice}`,
     components: [],
   });
+};
+
+/**
+ * Handle directory selection for starting a Codex session
+ */
+export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, context) => {
+  const { codexSessionManager, channelManager, settingsManager } = context;
+
+  if (!codexSessionManager || !settingsManager) {
+    await interaction.reply({ content: '⚠️ Codex is not enabled.', ephemeral: true });
+    return;
+  }
+
+  const cwd = interaction.values[0];
+
+  if (!settingsManager.isDirectoryAllowed(cwd)) {
+    await interaction.update({
+      content: `❌ Directory \`${cwd}\` is no longer in the whitelist.`,
+      components: [],
+    });
+    return;
+  }
+
+  try {
+    await interaction.update({
+      content: `🚀 Starting Codex session in \`${cwd}\`...`,
+      components: [],
+    });
+
+    // Create thread first, then start Codex session
+    const sessionName = `codex-${basename(cwd)}`;
+    const mapping = await channelManager.createCodexSession('pending', sessionName, cwd);
+    if (!mapping) {
+      await interaction.followUp({ content: '❌ Failed to create thread.', ephemeral: true });
+      return;
+    }
+
+    const entry = await codexSessionManager.startSession(cwd, mapping.threadId);
+
+    // Update channel manager with real session ID
+    channelManager.updateCodexSessionId('pending', entry.id);
+
+    await interaction.followUp({
+      content: `✅ **Codex session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      ephemeral: true,
+    });
+  } catch (err) {
+    log.error({ err, cwd }, 'Failed to start Codex session');
+    await interaction.followUp({
+      content: `❌ Failed to start Codex session: ${(err as Error).message}`,
+      ephemeral: true,
+    });
+  }
+};
+
+/**
+ * Handle session selection for stopping a Codex session
+ */
+export const handleCodexStopSessionSelect: SelectMenuHandler = async (interaction, context) => {
+  const { codexSessionManager, channelManager } = context;
+
+  if (!codexSessionManager) {
+    await interaction.reply({ content: '⚠️ Codex is not enabled.', ephemeral: true });
+    return;
+  }
+
+  const sessionId = interaction.values[0];
+
+  try {
+    await interaction.update({
+      content: `🛑 Stopping Codex session ${sessionId.slice(0, 8)}...`,
+      components: [],
+    });
+
+    const success = await codexSessionManager.stopSession(sessionId);
+    if (success) {
+      await channelManager.archiveCodexSession(sessionId);
+      await interaction.followUp({
+        content: `✅ Codex session ${sessionId.slice(0, 8)} stopped.`,
+        ephemeral: true,
+      });
+    } else {
+      await interaction.followUp({
+        content: '❌ Failed to stop Codex session.',
+        ephemeral: true,
+      });
+    }
+  } catch (err) {
+    log.error({ err, sessionId }, 'Failed to stop Codex session');
+    await interaction.followUp({
+      content: `❌ Error: ${(err as Error).message}`,
+      ephemeral: true,
+    });
+  }
 };
