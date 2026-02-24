@@ -6,15 +6,18 @@
  */
 
 import { Codex } from '@openai/codex-sdk';
-import type { Thread } from '@openai/codex-sdk';
+import type { Thread, SandboxMode } from '@openai/codex-sdk';
 import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
+
+export type { SandboxMode } from '@openai/codex-sdk';
 
 export interface CodexSessionEntry {
   id: string;
   codexThread: Thread;
   codexThreadId: string;
   cwd: string;
+  sandboxMode: SandboxMode;
   status: 'starting' | 'running' | 'idle' | 'ended';
   discordThreadId: string;
   startedAt: Date;
@@ -58,11 +61,16 @@ export class CodexSessionManager {
     });
   }
 
-  async startSession(cwd: string, discordThreadId: string): Promise<CodexSessionEntry> {
+  async startSession(cwd: string, discordThreadId: string, options?: {
+    sandboxMode?: SandboxMode;
+  }): Promise<CodexSessionEntry> {
     const id = randomUUID();
+    const sandboxMode = options?.sandboxMode ?? 'read-only';
 
     const codexThread = this.codex.startThread({
       workingDirectory: cwd,
+      sandboxMode,
+      approvalPolicy: 'never',
     });
 
     const entry: CodexSessionEntry = {
@@ -70,6 +78,7 @@ export class CodexSessionManager {
       codexThread,
       codexThreadId: '', // Set after first turn
       cwd,
+      sandboxMode,
       status: 'idle',
       discordThreadId,
       startedAt: new Date(),
@@ -138,6 +147,41 @@ export class CodexSessionManager {
   }
 
   /**
+   * Switch sandbox mode for a running session by replacing the Thread object.
+   * Aborts active turn if running, then resumes (or recreates) the thread with the new mode.
+   */
+  async switchSandboxMode(sessionId: string, newMode: SandboxMode): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status === 'ended') return false;
+    if (session.sandboxMode === newMode) return true; // Already in desired mode
+
+    // Abort active turn if running
+    if (session.activeTurn) {
+      session.activeTurn.abort();
+      session.activeTurn = null;
+    }
+
+    const threadOptions = {
+      workingDirectory: session.cwd,
+      sandboxMode: newMode,
+      approvalPolicy: 'never' as const,
+    };
+
+    if (session.codexThreadId) {
+      // Resume existing thread with new sandbox mode
+      session.codexThread = this.codex.resumeThread(session.codexThreadId, threadOptions);
+    } else {
+      // No thread ID yet (pre-first-turn) — create a new thread
+      session.codexThread = this.codex.startThread(threadOptions);
+    }
+
+    session.sandboxMode = newMode;
+    session.status = 'idle';
+    log.info({ sessionId, newMode }, 'Codex sandbox mode switched');
+    return true;
+  }
+
+  /**
    * Restore sessions from persisted mappings (after PM2 restart)
    */
   async restoreSessions(mappings: Array<{
@@ -161,6 +205,7 @@ export class CodexSessionManager {
           codexThread,
           codexThreadId: m.codexThreadId,
           cwd: m.cwd,
+          sandboxMode: 'read-only',
           status: 'idle',
           discordThreadId: m.discordThreadId,
           startedAt: new Date(),
@@ -185,7 +230,9 @@ export class CodexSessionManager {
     session.activeTurn = abortController;
 
     try {
-      const { events } = await session.codexThread.runStreamed(prompt);
+      const { events } = await session.codexThread.runStreamed(prompt, {
+        signal: abortController.signal,
+      });
 
       for await (const event of events) {
         // Check if aborted
@@ -262,8 +309,12 @@ export class CodexSessionManager {
         }
       }
     } finally {
-      session.activeTurn = null;
-      if (this.sessions.has(session.id)) {
+      // Only reset state if this turn's controller is still the active one.
+      // switchSandboxMode() replaces activeTurn, so a stale finally must not overwrite.
+      if (session.activeTurn === abortController) {
+        session.activeTurn = null;
+      }
+      if (this.sessions.has(session.id) && session.activeTurn === null) {
         session.status = 'idle';
         this.events.onSessionStatus(session.id, 'idle');
       }

@@ -32,7 +32,7 @@ function getSessionFromChannel(
 }
 
 export const handleYoloSleep: CommandHandler = async (interaction, context) => {
-  const { state } = context;
+  const { state, codexSessionManager } = context;
 
   const result = getSessionFromChannel(interaction.channelId, context);
   if ('error' in result) {
@@ -43,9 +43,19 @@ export const handleYoloSleep: CommandHandler = async (interaction, context) => {
   // Toggle YOLO mode
   if (state.yoloSessions.has(result.sessionId)) {
     state.yoloSessions.delete(result.sessionId);
+    // Switch Codex to read-only if present in this thread
+    const codexSession = codexSessionManager?.getSessionByDiscordThread(interaction.channelId);
+    if (codexSession) {
+      await codexSessionManager!.switchSandboxMode(codexSession.id, 'read-only');
+    }
     await interaction.reply('🛡️ **YOLO mode OFF** - Permission requests will be shown');
   } else {
     state.yoloSessions.add(result.sessionId);
+    // Switch Codex to workspace-write if present in this thread
+    const codexSession = codexSessionManager?.getSessionByDiscordThread(interaction.channelId);
+    if (codexSession) {
+      await codexSessionManager!.switchSandboxMode(codexSession.id, 'workspace-write');
+    }
     await interaction.reply('🔥 **YOLO mode ON** - All permissions auto-approved!');
   }
 };

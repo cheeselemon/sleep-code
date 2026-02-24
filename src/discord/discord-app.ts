@@ -232,10 +232,13 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             await message.reply('⚠️ Failed to create Codex session.');
             return;
           }
-          const entry = await codexSessionManager.startSession(claudeMapping.cwd, threadId);
+          const isYolo = claudeSessionId ? state.yoloSessions.has(claudeSessionId) : false;
+          const entry = await codexSessionManager.startSession(claudeMapping.cwd, threadId, {
+            sandboxMode: isYolo ? 'workspace-write' : 'read-only',
+          });
           channelManager.updateCodexSessionId('pending', entry.id);
           effectiveCodexSessionId = entry.id;
-          log.info({ sessionId: entry.id, cwd: claudeMapping.cwd }, 'Auto-created Codex session in existing thread');
+          log.info({ sessionId: entry.id, cwd: claudeMapping.cwd, sandboxMode: isYolo ? 'workspace-write' : 'read-only' }, 'Auto-created Codex session in existing thread');
 
           // Notify Claude that Codex joined
           const claudeSystemMsg = `[System] Codex (OpenAI) is now connected to this conversation. You can talk to Codex directly. When you see a message labeled "Codex:", that is Codex talking to you. To reply to Codex, start your response with @codex followed by your message. IMPORTANT: @codex must be the very first word — mentions in the middle of a message will NOT be routed. For example: "@codex 테스트 돌려줘". Your @codex message will be delivered to Codex automatically. Try it now.`;

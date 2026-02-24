@@ -167,7 +167,7 @@ export const handleSetTerminalSelect: SelectMenuHandler = async (interaction, co
  * Handle directory selection for starting a Codex session
  */
 export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, context) => {
-  const { codexSessionManager, channelManager, settingsManager } = context;
+  const { codexSessionManager, channelManager, settingsManager, state } = context;
 
   if (!codexSessionManager || !settingsManager) {
     await interaction.reply({ content: '⚠️ Codex is not enabled.', ephemeral: true });
@@ -198,7 +198,13 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
       return;
     }
 
-    const entry = await codexSessionManager.startSession(cwd, mapping.threadId);
+    // Check if the thread's Claude session has YOLO enabled
+    const claudeSessionId = channelManager.getSessionByChannel(interaction.channelId);
+    const isYolo = claudeSessionId ? state.yoloSessions.has(claudeSessionId) : false;
+
+    const entry = await codexSessionManager.startSession(cwd, mapping.threadId, {
+      sandboxMode: isYolo ? 'workspace-write' : 'read-only',
+    });
 
     // Update channel manager with real session ID
     channelManager.updateCodexSessionId('pending', entry.id);

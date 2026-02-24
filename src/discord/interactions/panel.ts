@@ -29,7 +29,7 @@ export const handleInterruptButton: ButtonHandler = async (interaction, context)
  * Handle YOLO toggle button (yolo:sessionId)
  */
 export const handleYoloButton: ButtonHandler = async (interaction, context) => {
-  const { state } = context;
+  const { state, codexSessionManager } = context;
   const customId = interaction.customId;
 
   const sessionId = customId.slice('yolo:'.length);
@@ -42,6 +42,15 @@ export const handleYoloButton: ButtonHandler = async (interaction, context) => {
     state.yoloSessions.add(sessionId);
   }
   const newState = !isYolo;
+
+  // Switch Codex sandbox mode if present in this thread
+  const codexSession = codexSessionManager?.getSessionByDiscordThread(interaction.channelId);
+  if (codexSession) {
+    await codexSessionManager!.switchSandboxMode(
+      codexSession.id,
+      newState ? 'workspace-write' : 'read-only',
+    );
+  }
 
   // Update button label
   const updatedButton = new ActionRowBuilder<ButtonBuilder>().addComponents(

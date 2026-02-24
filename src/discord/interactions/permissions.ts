@@ -9,7 +9,7 @@ import type { ButtonHandler } from './types.js';
  * Handle permission request buttons (allow/deny/yolo)
  */
 export const handlePermissionButton: ButtonHandler = async (interaction, context) => {
-  const { state } = context;
+  const { state, codexSessionManager } = context;
   const customId = interaction.customId;
 
   // Immediately defer to prevent 3-second timeout
@@ -44,6 +44,11 @@ export const handlePermissionButton: ButtonHandler = async (interaction, context
     statusText = 'Permission granted + YOLO mode ON';
     // Enable YOLO mode for this session
     state.yoloSessions.add(pending.sessionId);
+    // Switch Codex to workspace-write if present in this thread
+    const codexSession = codexSessionManager?.getSessionByDiscordThread(interaction.channelId);
+    if (codexSession) {
+      await codexSessionManager!.switchSandboxMode(codexSession.id, 'workspace-write');
+    }
   } else {
     emoji = '❌';
     statusText = 'Permission denied';
