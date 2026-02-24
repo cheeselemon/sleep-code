@@ -97,6 +97,13 @@ Discord-only. Handles:
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
 
+## Multi-Agent Communication Protocol
+
+- `CEO → Claude`: prefix 없음 (일반 메시지)
+- `CEO → Codex`: `@codex`로 시작
+- `Claude → Codex`: `@codex`로 시작
+- `Codex → Claude`: `@claude`로 시작
+
 ## Code Style
 
 - TypeScript with ES modules

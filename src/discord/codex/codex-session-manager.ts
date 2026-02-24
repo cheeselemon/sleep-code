@@ -44,9 +44,13 @@ export class CodexSessionManager {
   private codex: Codex;
   private sessions = new Map<string, CodexSessionEntry>();
   private events: CodexEvents;
+  private onCodexThreadIdSet?: (sessionId: string, codexThreadId: string) => void;
 
-  constructor(events: CodexEvents) {
+  constructor(events: CodexEvents, options?: {
+    onCodexThreadIdSet?: (sessionId: string, codexThreadId: string) => void;
+  }) {
     this.events = events;
+    this.onCodexThreadIdSet = options?.onCodexThreadIdSet;
     this.codex = new Codex({
       config: {
         approval_policy: 'never',
@@ -133,6 +137,46 @@ export class CodexSessionManager {
     return Array.from(this.sessions.values());
   }
 
+  /**
+   * Restore sessions from persisted mappings (after PM2 restart)
+   */
+  async restoreSessions(mappings: Array<{
+    sessionId: string;
+    codexThreadId: string;
+    cwd: string;
+    discordThreadId: string;
+  }>): Promise<number> {
+    let restored = 0;
+    for (const m of mappings) {
+      if (!m.codexThreadId) {
+        log.warn({ sessionId: m.sessionId }, 'Skipping restore: no Codex thread ID');
+        continue;
+      }
+
+      try {
+        const codexThread = this.codex.resumeThread(m.codexThreadId);
+
+        const entry: CodexSessionEntry = {
+          id: m.sessionId,
+          codexThread,
+          codexThreadId: m.codexThreadId,
+          cwd: m.cwd,
+          status: 'idle',
+          discordThreadId: m.discordThreadId,
+          startedAt: new Date(),
+          activeTurn: null,
+        };
+
+        this.sessions.set(m.sessionId, entry);
+        restored++;
+        log.info({ sessionId: m.sessionId, codexThreadId: m.codexThreadId }, 'Restored Codex session');
+      } catch (err) {
+        log.error({ sessionId: m.sessionId, err }, 'Failed to restore Codex session');
+      }
+    }
+    return restored;
+  }
+
   private async processStreamedTurn(session: CodexSessionEntry, prompt: string): Promise<void> {
     session.status = 'running';
     this.events.onSessionStatus(session.id, 'running');
@@ -153,6 +197,8 @@ export class CodexSessionManager {
             if (threadId && !session.codexThreadId) {
               session.codexThreadId = threadId;
               log.info({ sessionId: session.id, codexThreadId: threadId }, 'Codex thread ID set');
+              // Persist the thread ID for session restoration
+              this.onCodexThreadIdSet?.(session.id, threadId);
             }
             break;
           }

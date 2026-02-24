@@ -18,6 +18,7 @@
 - **Permission handling** - Approve or deny tool permissions from chat (Discord)
 - **YOLO mode** - Auto-approve all permission requests
 - **Session management** - Start, stop, and monitor sessions from Discord
+- **Codex integration** - Run OpenAI Codex sessions alongside Claude in the same thread
 - **Terminal app support** - Open sessions in Terminal.app or iTerm2 (macOS)
 - **Multi-platform** - Works with Telegram, Discord, and Slack
 
@@ -129,6 +130,13 @@ A new channel/thread is created for each session. Messages relay bidirectionally
 | `/claude remove-dir` | Remove directory from whitelist |
 | `/claude list-dirs` | List whitelisted directories |
 | `/claude set-terminal` | Set terminal app (Terminal.app, iTerm2, or background) |
+
+### Codex (OpenAI)
+| Command | Description |
+|---------|-------------|
+| `/codex start` | Start a new Codex session (select directory) |
+| `/codex stop` | Stop a running Codex session |
+| `/codex status` | Show all Codex sessions |
 
 ### Other
 | Command | Description |
@@ -256,13 +264,38 @@ src/
 │   ├── discord-app.ts      # Discord.js app and event handlers
 │   ├── channel-manager.ts  # Thread/channel management
 │   ├── process-manager.ts  # Session spawning and lifecycle
-│   └── settings-manager.ts # User settings (directories, terminal app)
+│   ├── settings-manager.ts # User settings (directories, terminal app)
+│   └── codex/              # OpenAI Codex integration
+│       ├── codex-session-manager.ts  # SDK session lifecycle
+│       └── codex-handlers.ts         # Codex events → Discord messages
 ├── slack/
 │   ├── slack-app.ts        # Slack Bolt app
 │   └── session-manager.ts  # JSONL watching, shared across platforms
 └── telegram/
     └── telegram-app.ts     # grammY app and event handlers
 ```
+
+## Codex Integration (Discord)
+
+Run OpenAI Codex sessions alongside Claude in the same Discord thread for multi-agent workflows.
+
+### Setup
+
+Set `OPENAI_API_KEY` in your `.env` file, or run `codex login` to authenticate via OAuth (`~/.codex/auth.json`). Codex is auto-detected on bot startup.
+
+### Multi-Agent Threads
+
+When both Claude and Codex are in the same thread, use prefixes to route messages:
+
+| Prefix | Target | Example |
+|--------|--------|---------|
+| `c:` or `claude:` | Claude | `c: explain this code` |
+| `x:` or `codex:` | Codex | `x: run the tests` |
+| (none) | Last active agent | `fix the bug` |
+
+Using `x:` in a Claude-only thread will auto-create a Codex session in the same directory.
+
+See [docs/codex-integration-en.md](docs/codex-integration-en.md) for full details.
 
 ## Warning: YOLO Mode
 

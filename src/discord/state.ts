@@ -17,6 +17,9 @@ export const MAX_TEXT_FILE_SIZE = 100 * 1024;
 // Full result TTL for cleanup
 export const FULL_RESULT_TTL = 30 * 60 * 1000; // 30 minutes
 
+// Max consecutive agent-to-agent routing before stopping (prevents infinite loops)
+export const MAX_AGENT_ROUTING = 20;
+
 export interface PendingQuestion {
   sessionId: string;
   toolUseId: string;
@@ -82,6 +85,9 @@ export interface DiscordState {
 
   // Track which agent was last active in each thread (for default routing)
   lastActiveAgent: Map<string, 'claude' | 'codex'>; // threadId -> agent type
+
+  // Track consecutive agent-to-agent routing count (reset on user message)
+  agentRoutingCount: Map<string, number>; // threadId -> count
 }
 
 /**
@@ -101,6 +107,7 @@ export function createState(): DiscordState {
     pendingFullResults: new Map(),
     fullResultsCleanupInterval: null,
     lastActiveAgent: new Map(),
+    agentRoutingCount: new Map(),
   };
 
   // Start periodic cleanup of expired pendingFullResults

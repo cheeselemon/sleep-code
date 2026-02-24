@@ -6,7 +6,7 @@
  * So we just watch each session's specific file directly.
  */
 
-import { readFile, stat, unlink } from 'fs/promises';
+import { open, stat, unlink } from 'fs/promises';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { createServer, type Server, type Socket } from 'net';
 import { createHash } from 'crypto';
@@ -96,9 +96,14 @@ export class SessionManager {
   }
 
   async start(): Promise<void> {
+    // Clean up stale socket, verify no other process is listening
     try {
       await unlink(DAEMON_SOCKET);
-    } catch {}
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        log.warn({ err }, 'Failed to unlink daemon socket');
+      }
+    }
 
     this.server = createServer((socket) => {
       let messageBuffer = '';
@@ -112,7 +117,9 @@ export class SessionManager {
           if (!line.trim()) continue;
           try {
             const parsed = JSON.parse(line);
-            this.handleSessionMessage(socket, parsed);
+            this.handleSessionMessage(socket, parsed).catch((err) => {
+              log.error({ err }, 'Unhandled error in handleSessionMessage');
+            });
           } catch (error) {
             log.error({ err: error }, 'Error parsing message');
           }
@@ -124,16 +131,31 @@ export class SessionManager {
       });
 
       socket.on('close', () => {
+        // Clean up ALL sessions on this socket + their pending permissions
+        const closedSessionIds: string[] = [];
         for (const [id, session] of this.sessions) {
           if (session.socket === socket) {
-            log.info({ sessionId: id }, 'Session disconnected');
-            this.stopWatching(session);
-            this.sessions.delete(id);
-            this.events.onSessionEnd(id);
-            break;
+            closedSessionIds.push(id);
           }
         }
+
+        for (const id of closedSessionIds) {
+          const session = this.sessions.get(id)!;
+          log.info({ sessionId: id }, 'Session disconnected');
+          this.stopWatching(session);
+          this.sessions.delete(id);
+          this.cleanupPendingForSession(id, socket);
+          this.events.onSessionEnd(id);
+        }
       });
+    });
+
+    this.server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        log.error({ socket: DAEMON_SOCKET }, 'Daemon socket already in use by another process');
+      } else {
+        log.error({ err }, 'Server error');
+      }
     });
 
     this.server.listen(DAEMON_SOCKET, () => {
@@ -388,6 +410,22 @@ export class SessionManager {
   }
 
   /**
+   * Clean up pending permissions and AskUserQuestion entries for a closed session/socket
+   */
+  private cleanupPendingForSession(sessionId: string, socket: Socket): void {
+    // Clean up pendingPermissions entries that belong to this socket
+    for (const [requestId, pendingSocket] of this.pendingPermissions) {
+      if (pendingSocket === socket) {
+        this.pendingPermissions.delete(requestId);
+        log.debug({ requestId, sessionId }, 'Cleaned orphan pending permission');
+      }
+    }
+
+    // Clean up pendingAskUserQuestions for this session
+    this.pendingAskUserQuestions.delete(sessionId);
+  }
+
+  /**
    * Add hash to seen messages with LRU cleanup
    */
   private addSeenMessage(session: InternalSession, lineHash: string): void {
@@ -406,7 +444,7 @@ export class SessionManager {
   }
 
   /**
-   * Process this session's JSONL file
+   * Process this session's JSONL file (incremental read via file descriptor)
    */
   private async processJsonl(session: InternalSession): Promise<void> {
     // No JSONL path yet
@@ -417,16 +455,30 @@ export class SessionManager {
     session.processing = true;
 
     try {
-      const buffer = await readFile(session.jsonlPath);
+      const fileStat = await stat(session.jsonlPath);
+
+      // Detect file truncation/rotation: size shrunk → reset position
+      if (fileStat.size < session.lastProcessedSize) {
+        log.warn({ sessionId: session.id, prevSize: session.lastProcessedSize, newSize: fileStat.size }, 'JSONL file truncated/rotated, resetting position');
+        session.lastProcessedSize = 0;
+      }
 
       // No new content
-      if (buffer.length <= session.lastProcessedSize) {
+      if (fileStat.size <= session.lastProcessedSize) {
         return;
       }
 
-      // Only read new content
-      const newBuffer = buffer.subarray(session.lastProcessedSize);
-      const content = newBuffer.toString('utf-8');
+      // Read only new bytes via file descriptor (avoids loading entire file)
+      const bytesToRead = fileStat.size - session.lastProcessedSize;
+      const fd = await open(session.jsonlPath, 'r');
+      let content: string;
+      try {
+        const buf = Buffer.alloc(bytesToRead);
+        await fd.read(buf, 0, bytesToRead, session.lastProcessedSize);
+        content = buf.toString('utf-8');
+      } finally {
+        await fd.close();
+      }
 
       // Split by newline, keeping track of incomplete last line
       const parts = content.split('\n');
@@ -434,7 +486,7 @@ export class SessionManager {
 
       // If last part is not empty, it's an incomplete line - don't process it yet
       const incompleteBytes = Buffer.byteLength(lastPart, 'utf-8');
-      session.lastProcessedSize = buffer.length - incompleteBytes;
+      session.lastProcessedSize = fileStat.size - incompleteBytes;
 
       const lines = parts.filter(Boolean);
       log.debug({ lines: lines.length, buffered: incompleteBytes }, 'Processing new lines');

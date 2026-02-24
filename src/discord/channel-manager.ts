@@ -14,6 +14,7 @@ export interface PersistedMapping {
   threadId: string;
   channelId: string;
   cwd: string;
+  codexThreadId?: string; // Codex SDK thread ID for resumeThread()
 }
 
 export interface ChannelMapping {
@@ -677,6 +678,46 @@ export class ChannelManager {
     log.info({ oldId, newId }, 'Updated Codex session ID');
   }
 
+  /**
+   * Store Codex SDK thread ID for session persistence (needed for resumeThread)
+   */
+  setCodexThreadId(sessionId: string, codexThreadId: string): void {
+    const persisted = this.codexPersistedMappings.get(sessionId);
+    if (persisted) {
+      persisted.codexThreadId = codexThreadId;
+      this.saveCodexMappings();
+      log.info({ sessionId, codexThreadId }, 'Stored Codex SDK thread ID');
+    }
+  }
+
+  /**
+   * Get all persisted Codex mappings (for session restoration on startup)
+   */
+  getPersistedCodexMappings(): PersistedMapping[] {
+    return Array.from(this.codexPersistedMappings.values());
+  }
+
+  /**
+   * Restore in-memory Codex session mapping from persisted data (after PM2 restart)
+   */
+  restoreCodexSessionMapping(persisted: PersistedMapping): void {
+    const mapping: ChannelMapping = {
+      sessionId: persisted.sessionId,
+      channelId: persisted.channelId,
+      threadId: persisted.threadId,
+      channelName: '',
+      threadName: '',
+      sessionName: 'codex-restored',
+      cwd: persisted.cwd,
+      status: 'idle',
+      createdAt: new Date(),
+    };
+
+    this.codexSessions.set(persisted.sessionId, mapping);
+    this.threadToCodexSession.set(persisted.threadId, persisted.sessionId);
+    log.info({ sessionId: persisted.sessionId, threadId: persisted.threadId }, 'Restored Codex session mapping');
+  }
+
   getCodexSessionByThread(threadId: string): string | undefined {
     return this.threadToCodexSession.get(threadId);
   }
@@ -728,6 +769,55 @@ export class ChannelManager {
     } catch (err: any) {
       log.error({ err: err.message }, 'Error saving Codex mappings');
     }
+  }
+
+  /**
+   * Validate persisted Codex mappings against actual Discord thread state.
+   * Removes stale entries (no codexThreadId, thread deleted, thread archived).
+   * Returns only valid mappings that should be restored.
+   */
+  async validateAndCleanCodexMappings(): Promise<PersistedMapping[]> {
+    const valid: PersistedMapping[] = [];
+    const stale: string[] = [];
+
+    for (const [sessionId, mapping] of this.codexPersistedMappings) {
+      // Skip mappings without codexThreadId (never completed first turn)
+      if (!mapping.codexThreadId) {
+        stale.push(sessionId);
+        log.info({ sessionId }, 'Removing Codex mapping: no codexThreadId');
+        continue;
+      }
+
+      // Validate Discord thread exists and is not archived
+      try {
+        const thread = await this.client.channels.fetch(mapping.threadId);
+        if (!thread?.isThread()) {
+          stale.push(sessionId);
+          log.info({ sessionId, threadId: mapping.threadId }, 'Removing Codex mapping: thread not found or not a thread');
+          continue;
+        }
+        if (thread.archived) {
+          stale.push(sessionId);
+          log.info({ sessionId, threadId: mapping.threadId }, 'Removing Codex mapping: thread archived');
+          continue;
+        }
+        valid.push(mapping);
+      } catch {
+        stale.push(sessionId);
+        log.info({ sessionId, threadId: mapping.threadId }, 'Removing Codex mapping: failed to fetch thread');
+      }
+    }
+
+    // Clean up stale mappings
+    if (stale.length > 0) {
+      for (const sessionId of stale) {
+        this.codexPersistedMappings.delete(sessionId);
+      }
+      await this.saveCodexMappings();
+      log.info({ removed: stale.length, remaining: valid.length }, 'Cleaned stale Codex mappings');
+    }
+
+    return valid;
   }
 
   private async loadCodexMappings(): Promise<void> {

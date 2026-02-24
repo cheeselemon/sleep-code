@@ -18,6 +18,7 @@
 - **권한 처리** - 채팅에서 도구 권한 승인/거부 (Discord)
 - **YOLO 모드** - 모든 권한 요청 자동 승인
 - **세션 관리** - Discord에서 세션 시작, 중지, 모니터링
+- **Codex 연동** - 같은 스레드에서 Claude와 OpenAI Codex를 함께 실행
 - **터미널 앱 지원** - Terminal.app 또는 iTerm2에서 세션 열기 (macOS)
 - **멀티 플랫폼** - Telegram, Discord, Slack 지원
 
@@ -129,6 +130,13 @@ npm run claude
 | `/claude remove-dir` | 화이트리스트에서 디렉토리 제거 |
 | `/claude list-dirs` | 화이트리스트 디렉토리 목록 |
 | `/claude set-terminal` | 터미널 앱 설정 (Terminal.app, iTerm2, 백그라운드) |
+
+### Codex (OpenAI)
+| 명령어 | 설명 |
+|---------|-------------|
+| `/codex start` | 새 Codex 세션 시작 (디렉토리 선택) |
+| `/codex stop` | 실행 중인 Codex 세션 중지 |
+| `/codex status` | 모든 Codex 세션 표시 |
 
 ### 기타
 | 명령어 | 설명 |
@@ -256,13 +264,38 @@ src/
 │   ├── discord-app.ts      # Discord.js 앱 및 이벤트 핸들러
 │   ├── channel-manager.ts  # 스레드/채널 관리
 │   ├── process-manager.ts  # 세션 생성 및 생명주기
-│   └── settings-manager.ts # 사용자 설정 (디렉토리, 터미널 앱)
+│   ├── settings-manager.ts # 사용자 설정 (디렉토리, 터미널 앱)
+│   └── codex/              # OpenAI Codex 연동
+│       ├── codex-session-manager.ts  # SDK 세션 생명주기
+│       └── codex-handlers.ts         # Codex 이벤트 → Discord 메시지
 ├── slack/
 │   ├── slack-app.ts        # Slack Bolt 앱
 │   └── session-manager.ts  # JSONL 감시, 플랫폼 간 공유
 └── telegram/
     └── telegram-app.ts     # grammY 앱 및 이벤트 핸들러
 ```
+
+## Codex 연동 (Discord)
+
+같은 Discord 스레드에서 Claude와 OpenAI Codex를 함께 실행하여 멀티 에이전트 워크플로우를 구성할 수 있습니다.
+
+### 설정
+
+`.env` 파일에 `OPENAI_API_KEY`를 설정하거나, `codex login`으로 OAuth 인증(`~/.codex/auth.json`)하세요. 봇 시작 시 자동 감지됩니다.
+
+### 멀티 에이전트 스레드
+
+같은 스레드에 Claude와 Codex가 모두 있을 때, 접두어로 메시지 대상을 지정합니다:
+
+| 접두어 | 대상 | 예시 |
+|--------|------|------|
+| `c:` 또는 `claude:` | Claude | `c: 이 코드 설명해줘` |
+| `x:` 또는 `codex:` | Codex | `x: 테스트 실행해줘` |
+| (없음) | 마지막 활성 에이전트 | `버그 수정해줘` |
+
+Claude 전용 스레드에서 `x:`를 사용하면 같은 디렉토리에 Codex 세션이 자동 생성됩니다.
+
+자세한 내용은 [docs/codex-integration.md](docs/codex-integration.md)를 참고하세요.
 
 ## 경고: YOLO 모드
 

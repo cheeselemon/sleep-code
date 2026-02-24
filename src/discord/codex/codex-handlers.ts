@@ -5,14 +5,18 @@
 import type { Client, ThreadChannel } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage } from '../../slack/message-formatter.js';
+import { parseAgentPrefix } from '../utils.js';
 import type { ChannelManager } from '../channel-manager.js';
+import { MAX_AGENT_ROUTING } from '../state.js';
 import type { DiscordState } from '../state.js';
+import type { SessionManager } from '../../slack/session-manager.js';
 import type { CodexEvents } from './codex-session-manager.js';
 
 interface CodexHandlerContext {
   client: Client;
   channelManager: ChannelManager;
   state: DiscordState;
+  sessionManagerRef: { current: SessionManager | null };
 }
 
 async function getCodexThread(
@@ -90,6 +94,40 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       if (!thread) return;
 
       const multiAgent = isMultiAgentThread(channelManager, thread.id);
+
+      // Auto-route: detect c:/claude: prefix in Codex output → forward to Claude
+      if (multiAgent) {
+        const agents = channelManager.getAgentsInThread(thread.id);
+        const { target, cleanContent } = parseAgentPrefix(content, {
+          hasClaude: !!agents.claude,
+          hasCodex: !!agents.codex,
+          lastActive: 'codex', // Codex is producing this, default stays codex
+        });
+
+        if (target === 'claude' && agents.claude && cleanContent.trim()) {
+          const routingCount = state.agentRoutingCount.get(thread.id) ?? 0;
+          if (routingCount >= MAX_AGENT_ROUTING) {
+            log.info({ threadId: thread.id, routingCount }, 'Agent routing limit reached, displaying normally');
+            try {
+              await thread.send(`⚠️ Agent routing limit (${MAX_AGENT_ROUTING}) reached. Displaying message instead.`);
+            } catch { /* ignore */ }
+            // Fall through to normal display
+          } else {
+            const sessionManager = context.sessionManagerRef.current;
+            if (sessionManager) {
+              state.agentRoutingCount.set(thread.id, routingCount + 1);
+              log.info({ from: 'codex', to: 'claude', count: routingCount + 1, preview: cleanContent.slice(0, 50) }, 'Agent-to-agent routing');
+              await thread.send(`**Codex → Claude:** ${cleanContent.slice(0, 3900)}`);
+              const messageForClaude = `Codex: ${cleanContent}\n\n(Start with @codex to reply)`;
+              state.discordSentMessages.add(messageForClaude.trim());
+              sessionManager.sendInput(agents.claude, messageForClaude);
+              state.lastActiveAgent.set(thread.id, 'claude');
+              return;
+            }
+          }
+        }
+      }
+
       const prefix = multiAgent ? '**Codex:** ' : '';
       const maxLen = 3900 - prefix.length;
       const chunks = chunkMessage(content, maxLen);

@@ -71,11 +71,18 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   const channelManager = new ChannelManager(client, config.userId);
   const state = createState();
 
+  // Create a ref for lazy sessionManager access (needed for circular dependency)
+  const sessionManagerRef: SessionManagerRef = { current: null };
+
   // Initialize Codex session manager if enabled
   let codexSessionManager: CodexSessionManager | undefined;
   if (enableCodex) {
-    const codexEvents = createCodexEvents({ client, channelManager, state });
-    codexSessionManager = new CodexSessionManager(codexEvents);
+    const codexEvents = createCodexEvents({ client, channelManager, state, sessionManagerRef });
+    codexSessionManager = new CodexSessionManager(codexEvents, {
+      onCodexThreadIdSet: (sessionId, codexThreadId) => {
+        channelManager.setCodexThreadId(sessionId, codexThreadId);
+      },
+    });
     log.info('Codex session manager initialized');
   }
 
@@ -87,9 +94,6 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     codexSessionManager,
     state,
   };
-
-  // Create a ref for lazy sessionManager access (needed for circular dependency)
-  const sessionManagerRef: SessionManagerRef = { current: null };
 
   // Create events with the ref (handlers will access sessionManager through ref.current)
   const events = createSessionManagerEvents(handlerContext, sessionManagerRef);
@@ -145,6 +149,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     });
 
     log.info({ threadId, target, contentPreview: cleanContent.slice(0, 50) }, 'Routing message');
+
+    // Reset agent-to-agent routing counter on user message
+    state.agentRoutingCount.set(threadId, 0);
 
     // React with checkmark to acknowledge receipt
     await message.react('✅').catch(() => {});
@@ -223,6 +230,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           channelManager.updateCodexSessionId('pending', entry.id);
           effectiveCodexSessionId = entry.id;
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd }, 'Auto-created Codex session in existing thread');
+
+          // Notify Claude that Codex joined
+          const claudeSystemMsg = `[System] Codex (OpenAI) is now connected to this conversation. You can talk to Codex directly. When you see a message labeled "Codex:", that is Codex talking to you. To reply to Codex, start your response with @codex followed by your message. For example: "@codex 테스트 돌려줘". Your @codex message will be delivered to Codex automatically. Try it now.`;
+          sessionManager.sendInput(claudeSessionId!, claudeSystemMsg);
+          state.discordSentMessages.add(claudeSystemMsg);
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Codex session');
           await message.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
@@ -230,7 +242,14 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
-      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, inputText);
+      // Prepend system context on first message if multi-agent thread
+      const codexSession = codexSessionManager.getSession(effectiveCodexSessionId);
+      const isFirstMessage = codexSession && !codexSession.codexThreadId; // No thread ID yet = first turn
+      const systemPrefix = (isFirstMessage && claudeSessionId)
+        ? `[System] Claude Code (Anthropic) is now connected to this conversation. You can talk to Claude directly. When you see a message labeled "Claude:", that is Claude talking to you. To reply to Claude, start your response with @claude followed by your message. For example: "@claude please review this code". Your @claude message will be delivered to Claude automatically.\n\n`
+        : '';
+
+      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, systemPrefix + inputText);
       if (!sent) {
         await message.reply('⚠️ Failed to send input to Codex - session busy or ended.');
       }
@@ -273,6 +292,35 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   client.once(Events.ClientReady, async (c) => {
     log.info({ tag: c.user.tag }, 'Logged in');
     await channelManager.initialize();
+
+    // Restore Codex sessions from persisted mappings (validate threads first)
+    if (codexSessionManager) {
+      const validated = await channelManager.validateAndCleanCodexMappings();
+      const restorable = validated
+        .filter(m => m.codexThreadId)
+        .map(m => ({
+          sessionId: m.sessionId,
+          codexThreadId: m.codexThreadId!,
+          cwd: m.cwd,
+          discordThreadId: m.threadId,
+        }));
+
+      if (restorable.length > 0) {
+        const restored = await codexSessionManager.restoreSessions(restorable);
+        // Re-register thread mappings for restored sessions
+        for (const m of restorable) {
+          const mapping = channelManager.getCodexSession(m.sessionId);
+          if (!mapping) {
+            // Re-create in-memory mapping from persisted data
+            const persisted2 = validated.find(p => p.sessionId === m.sessionId);
+            if (persisted2) {
+              channelManager.restoreCodexSessionMapping(persisted2);
+            }
+          }
+        }
+        log.info({ restored, total: restorable.length }, 'Codex session restoration complete');
+      }
+    }
 
     // Register slash commands
     try {

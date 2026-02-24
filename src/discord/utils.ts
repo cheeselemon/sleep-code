@@ -124,9 +124,23 @@ export function parseAgentPrefix(
   content: string,
   context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
 ): PrefixParseResult {
-  const lower = content.trimStart().toLowerCase();
+  const trimmed = content.trimStart();
+  const lower = trimmed.toLowerCase();
 
-  // Check explicit prefixes
+  // Check @mention style: @codex or @claude (with optional colon/space after)
+  const codexMention = /^@codex[:\s]*/i;
+  const claudeMention = /^@claude[:\s]*/i;
+
+  if (codexMention.test(trimmed)) {
+    const cleanContent = trimmed.replace(codexMention, '').trimStart();
+    return { target: 'codex', cleanContent };
+  }
+  if (claudeMention.test(trimmed)) {
+    const cleanContent = trimmed.replace(claudeMention, '').trimStart();
+    return { target: 'claude', cleanContent };
+  }
+
+  // Legacy prefix support: x:/c: (for user convenience)
   if (lower.startsWith('x:') || lower.startsWith('codex:')) {
     const colonIdx = content.indexOf(':');
     return { target: 'codex', cleanContent: content.slice(colonIdx + 1).trimStart() };

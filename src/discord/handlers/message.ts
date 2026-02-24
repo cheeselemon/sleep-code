@@ -8,12 +8,13 @@ import { AttachmentBuilder } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage, formatCommandMessage, formatTodos } from '../../slack/message-formatter.js';
 import { extractImagePaths } from '../../utils/image-extractor.js';
-import { getThread } from '../utils.js';
+import { getThread, parseAgentPrefix } from '../utils.js';
+import { MAX_AGENT_ROUTING } from '../state.js';
 import type { HandlerContext } from './types.js';
 import type { SessionManagerRef } from './index.js';
 
 export function createMessageHandler(context: HandlerContext, sessionManagerRef: SessionManagerRef) {
-  const { client, channelManager, state } = context;
+  const { client, channelManager, codexSessionManager, state } = context;
 
   return async (sessionId: string, role: string, content: string) => {
     log.info({ sessionId, role, contentPreview: content.slice(0, 50) }, 'onMessage');
@@ -59,10 +60,42 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
 
       // Claude's response - Discord has 4000 char limit
       // Add "Claude:" prefix when both agents are in the same thread
-      const multiAgent = !!(
-        channelManager.getAgentsInThread(thread.id).claude &&
-        channelManager.getAgentsInThread(thread.id).codex
-      );
+      const agents = channelManager.getAgentsInThread(thread.id);
+      const multiAgent = !!(agents.claude && agents.codex);
+
+      // Auto-route: detect x:/codex: prefix in Claude output → forward to Codex
+      if (multiAgent && codexSessionManager) {
+        const { target, cleanContent } = parseAgentPrefix(formatted, {
+          hasClaude: !!agents.claude,
+          hasCodex: !!agents.codex,
+          lastActive: 'claude', // Claude is producing this, default stays claude
+        });
+
+        if (target === 'codex' && agents.codex && cleanContent.trim()) {
+          const routingCount = state.agentRoutingCount.get(thread.id) ?? 0;
+          if (routingCount >= MAX_AGENT_ROUTING) {
+            log.info({ threadId: thread.id, routingCount }, 'Agent routing limit reached, displaying normally');
+            try {
+              await thread.send(`⚠️ Agent routing limit (${MAX_AGENT_ROUTING}) reached. Displaying message instead.`);
+            } catch { /* ignore */ }
+            // Fall through to normal display
+          } else {
+            const codexSession = codexSessionManager.getSession(agents.codex);
+            if (codexSession && codexSession.status !== 'ended') {
+              state.agentRoutingCount.set(thread.id, routingCount + 1);
+              log.info({ from: 'claude', to: 'codex', count: routingCount + 1, preview: cleanContent.slice(0, 50) }, 'Agent-to-agent routing');
+              try {
+                await thread.send(`**Claude → Codex:** ${cleanContent.slice(0, 3900)}`);
+              } catch { /* ignore */ }
+              const messageForCodex = `Claude: ${cleanContent}\n\n(Start with @claude to reply)`;
+              await codexSessionManager.sendInput(agents.codex, messageForCodex);
+              state.lastActiveAgent.set(thread.id, 'codex');
+              return; // Skip normal Claude message display
+            }
+          }
+        }
+      }
+
       const prefix = multiAgent ? '**Claude:** ' : '';
       const maxLen = 3900 - prefix.length;
       const chunks = chunkMessage(formatted, maxLen);

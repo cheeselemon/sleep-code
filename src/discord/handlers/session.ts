@@ -52,7 +52,7 @@ export function createSessionStartHandler(context: HandlerContext) {
 }
 
 export function createSessionEndHandler(context: HandlerContext) {
-  const { client, channelManager, processManager, state } = context;
+  const { client, channelManager, processManager, codexSessionManager, state } = context;
 
   return async (sessionId: string) => {
     // Clean up typing indicator to prevent resource leak
@@ -69,6 +69,19 @@ export function createSessionEndHandler(context: HandlerContext) {
 
     const session = channelManager.getSession(sessionId);
     if (session) {
+      // Stop Codex session in the same thread (Claude is the primary session)
+      if (codexSessionManager) {
+        const codexSessionId = channelManager.getCodexSessionByThread(session.threadId);
+        if (codexSessionId) {
+          await codexSessionManager.stopSession(codexSessionId);
+          await channelManager.archiveCodexSession(codexSessionId);
+          const thread = await getThread(client, channelManager, sessionId);
+          if (thread) {
+            await thread.send('🤖 **Codex session also ended** (Claude session closed)');
+          }
+        }
+      }
+
       const thread = await getThread(client, channelManager, sessionId);
       if (thread) {
         await thread.send('🛑 **Session ended** - this thread will be archived');
