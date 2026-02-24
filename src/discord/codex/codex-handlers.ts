@@ -5,7 +5,7 @@
 import type { Client, ThreadChannel } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage } from '../../slack/message-formatter.js';
-import { parseAgentPrefix } from '../utils.js';
+import { parseRoutingDirective } from '../utils.js';
 import type { ChannelManager } from '../channel-manager.js';
 import { MAX_AGENT_ROUTING } from '../state.js';
 import type { DiscordState } from '../state.js';
@@ -95,16 +95,16 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
 
       const multiAgent = isMultiAgentThread(channelManager, thread.id);
 
-      // Auto-route: detect c:/claude: prefix in Codex output → forward to Claude
+      // Auto-route: detect @claude prefix in Codex output → forward to Claude
       if (multiAgent) {
         const agents = channelManager.getAgentsInThread(thread.id);
-        const { target, cleanContent } = parseAgentPrefix(content, {
+        const { target, cleanContent, explicit } = parseRoutingDirective(content, {
           hasClaude: !!agents.claude,
           hasCodex: !!agents.codex,
           lastActive: 'codex', // Codex is producing this, default stays codex
         });
 
-        if (target === 'claude' && agents.claude && cleanContent.trim()) {
+        if (explicit && target === 'claude' && agents.claude && cleanContent.trim()) {
           const routingCount = state.agentRoutingCount.get(thread.id) ?? 0;
           if (routingCount >= MAX_AGENT_ROUTING) {
             log.info({ threadId: thread.id, routingCount }, 'Agent routing limit reached, displaying normally');

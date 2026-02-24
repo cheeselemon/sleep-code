@@ -115,14 +115,21 @@ if (directive.invalidMention) {
 "@mention must be the very first word of your message."
 ```
 
+## Codex Review Feedback (Applied)
+
+1. **파싱 입력 대상**: `inputText`(첨부 합쳐진 값) 대신 `message.content`(원문)로 파싱 → 첨부 내 `@codex` 오탐 방지
+2. **기본 라우팅 정책 명시**: `explicit: false`일 때 → `lastActive ?? 'claude'` (단일 에이전트면 해당 에이전트)
+
 ## Acceptance Criteria
 
-- [ ] `parseRoutingDirective`가 `explicit`, `invalidMention` 필드를 정확히 반환
-- [ ] `@codex hello` → `{ target: 'codex', explicit: true, invalidMention: false }`
-- [ ] `hello @codex` → `{ target: 기본값, explicit: false, invalidMention: true }`
-- [ ] `` `@codex` in code block `` → `{ explicit: false, invalidMention: false }` (코드블록 무시)
-- [ ] Claude→Codex 라우팅: `explicit === true`일 때만 전달
-- [ ] Codex→Claude 라우팅: `explicit === true`일 때만 전달
-- [ ] CEO가 본문 중간에 멘션 넣으면 경고 메시지 표시
-- [ ] `npm run build` 성공
-- [ ] legacy prefix(`x:`, `codex:`, `c:`, `claude:`)는 여전히 동작 (`explicit: true`)
+- [x] `parseRoutingDirective`가 `explicit`, `invalidMention` 필드를 정확히 반환
+- [x] `@codex hello` → `{ target: 'codex', explicit: true, invalidMention: false }`
+- [x] `hello @codex` → `{ target: 기본값, explicit: false, invalidMention: true }`
+- [x] `` `@codex` in code block `` → `{ explicit: false, invalidMention: false }` (코드블록 무시)
+- [x] Claude→Codex 라우팅: `explicit === true`일 때만 전달
+- [x] Codex→Claude 라우팅: `explicit === true`일 때만 전달
+- [x] CEO가 본문 중간에 멘션 넣으면 경고 메시지 표시
+- [x] `npm run build` 성공
+- [x] legacy prefix(`x:`, `codex:`, `c:`, `claude:`)는 여전히 동작 (`explicit: true`)
+- [x] 기본 라우팅: `explicit: false` → `lastActive ?? 'claude'`
+- [x] CEO 입력은 `message.content`(원문)로 파싱, 첨부는 이후 결합

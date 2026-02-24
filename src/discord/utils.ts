@@ -115,17 +115,34 @@ export function getInstalledTerminals(): { terminal: boolean; iterm2: boolean } 
  */
 export type AgentType = 'claude' | 'codex';
 
-export interface PrefixParseResult {
+export interface RoutingDirective {
   target: AgentType;
   cleanContent: string;
+  explicit: boolean;         // true = first token is @codex/@claude or legacy prefix
+  invalidMention: boolean;   // true = @codex/@claude found mid-body (not in code blocks)
 }
 
-export function parseAgentPrefix(
+/**
+ * Strip code blocks (``` and inline `) from text for mention scanning.
+ */
+function stripCodeBlocks(text: string): string {
+  // Remove fenced code blocks first, then inline code
+  return text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+}
+
+/**
+ * Check if @codex or @claude appears in body text (outside code blocks).
+ */
+function hasBodyMention(text: string): boolean {
+  const stripped = stripCodeBlocks(text);
+  return /@(?:codex|claude)\b/i.test(stripped);
+}
+
+export function parseRoutingDirective(
   content: string,
   context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
-): PrefixParseResult {
+): RoutingDirective {
   const trimmed = content.trimStart();
-  const lower = trimmed.toLowerCase();
 
   // Check @mention style: @codex or @claude (with optional colon/space after)
   const codexMention = /^@codex[:\s]*/i;
@@ -133,30 +150,43 @@ export function parseAgentPrefix(
 
   if (codexMention.test(trimmed)) {
     const cleanContent = trimmed.replace(codexMention, '').trimStart();
-    return { target: 'codex', cleanContent };
+    return { target: 'codex', cleanContent, explicit: true, invalidMention: false };
   }
   if (claudeMention.test(trimmed)) {
     const cleanContent = trimmed.replace(claudeMention, '').trimStart();
-    return { target: 'claude', cleanContent };
+    return { target: 'claude', cleanContent, explicit: true, invalidMention: false };
   }
 
-  // Legacy prefix support: x:/c: (for user convenience)
+  // Legacy prefix support: x:/c:/codex:/claude:
+  const lower = trimmed.toLowerCase();
   if (lower.startsWith('x:') || lower.startsWith('codex:')) {
     const colonIdx = content.indexOf(':');
-    return { target: 'codex', cleanContent: content.slice(colonIdx + 1).trimStart() };
+    return { target: 'codex', cleanContent: content.slice(colonIdx + 1).trimStart(), explicit: true, invalidMention: false };
   }
   if (lower.startsWith('c:') || lower.startsWith('claude:')) {
     const colonIdx = content.indexOf(':');
-    return { target: 'claude', cleanContent: content.slice(colonIdx + 1).trimStart() };
+    return { target: 'claude', cleanContent: content.slice(colonIdx + 1).trimStart(), explicit: true, invalidMention: false };
   }
 
-  // No prefix - use default
-  if (context.hasClaude && !context.hasCodex) return { target: 'claude', cleanContent: content };
-  if (context.hasCodex && !context.hasClaude) return { target: 'codex', cleanContent: content };
+  // No explicit prefix — detect mid-body mentions (outside code blocks)
+  const invalidMention = hasBodyMention(content);
 
-  // Both agents - use last active, fallback to Claude
-  const defaultAgent = context.lastActive || 'claude';
-  return { target: defaultAgent, cleanContent: content };
+  // Default routing: single agent → that agent, both → lastActive ?? claude
+  let target: AgentType;
+  if (context.hasClaude && !context.hasCodex) target = 'claude';
+  else if (context.hasCodex && !context.hasClaude) target = 'codex';
+  else target = context.lastActive || 'claude';
+
+  return { target, cleanContent: content, explicit: false, invalidMention };
+}
+
+/** @deprecated Use parseRoutingDirective instead */
+export function parseAgentPrefix(
+  content: string,
+  context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
+): { target: AgentType; cleanContent: string } {
+  const { target, cleanContent } = parseRoutingDirective(content, context);
+  return { target, cleanContent };
 }
 
 /**

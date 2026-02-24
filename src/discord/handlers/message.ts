@@ -8,7 +8,7 @@ import { AttachmentBuilder } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage, formatCommandMessage, formatTodos } from '../../slack/message-formatter.js';
 import { extractImagePaths } from '../../utils/image-extractor.js';
-import { getThread, parseAgentPrefix } from '../utils.js';
+import { getThread, parseRoutingDirective } from '../utils.js';
 import { MAX_AGENT_ROUTING } from '../state.js';
 import type { HandlerContext } from './types.js';
 import type { SessionManagerRef } from './index.js';
@@ -63,15 +63,15 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
       const agents = channelManager.getAgentsInThread(thread.id);
       const multiAgent = !!(agents.claude && agents.codex);
 
-      // Auto-route: detect x:/codex: prefix in Claude output → forward to Codex
+      // Auto-route: detect @codex prefix in Claude output → forward to Codex
       if (multiAgent && codexSessionManager) {
-        const { target, cleanContent } = parseAgentPrefix(formatted, {
+        const { target, cleanContent, explicit } = parseRoutingDirective(formatted, {
           hasClaude: !!agents.claude,
           hasCodex: !!agents.codex,
           lastActive: 'claude', // Claude is producing this, default stays claude
         });
 
-        if (target === 'codex' && agents.codex && cleanContent.trim()) {
+        if (explicit && target === 'codex' && agents.codex && cleanContent.trim()) {
           const routingCount = state.agentRoutingCount.get(thread.id) ?? 0;
           if (routingCount >= MAX_AGENT_ROUTING) {
             log.info({ threadId: thread.id, routingCount }, 'Agent routing limit reached, displaying normally');

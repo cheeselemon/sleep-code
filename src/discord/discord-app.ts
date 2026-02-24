@@ -30,7 +30,7 @@ import { createCodexEvents } from './codex/codex-handlers.js';
 import { createState, cleanupState } from './state.js';
 
 // Import utils
-import { downloadAttachment, downloadTextAttachment, parseAgentPrefix } from './utils.js';
+import { downloadAttachment, downloadTextAttachment, parseRoutingDirective } from './utils.js';
 
 // Import command handlers
 import { commands, handleCommand } from './commands/index.js';
@@ -141,14 +141,20 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     // Not a session thread
     if (!claudeSessionId && !codexSessionId) return;
 
-    // Parse agent prefix to determine routing target
-    const { target, cleanContent } = parseAgentPrefix(message.content, {
+    // Parse routing from raw user text (before attachment merging)
+    const directive = parseRoutingDirective(message.content, {
       hasClaude: !!claudeSessionId,
       hasCodex: !!codexSessionId,
       lastActive: state.lastActiveAgent.get(threadId),
     });
+    const { target, cleanContent, invalidMention } = directive;
 
-    log.info({ threadId, target, contentPreview: cleanContent.slice(0, 50) }, 'Routing message');
+    log.info({ threadId, target, explicit: directive.explicit, contentPreview: cleanContent.slice(0, 50) }, 'Routing message');
+
+    // Warn if @mention is in body but not at the start (multi-agent only)
+    if (invalidMention && claudeSessionId && codexSessionId) {
+      await message.reply('💡 `@codex`/`@claude` must be the **first word** of your message to route it. Your message was sent to the default agent.').catch(() => {});
+    }
 
     // Reset agent-to-agent routing counter on user message
     state.agentRoutingCount.set(threadId, 0);
@@ -232,7 +238,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd }, 'Auto-created Codex session in existing thread');
 
           // Notify Claude that Codex joined
-          const claudeSystemMsg = `[System] Codex (OpenAI) is now connected to this conversation. You can talk to Codex directly. When you see a message labeled "Codex:", that is Codex talking to you. To reply to Codex, start your response with @codex followed by your message. For example: "@codex 테스트 돌려줘". Your @codex message will be delivered to Codex automatically. Try it now.`;
+          const claudeSystemMsg = `[System] Codex (OpenAI) is now connected to this conversation. You can talk to Codex directly. When you see a message labeled "Codex:", that is Codex talking to you. To reply to Codex, start your response with @codex followed by your message. IMPORTANT: @codex must be the very first word — mentions in the middle of a message will NOT be routed. For example: "@codex 테스트 돌려줘". Your @codex message will be delivered to Codex automatically. Try it now.`;
           sessionManager.sendInput(claudeSessionId!, claudeSystemMsg);
           state.discordSentMessages.add(claudeSystemMsg);
         } catch (err) {
@@ -246,7 +252,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const codexSession = codexSessionManager.getSession(effectiveCodexSessionId);
       const isFirstMessage = codexSession && !codexSession.codexThreadId; // No thread ID yet = first turn
       const systemPrefix = (isFirstMessage && claudeSessionId)
-        ? `[System] Claude Code (Anthropic) is now connected to this conversation. You can talk to Claude directly. When you see a message labeled "Claude:", that is Claude talking to you. To reply to Claude, start your response with @claude followed by your message. For example: "@claude please review this code". Your @claude message will be delivered to Claude automatically.\n\n`
+        ? `[System] Claude Code (Anthropic) is now connected to this conversation. You can talk to Claude directly. When you see a message labeled "Claude:", that is Claude talking to you. To reply to Claude, start your response with @claude followed by your message. IMPORTANT: @claude must be the very first word — mentions in the middle of a message will NOT be routed. For example: "@claude please review this code". Your @claude message will be delivered to Claude automatically.\n\n`
         : '';
 
       const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, systemPrefix + inputText);
