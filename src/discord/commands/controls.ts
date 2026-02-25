@@ -48,14 +48,24 @@ export const handleInterrupt: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  // Send Escape twice (submit: false to avoid appending Enter)
-  // Double-tap improves reliability when Claude is mid-stream
+  const parts: string[] = [];
+
+  // Interrupt Claude (Escape x2)
   const sent = context.sessionManager.sendInput(result.sessionId, '\x1b\x1b', false);
-  if (sent) {
-    await interaction.reply('🛑 Sent interrupt (Escape)');
-  } else {
-    await interaction.reply('⚠️ Failed to send command - session not connected.');
+  parts.push(sent ? '🛑 Claude interrupted' : '⚠️ Claude: session not connected');
+
+  // Also interrupt Codex if active in the same thread
+  if (context.codexSessionManager) {
+    const codexSession = context.codexSessionManager.getSessionByDiscordThread(interaction.channelId);
+    if (codexSession) {
+      const codexInterrupted = context.codexSessionManager.interruptSession(codexSession.id);
+      if (codexInterrupted) {
+        parts.push('🛑 Codex interrupted');
+      }
+    }
   }
+
+  await interaction.reply(parts.join('\n'));
 };
 
 export const handleMode: CommandHandler = async (interaction, context) => {

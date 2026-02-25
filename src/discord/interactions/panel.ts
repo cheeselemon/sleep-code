@@ -13,16 +13,28 @@ import type { ButtonHandler } from './types.js';
  * Handle interrupt button (interrupt:sessionId)
  */
 export const handleInterruptButton: ButtonHandler = async (interaction, context) => {
-  const { sessionManager } = context;
+  const { sessionManager, codexSessionManager } = context;
   const customId = interaction.customId;
 
   const sessionId = customId.slice('interrupt:'.length);
-  const sent = sessionManager.sendInput(sessionId, '\x1b\x1b', false); // Escape x2
-  if (sent) {
-    await interaction.reply({ content: '🛑 Interrupt sent', ephemeral: true });
-  } else {
-    await interaction.reply({ content: '⚠️ Session not found', ephemeral: true });
+  const parts: string[] = [];
+
+  // Interrupt Claude (Escape x2)
+  const sent = sessionManager.sendInput(sessionId, '\x1b\x1b', false);
+  parts.push(sent ? '🛑 Claude interrupted' : '⚠️ Claude: session not found');
+
+  // Also interrupt Codex if active in the same thread
+  if (codexSessionManager) {
+    const codexSession = codexSessionManager.getSessionByDiscordThread(interaction.channelId);
+    if (codexSession) {
+      const codexInterrupted = codexSessionManager.interruptSession(codexSession.id);
+      if (codexInterrupted) {
+        parts.push('🛑 Codex interrupted');
+      }
+    }
   }
+
+  await interaction.reply({ content: parts.join('\n'), ephemeral: true });
 };
 
 /**

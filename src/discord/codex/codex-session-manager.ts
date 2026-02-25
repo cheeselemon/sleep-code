@@ -131,6 +131,25 @@ export class CodexSessionManager {
     return true;
   }
 
+  /**
+   * Interrupt (abort) the active turn without ending the session
+   */
+  interruptSession(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return false;
+
+    if (session.activeTurn) {
+      session.activeTurn.abort();
+      session.activeTurn = null;
+      session.status = 'idle';
+      this.events.onSessionStatus(sessionId, 'idle');
+      log.info({ sessionId }, 'Codex session interrupted');
+      return true;
+    }
+
+    return false; // Nothing to interrupt
+  }
+
   getSession(sessionId: string): CodexSessionEntry | undefined {
     return this.sessions.get(sessionId);
   }
