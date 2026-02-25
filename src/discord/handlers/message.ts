@@ -88,7 +88,12 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
                 await thread.send(`**Claude → Codex:** ${cleanContent.slice(0, 3900)}`);
               } catch { /* ignore */ }
               const messageForCodex = `Claude: ${cleanContent}\n\n(Start with @claude to reply)`;
-              await codexSessionManager.sendInput(agents.codex, messageForCodex);
+              const sent = await codexSessionManager.sendInput(agents.codex, messageForCodex);
+              if (!sent) {
+                try {
+                  await thread.send('⚠️ Codex is busy or session ended. Message was not delivered.');
+                } catch { /* ignore */ }
+              }
               state.lastActiveAgent.set(thread.id, 'codex');
               return; // Skip normal Claude message display
             }

@@ -103,6 +103,26 @@ This project uses a **Claude + Codex collaboration** model:
 - `Claude → Codex`: `@codex`로 시작
 - `Codex → Claude`: `@claude`로 시작
 
+### File-Based Context Sharing
+
+긴 메시지는 Discord 라우팅에서 잘리거나 실패할 수 있음. **에이전트 간 긴 컨텍스트는 반드시 파일로 공유**.
+
+**규칙:**
+1. 계획, 리뷰, 보고서 등 3줄 이상의 내용은 `docs/plans/` 아래 파일로 작성
+2. 상대 에이전트에게는 **파일 경로 + 핵심 요약 1~2줄**만 전달
+3. 상대 에이전트는 해당 파일을 읽고 응답 (파일에 섹션 추가 또는 별도 파일 생성)
+4. Codex는 read-only 세션일 수 있으므로, 파일 수정이 필요하면 내용을 메시지로 전달 → Claude가 반영
+
+**예시:**
+```
+@codex docs/plans/feature-plan.md 읽고 리뷰해줘. 하단에 피드백 추가해줘.
+```
+
+**파일명 컨벤션:**
+- 계획: `docs/plans/<feature>-plan.md`
+- 보고서: `docs/plans/<feature>-report.md`
+- 토론: `docs/plans/<feature>-discussion.md`
+
 ### Plan File Convention
 
 - Location: `docs/plans/<feature-name>.md`

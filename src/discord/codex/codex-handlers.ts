@@ -120,7 +120,12 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
               await thread.send(`**Codex → Claude:** ${cleanContent.slice(0, 3900)}`);
               const messageForClaude = `Codex: ${cleanContent}\n\n(Start with @codex to reply)`;
               state.discordSentMessages.add(messageForClaude.trim());
-              sessionManager.sendInput(agents.claude, messageForClaude);
+              const sent = sessionManager.sendInput(agents.claude, messageForClaude);
+              if (!sent) {
+                try {
+                  await thread.send('⚠️ Claude session is busy or ended. Message was not delivered.');
+                } catch { /* ignore */ }
+              }
               state.lastActiveAgent.set(thread.id, 'claude');
               return;
             }

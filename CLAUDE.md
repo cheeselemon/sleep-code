@@ -104,6 +104,13 @@ Discord-only. Handles:
 - `Claude → Codex`: `@codex`로 시작
 - `Codex → Claude`: `@claude`로 시작
 
+### File-Based Context Sharing
+
+에이전트 간 긴 컨텍스트(3줄+)는 **반드시 파일로 공유**. Discord 라우팅 한계 때문.
+- 파일 위치: `docs/plans/<feature>-{plan,report,discussion}.md`
+- 상대에게는 **파일 경로 + 요약 1~2줄**만 전달
+- Codex가 read-only일 경우 메시지로 내용 전달 → Claude가 파일에 반영
+
 ## Code Style
 
 - TypeScript with ES modules
