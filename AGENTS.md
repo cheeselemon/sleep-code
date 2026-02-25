@@ -103,6 +103,12 @@ This project uses a **Claude + Codex collaboration** model:
 - `Claude → Codex`: `@codex`로 시작
 - `Codex → Claude`: `@claude`로 시작
 
+**`@` 멘션 규칙:**
+- `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용
+- 상대 에이전트를 지칭할 때는 `@` 없이 "codex", "claude"로 표기
+  - O: "codex 의견을 반영했어"
+  - X: "@codex 의견을 반영했어" ← 이러면 라우팅 시도됨
+
 ### File-Based Context Sharing
 
 긴 메시지는 Discord 라우팅에서 잘리거나 실패할 수 있음. **에이전트 간 긴 컨텍스트는 반드시 파일로 공유**.

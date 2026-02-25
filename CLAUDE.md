@@ -104,6 +104,10 @@ Discord-only. Handles:
 - `Claude → Codex`: `@codex`로 시작
 - `Codex → Claude`: `@claude`로 시작
 
+**`@` 멘션 규칙:**
+- `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용
+- 상대를 지칭할 때는 `@` 없이 "codex", "claude"로 표기
+
 ### File-Based Context Sharing
 
 에이전트 간 긴 컨텍스트(3줄+)는 **반드시 파일로 공유**. Discord 라우팅 한계 때문.

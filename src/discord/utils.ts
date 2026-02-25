@@ -140,12 +140,18 @@ function normalizeInvisible(text: string): string {
 
 /**
  * Extract which agent is @mentioned in body text (outside code blocks).
- * Returns the first match found, or undefined.
+ * When exclude is provided, skip mentions of that agent (e.g. exclude the source agent).
+ * Returns the first non-excluded match found, or undefined.
  */
-function extractBodyMentionTarget(text: string): AgentType | undefined {
+function extractBodyMentionTarget(text: string, exclude?: AgentType): AgentType | undefined {
   const stripped = normalizeInvisible(stripCodeBlocks(text));
-  const match = stripped.match(/@(codex|claude)\b/i);
-  return match ? (match[1].toLowerCase() as AgentType) : undefined;
+  const regex = /@(codex|claude)\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(stripped)) !== null) {
+    const agent = match[1].toLowerCase() as AgentType;
+    if (agent !== exclude) return agent;
+  }
+  return undefined;
 }
 
 export function parseRoutingDirective(
@@ -180,7 +186,8 @@ export function parseRoutingDirective(
   }
 
   // No explicit prefix — detect mid-body mentions (outside code blocks)
-  const bodyMentionTarget = extractBodyMentionTarget(content);
+  // Exclude the source agent (lastActive) so self-mentions don't block routing to the other agent
+  const bodyMentionTarget = extractBodyMentionTarget(content, context.lastActive);
   const invalidMention = bodyMentionTarget !== undefined;
 
   // Default routing: single agent → that agent, both → lastActive ?? claude
