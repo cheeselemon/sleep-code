@@ -99,6 +99,14 @@ Discord-only. Handles:
 
 ## Multi-Agent Communication Protocol
 
+### 메시지 전달 방식 (중요)
+
+**출력에 `@codex` 또는 `@claude`를 포함하면 sleep-code 봇이 자동으로 상대에게 전달합니다.**
+별도의 API 호출, 복사/붙여넣기, Discord 전송 요청이 필요 없습니다.
+그냥 텍스트를 출력하되, 상대에게 보낼 내용에 `@codex` 또는 `@claude`를 포함하면 됩니다.
+
+- **절대 "이것을 복사해서 보내주세요", "아래를 Discord에 전송해주세요" 같은 말을 하지 마세요** — 당신이 직접 보내는 것입니다
+
 ### 화자 식별
 
 모든 메시지에는 발신자 프리픽스가 붙습니다:
@@ -116,12 +124,12 @@ Discord-only. Handles:
 
 - `사람 → Claude`: `{displayName}: 내용`
 - `사람 → Codex`: `@codex`로 시작
-- `Claude → Codex`: `@codex`를 메시지에 포함
-- `Codex → Claude`: `@claude`를 메시지에 포함
+- `Claude → Codex`: 출력에 `@codex` 포함하면 자동 전달
+- `Codex → Claude`: 출력에 `@claude` 포함하면 자동 전달
 
 **`@` 멘션 규칙:**
 - `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용
-- 상대를 지칭할 때는 `@` 없이 "codex", "claude"로 표기
+- 상대를 **지칭만** 할 때는 `@` 없이 "codex", "claude"로 표기
 
 ### File-Based Context Sharing
 
