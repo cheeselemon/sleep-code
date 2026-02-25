@@ -37,7 +37,6 @@ export class ProcessManager {
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private onStatusChange?: (entry: ProcessEntry, oldStatus: string) => void;
   private getAutoCleanupOrphans?: () => boolean;
-  private reconcilingSessionIds = new Set<string>(); // Sessions being cleaned up during reconciliation
 
   constructor(options?: ProcessManagerOptions) {
     this.onStatusChange = options?.onStatusChange;
@@ -221,6 +220,25 @@ export class ProcessManager {
     entry.status = 'stopping';
     await this.saveRegistry();
 
+    // Guard: PID 0 means process.kill(0) would signal the entire process group
+    if (entry.pid === 0) {
+      if (entry.terminalApp && entry.terminalWindowId) {
+        this.closeTerminalWindow(entry.terminalApp, entry.terminalWindowId);
+        entry.status = 'stopped';
+        await this.saveRegistry();
+        if (this.onStatusChange) {
+          this.onStatusChange(entry, oldStatus);
+        }
+        log.info({ sessionId }, 'Stopped PID-0 session via terminal window close');
+        return true;
+      }
+      // No terminal window to close — PID unknown, can't signal
+      entry.status = oldStatus;
+      await this.saveRegistry();
+      log.warn({ sessionId }, 'Cannot kill session - PID unknown and no terminal window tracked');
+      return false;
+    }
+
     try {
       if (force) {
         process.kill(entry.pid, 'SIGKILL');
@@ -291,7 +309,13 @@ export class ProcessManager {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
+    } catch (err: any) {
+      // EPERM means the process exists but we don't have permission to signal it
+      // This should still be treated as "alive"
+      if (err.code === 'EPERM') {
+        return true;
+      }
+      // ESRCH means no such process — it's dead
       return false;
     }
   }
@@ -423,6 +447,21 @@ export class ProcessManager {
       const startedAt = new Date(entry.startedAt);
       const age = isNaN(startedAt.getTime()) ? Infinity : now - startedAt.getTime();
 
+      // PID 0 means the PID hasn't been reported yet (terminal app spawn or manual session)
+      // Don't make status decisions based on PID 0 — wait for the session to connect and report its PID
+      if (entry.pid === 0) {
+        if (originalStatus === 'starting' && age > 60000) {
+          // Long startup timeout for PID-unknown entries (give more time to connect)
+          entry.status = 'orphaned';
+          changed = true;
+          log.warn({ sessionId: entry.sessionId, age }, 'Session with unknown PID timed out');
+        } else {
+          log.debug({ sessionId: entry.sessionId, status: originalStatus }, 'Skipping health check for PID 0 entry');
+        }
+        entry.lastVerified = new Date().toISOString();
+        continue;
+      }
+
       // Handle 'starting' status specifically (fixes race condition)
       if (originalStatus === 'starting') {
         if (!alive) {
@@ -499,20 +538,6 @@ export class ProcessManager {
   }
 
   /**
-   * Mark a session as being reconciled (prevents onSessionConnected from processing it)
-   */
-  markAsReconciling(sessionId: string): void {
-    this.reconcilingSessionIds.add(sessionId);
-  }
-
-  /**
-   * Unmark a session from reconciliation
-   */
-  unmarkAsReconciling(sessionId: string): void {
-    this.reconcilingSessionIds.delete(sessionId);
-  }
-
-  /**
    * Called when session connects via socket - update status to running
    * Returns true if session was found in registry, false if it's a new/manual session
    * @param sessionId Session ID
@@ -520,12 +545,6 @@ export class ProcessManager {
    * @param pid Process ID (used to update PID 0 entries from terminal app spawns)
    */
   async onSessionConnected(sessionId: string, cwd?: string, pid?: number): Promise<{ found: boolean; entry?: ProcessEntry }> {
-    // Skip sessions that are being reconciled (cleaned up after bot restart)
-    if (this.reconcilingSessionIds.has(sessionId)) {
-      log.info({ sessionId }, 'Session connect ignored - being reconciled');
-      return { found: false };
-    }
-
     const entry = this.registry.entries.find(e => e.sessionId === sessionId);
 
     // Session found in registry

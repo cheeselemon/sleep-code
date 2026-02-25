@@ -235,6 +235,9 @@ export async function discordRun(): Promise<void> {
     log.info('Waiting for channel manager initialization...');
     const isReady = await channelManager.waitForInit();
     if (isReady) {
+      // Grace period: wait for CLIs to reconnect via socket before reconciling
+      log.info('Waiting 5s for CLI sessions to reconnect before reconciliation...');
+      await new Promise(r => setTimeout(r, 5000));
       await runStartupReconciliation();
     } else {
       log.warn('Channel manager failed to initialize, skipping reconciliation');
@@ -246,6 +249,9 @@ export async function discordRun(): Promise<void> {
 
   // Startup reconciliation: notify Discord threads about sessions that died during downtime
   async function runStartupReconciliation() {
+    // Re-run health check after the grace period to get fresh status
+    await processManager.runHealthCheck();
+
     const deadSessions = processManager.getDeadSessionsNeedingNotification();
     if (deadSessions.length === 0) {
       log.info('Startup reconciliation: no dead sessions to notify');
@@ -254,54 +260,51 @@ export async function discordRun(): Promise<void> {
 
     log.info({ count: deadSessions.length }, 'Startup reconciliation: notifying dead sessions');
 
-    // Mark all sessions being reconciled to prevent race condition with onSessionConnected
     for (const entry of deadSessions) {
-      processManager.markAsReconciling(entry.sessionId);
-    }
+      if (!entry.threadId) continue;
 
-    try {
-      for (const entry of deadSessions) {
-        if (!entry.threadId) continue;
+      // Safety check: if the session has already reconnected via socket, skip cleanup
+      const liveSession = sessionManager.getSession(entry.sessionId);
+      if (liveSession) {
+        log.info({ sessionId: entry.sessionId }, 'Session reconnected during grace period, skipping cleanup');
+        // Revive the ProcessManager entry
+        await processManager.updateStatus(entry.sessionId, 'running');
+        continue;
+      }
 
-        try {
-          const channel = await client.channels.fetch(entry.threadId);
-          if (channel?.isThread()) {
-            // Unarchive if needed to send message
-            if (channel.archived) {
-              await channel.setArchived(false);
-            }
-
-            // Send notification
-            const statusEmoji = entry.status === 'orphaned' ? '💀' : '🛑';
-            const reason = entry.status === 'orphaned'
-              ? 'Session crashed or became unresponsive'
-              : 'Session ended';
-            await channel.send(
-              `${statusEmoji} **Session Lost During Bot Downtime**\n` +
-              `Reason: ${reason}\n` +
-              `Session: \`${entry.sessionId.slice(0, 8)}...\`\n` +
-              `Directory: \`${entry.cwd}\``
-            );
-
-            // Archive the thread
-            await channel.setArchived(true);
-            log.info({ sessionId: entry.sessionId, threadId: entry.threadId }, 'Notified dead session thread');
+      try {
+        const channel = await client.channels.fetch(entry.threadId);
+        if (channel?.isThread()) {
+          // Unarchive if needed to send message
+          if (channel.archived) {
+            await channel.setArchived(false);
           }
-        } catch (err) {
-          log.error({ err, sessionId: entry.sessionId, threadId: entry.threadId }, 'Failed to notify dead session');
+
+          // Send notification
+          const statusEmoji = entry.status === 'orphaned' ? '💀' : '🛑';
+          const reason = entry.status === 'orphaned'
+            ? 'Session crashed or became unresponsive'
+            : 'Session ended';
+          await channel.send(
+            `${statusEmoji} **Session Lost During Bot Downtime**\n` +
+            `Reason: ${reason}\n` +
+            `Session: \`${entry.sessionId.slice(0, 8)}...\`\n` +
+            `Directory: \`${entry.cwd}\``
+          );
+
+          // Archive the thread
+          await channel.setArchived(true);
+          log.info({ sessionId: entry.sessionId, threadId: entry.threadId }, 'Notified dead session thread');
         }
-
-        // Clean up the entry from registry
-        await processManager.removeEntry(entry.sessionId);
-
-        // Clean up channel manager mapping (Issue 2: add await)
-        await channelManager.removePersistedMapping(entry.sessionId);
+      } catch (err) {
+        log.error({ err, sessionId: entry.sessionId, threadId: entry.threadId }, 'Failed to notify dead session');
       }
-    } finally {
-      // Unmark all sessions from reconciliation
-      for (const entry of deadSessions) {
-        processManager.unmarkAsReconciling(entry.sessionId);
-      }
+
+      // Clean up the entry from registry
+      await processManager.removeEntry(entry.sessionId);
+
+      // Clean up channel manager mapping (Issue 2: add await)
+      await channelManager.removePersistedMapping(entry.sessionId);
     }
 
     log.info('Startup reconciliation complete');
