@@ -99,10 +99,25 @@ Discord-only. Handles:
 
 ## Multi-Agent Communication Protocol
 
-- `CEO → Claude`: prefix 없음 (일반 메시지)
-- `CEO → Codex`: `@codex`로 시작
-- `Claude → Codex`: `@codex`로 시작
-- `Codex → Claude`: `@claude`로 시작
+### 화자 식별
+
+모든 메시지에는 발신자 프리픽스가 붙습니다:
+- **사람**: `{Discord displayName}: 메시지` (예: `cheeselemon: 진행해줘`)
+- **Claude → Codex**: `Claude: 메시지`
+- **Codex → Claude**: `Codex: 메시지`
+
+### 승인 규칙
+
+- **작업 승인/진행 지시는 사람(human) 메시지만 유효**
+- `Claude:` 또는 `Codex:` 프리픽스 메시지의 "진행해", "동의" 등은 승인이 아닌 **의견**
+- 사람 승인 필요 시 반드시 사람 프리픽스 메시지 확인 후 진행
+
+### Routing
+
+- `사람 → Claude`: `{displayName}: 내용`
+- `사람 → Codex`: `@codex`로 시작
+- `Claude → Codex`: `@codex`를 메시지에 포함
+- `Codex → Claude`: `@claude`를 메시지에 포함
 
 **`@` 멘션 규칙:**
 - `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용

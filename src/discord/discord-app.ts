@@ -197,6 +197,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       }
     }
 
+    // Prefix with Discord display name so agents can identify the human speaker
+    const displayName = message.member?.displayName ?? message.author.displayName ?? message.author.username;
+
     // Build message with attachments
     let inputText = cleanContent;
     if (imagePaths.length > 0) {
@@ -252,8 +255,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
-      // No system prefix injection to Codex — Codex learns about Claude via its own system prompt
-      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, inputText);
+      const codexInput = `${displayName}: ${inputText}`;
+      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, codexInput);
       if (!sent) {
         await message.reply('⚠️ Failed to send input to Codex - session busy or ended.');
       }
@@ -276,11 +279,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       }
 
       // Track this message so we don't re-post it
-      state.discordSentMessages.add(inputText.trim());
+      const claudeInput = `${displayName}: ${inputText}`;
+      state.discordSentMessages.add(claudeInput.trim());
 
-      const sent = sessionManager.sendInput(effectiveClaudeSessionId, inputText);
+      const sent = sessionManager.sendInput(effectiveClaudeSessionId, claudeInput);
       if (!sent) {
-        state.discordSentMessages.delete(inputText.trim());
+        state.discordSentMessages.delete(claudeInput.trim());
         await message.reply('⚠️ Failed to send input - session not connected.');
       }
       state.lastActiveAgent.set(threadId, 'claude');
