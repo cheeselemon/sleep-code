@@ -12,6 +12,7 @@ import { handleBackground, handleInterrupt, handleMode, handleCompact, handleMod
 import { handleYoloSleep, handlePanel } from './yolo.js';
 import { handleClaude } from './claude.js';
 import { handleCodex } from './codex.js';
+import { handleStatus } from './status.js';
 import type { CommandContext } from './types.js';
 
 /**
@@ -85,6 +86,9 @@ export const commands = [
       sub.setName('set-terminal')
         .setDescription('Set terminal app for new sessions')),
   new SlashCommandBuilder()
+    .setName('status')
+    .setDescription('Show current thread session status'),
+  new SlashCommandBuilder()
     .setName('codex')
     .setDescription('Manage Codex CLI sessions')
     .addSubcommand(sub =>
@@ -137,6 +141,9 @@ export async function handleCommand(
       break;
     case 'claude':
       await handleClaude(interaction, context);
+      break;
+    case 'status':
+      await handleStatus(interaction, context);
       break;
     case 'codex':
       await handleCodex(interaction, context);
