@@ -148,7 +148,7 @@ export class ChannelManager {
     }
   }
 
-  getChannel(sessionId: string): ChannelMapping | undefined {
+  getSession(sessionId: string): ChannelMapping | undefined {
     return this.channels.get(sessionId);
   }
 

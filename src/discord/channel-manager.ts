@@ -493,10 +493,6 @@ export class ChannelManager {
     return this.sessions.get(sessionId);
   }
 
-  // Alias for compatibility
-  getChannel(sessionId: string): ChannelMapping | undefined {
-    return this.sessions.get(sessionId);
-  }
 
   getSessionByThread(threadId: string): string | undefined {
     return this.threadToSession.get(threadId);

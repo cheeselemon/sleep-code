@@ -8,28 +8,7 @@ import {
   ButtonStyle,
 } from 'discord.js';
 import type { CommandHandler } from './types.js';
-
-/**
- * Helper to validate session context
- */
-function getSessionFromChannel(
-  channelId: string,
-  context: Parameters<CommandHandler>[1]
-): { sessionId: string } | { error: string } {
-  const { channelManager } = context;
-
-  const sessionId = channelManager.getSessionByChannel(channelId);
-  if (!sessionId) {
-    return { error: 'This channel is not associated with an active session.' };
-  }
-
-  const channel = channelManager.getChannel(sessionId);
-  if (!channel || channel.status === 'ended') {
-    return { error: 'This session has ended.' };
-  }
-
-  return { sessionId };
-}
+import { getSessionFromChannel } from './helpers.js';
 
 export const handleYoloSleep: CommandHandler = async (interaction, context) => {
   const { state, codexSessionManager } = context;

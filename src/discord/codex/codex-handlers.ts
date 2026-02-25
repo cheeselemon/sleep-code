@@ -5,9 +5,8 @@
 import type { Client, ThreadChannel } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage } from '../../slack/message-formatter.js';
-import { parseRoutingDirective } from '../utils.js';
+import { tryRouteToAgent } from '../agent-routing.js';
 import type { ChannelManager } from '../channel-manager.js';
-import { MAX_AGENT_ROUTING } from '../state.js';
 import type { DiscordState } from '../state.js';
 import type { SessionManager } from '../../slack/session-manager.js';
 import type { CodexEvents } from './codex-session-manager.js';
@@ -96,58 +95,20 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       const multiAgent = isMultiAgentThread(channelManager, thread.id);
 
       // Auto-route: detect @claude in Codex output → forward to Claude
-      // Supports both explicit prefix (@claude as first token) and fallback (mid-body @claude)
       if (multiAgent) {
         const agents = channelManager.getAgentsInThread(thread.id);
-        const { target, cleanContent, explicit, invalidMention, bodyMentionTarget } = parseRoutingDirective(content, {
-          hasClaude: !!agents.claude,
-          hasCodex: !!agents.codex,
-          lastActive: 'codex', // Codex is producing this, default stays codex
+        const sessionManager = context.sessionManagerRef.current;
+        const { routed } = await tryRouteToAgent({
+          thread,
+          content,
+          agents,
+          sourceAgent: 'codex',
+          state,
+          isTargetAvailable: () => !!sessionManager,
+          sendToTarget: (msg) => sessionManager!.sendInput(agents.claude!, msg),
+          onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
         });
-
-        const shouldRoute =
-          (explicit && target === 'claude') ||
-          (!explicit && invalidMention && bodyMentionTarget === 'claude');
-
-        if (shouldRoute && agents.claude) {
-          const isFallback = !explicit;
-          const routeContent = explicit ? cleanContent : content;
-
-          if (routeContent.trim()) {
-            const routingCount = state.agentRoutingCount.get(thread.id) ?? 0;
-            if (routingCount >= MAX_AGENT_ROUTING) {
-              log.info({ threadId: thread.id, routingCount }, 'Agent routing limit reached, displaying normally');
-              try {
-                await thread.send(`⚠️ Agent routing limit (${MAX_AGENT_ROUTING}) reached. Displaying message instead.`);
-              } catch { /* ignore */ }
-              // Fall through to normal display
-            } else {
-              const sessionManager = context.sessionManagerRef.current;
-              if (sessionManager) {
-                state.agentRoutingCount.set(thread.id, routingCount + 1);
-                const routeLabel = isFallback ? 'Codex → Claude ✉️' : 'Codex → Claude';
-                log.info({ from: 'codex', to: 'claude', count: routingCount + 1, fallback: isFallback, preview: routeContent.slice(0, 50) }, 'Agent-to-agent routing');
-                try {
-                  await thread.send(`**${routeLabel}:** ${routeContent.slice(0, 3900)}`);
-                } catch { /* ignore */ }
-                const messageForClaude = `Codex: ${routeContent}\n\n(Start with @codex to reply)`;
-                state.discordSentMessages.add(messageForClaude.trim());
-                const sent = sessionManager.sendInput(agents.claude, messageForClaude);
-                if (!sent) {
-                  try {
-                    await thread.send('⚠️ Claude session is busy or ended. Message was not delivered.');
-                  } catch { /* ignore */ }
-                }
-                state.lastActiveAgent.set(thread.id, 'claude');
-                return;
-              } else {
-                try {
-                  await thread.send('⚠️ @claude mention detected but Claude session is not available. Displaying normally.');
-                } catch { /* ignore */ }
-              }
-            }
-          }
-        }
+        if (routed) return;
       }
 
       const prefix = multiAgent ? '**Codex:** ' : '';

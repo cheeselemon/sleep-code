@@ -81,7 +81,7 @@ export function createSlackApp(config: SlackConfig) {
     },
 
     onSessionEnd: async (sessionId) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (channel) {
         channelManager.updateStatus(sessionId, 'ended');
 
@@ -99,7 +99,7 @@ export function createSlackApp(config: SlackConfig) {
     },
 
     onSessionUpdate: async (sessionId, name) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (channel) {
         channelManager.updateName(sessionId, name);
         // Update channel topic with new name
@@ -115,14 +115,14 @@ export function createSlackApp(config: SlackConfig) {
     },
 
     onSessionStatus: async (sessionId, status) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (channel) {
         channelManager.updateStatus(sessionId, status);
       }
     },
 
     onMessage: async (sessionId, role, content) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (channel) {
         const formatted = markdownToSlack(content);
 
@@ -198,7 +198,7 @@ export function createSlackApp(config: SlackConfig) {
     },
 
     onTodos: async (sessionId, todos) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (channel && todos.length > 0) {
         const todosText = formatTodos(todos);
         try {
@@ -224,7 +224,7 @@ export function createSlackApp(config: SlackConfig) {
     },
 
     onPlanModeChange: async (sessionId, inPlanMode) => {
-      const channel = channelManager.getChannel(sessionId);
+      const channel = channelManager.getSession(sessionId);
       if (!channel) return;
 
       const emoji = inPlanMode ? ':clipboard:' : ':hammer:';
@@ -260,7 +260,7 @@ export function createSlackApp(config: SlackConfig) {
     const sessionId = channelManager.getSessionByChannel(message.channel);
     if (!sessionId) return; // Not a session channel
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await say(':warning: This session has ended.');
       return;
@@ -323,7 +323,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await respond(':warning: This session has ended.');
       return;
@@ -348,7 +348,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await respond(':warning: This session has ended.');
       return;
@@ -373,7 +373,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await respond(':warning: This session has ended.');
       return;
@@ -398,7 +398,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await respond(':warning: This session has ended.');
       return;
@@ -422,7 +422,7 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    const channel = channelManager.getChannel(sessionId);
+    const channel = channelManager.getSession(sessionId);
     if (!channel || channel.status === 'ended') {
       await respond(':warning: This session has ended.');
       return;

@@ -220,7 +220,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       let effectiveCodexSessionId = codexSessionId;
       if (!effectiveCodexSessionId) {
         // Get CWD from the existing Claude session
-        const claudeMapping = claudeSessionId ? channelManager.getChannel(claudeSessionId) : null;
+        const claudeMapping = claudeSessionId ? channelManager.getSession(claudeSessionId) : null;
         if (!claudeMapping) {
           await message.reply('⚠️ Cannot determine working directory for Codex.');
           return;
@@ -269,7 +269,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         return;
       }
 
-      const channel = channelManager.getChannel(effectiveClaudeSessionId);
+      const channel = channelManager.getSession(effectiveClaudeSessionId);
       if (!channel || channel.status === 'ended') {
         await message.reply('⚠️ This Claude session has ended.');
         return;
