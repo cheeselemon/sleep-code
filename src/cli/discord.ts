@@ -236,8 +236,9 @@ export async function discordRun(): Promise<void> {
     const isReady = await channelManager.waitForInit();
     if (isReady) {
       // Grace period: wait for CLIs to reconnect via socket before reconciling
-      log.info('Waiting 5s for CLI sessions to reconnect before reconciliation...');
-      await new Promise(r => setTimeout(r, 5000));
+      // CLI reconnect backoff goes up to 30s, so wait long enough for worst case
+      log.info('Waiting 35s for CLI sessions to reconnect before reconciliation...');
+      await new Promise(r => setTimeout(r, 35000));
       await runStartupReconciliation();
     } else {
       log.warn('Channel manager failed to initialize, skipping reconciliation');
@@ -263,13 +264,27 @@ export async function discordRun(): Promise<void> {
     for (const entry of deadSessions) {
       if (!entry.threadId) continue;
 
-      // Safety check: if the session has already reconnected via socket, skip cleanup
+      // Safety check 1: if the session has already reconnected via socket, skip cleanup
       const liveSession = sessionManager.getSession(entry.sessionId);
       if (liveSession) {
         log.info({ sessionId: entry.sessionId }, 'Session reconnected during grace period, skipping cleanup');
-        // Revive the ProcessManager entry
         await processManager.updateStatus(entry.sessionId, 'running');
         continue;
+      }
+
+      // Safety check 2: if the process is still alive (PID check), don't kill the mapping
+      // The CLI may just be slow to reconnect (backoff delay)
+      const freshEntry = await processManager.getEntry(entry.sessionId);
+      if (freshEntry && freshEntry.pid > 0) {
+        try {
+          process.kill(freshEntry.pid, 0);
+          // Process is alive — skip cleanup, revive entry
+          log.info({ sessionId: entry.sessionId, pid: freshEntry.pid }, 'Process still alive, skipping cleanup');
+          await processManager.updateStatus(entry.sessionId, 'running');
+          continue;
+        } catch {
+          // Process is dead, proceed with cleanup
+        }
       }
 
       try {

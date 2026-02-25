@@ -139,10 +139,10 @@ export class CodexSessionManager {
     if (!session) return false;
 
     if (session.activeTurn) {
+      // Only abort — don't set activeTurn=null or status=idle here.
+      // processStreamedTurn's finally block will handle cleanup after
+      // the stream fully unwinds, preventing a concurrent turn window.
       session.activeTurn.abort();
-      session.activeTurn = null;
-      session.status = 'idle';
-      this.events.onSessionStatus(sessionId, 'idle');
       log.info({ sessionId }, 'Codex session interrupted');
       return true;
     }
