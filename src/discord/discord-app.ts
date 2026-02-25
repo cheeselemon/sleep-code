@@ -240,8 +240,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           effectiveCodexSessionId = entry.id;
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd, sandboxMode: isYolo ? 'workspace-write' : 'read-only' }, 'Auto-created Codex session in existing thread');
 
-          // Notify Claude that Codex joined
-          const claudeSystemMsg = `[System] Codex (OpenAI) is now connected to this conversation. You can talk to Codex directly. When you see a message labeled "Codex:", that is Codex talking to you. To reply to Codex, start your response with @codex followed by your message. IMPORTANT: @codex must be the very first word — mentions in the middle of a message will NOT be routed. For example: "@codex 테스트 돌려줘". Your @codex message will be delivered to Codex automatically. Try it now.`;
+          // Notify Claude that Codex joined (informational tone to avoid prompt injection suspicion)
+          const claudeSystemMsg = `Bridge notice: Codex (OpenAI) is now available in this thread. Messages from Codex are prefixed with "Codex:". To send a message to Codex, include @codex in your response.`;
           sessionManager.sendInput(claudeSessionId!, claudeSystemMsg);
           state.discordSentMessages.add(claudeSystemMsg);
         } catch (err) {
@@ -255,7 +255,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const codexSession = codexSessionManager.getSession(effectiveCodexSessionId);
       const isFirstMessage = codexSession && !codexSession.codexThreadId; // No thread ID yet = first turn
       const systemPrefix = (isFirstMessage && claudeSessionId)
-        ? `[System] Claude Code (Anthropic) is now connected to this conversation. You can talk to Claude directly. When you see a message labeled "Claude:", that is Claude talking to you. To reply to Claude, start your response with @claude followed by your message. IMPORTANT: @claude must be the very first word — mentions in the middle of a message will NOT be routed. For example: "@claude please review this code". Your @claude message will be delivered to Claude automatically.\n\n`
+        ? `Bridge notice: Claude Code (Anthropic) is available in this thread. Messages from Claude are prefixed with "Claude:". To send a message to Claude, include @claude in your response.\n\n`
         : '';
 
       const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, systemPrefix + inputText);

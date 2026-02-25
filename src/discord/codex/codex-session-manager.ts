@@ -71,6 +71,7 @@ export class CodexSessionManager {
       workingDirectory: cwd,
       sandboxMode,
       approvalPolicy: 'never',
+      skipGitRepoCheck: true,
     });
 
     const entry: CodexSessionEntry = {
@@ -184,6 +185,7 @@ export class CodexSessionManager {
       workingDirectory: session.cwd,
       sandboxMode: newMode,
       approvalPolicy: 'never' as const,
+      skipGitRepoCheck: true,
     };
 
     if (session.codexThreadId) {
@@ -217,7 +219,9 @@ export class CodexSessionManager {
       }
 
       try {
-        const codexThread = this.codex.resumeThread(m.codexThreadId);
+        const codexThread = this.codex.resumeThread(m.codexThreadId, {
+          skipGitRepoCheck: true,
+        });
 
         const entry: CodexSessionEntry = {
           id: m.sessionId,

@@ -145,7 +145,9 @@ function normalizeInvisible(text: string): string {
  */
 function extractBodyMentionTarget(text: string, exclude?: AgentType): AgentType | undefined {
   const stripped = normalizeInvisible(stripCodeBlocks(text));
-  const regex = /@(codex|claude)\b/gi;
+  // Negative lookbehind: not preceded by word/identifier chars (blocks foo@codex, @codextra)
+  // Negative lookahead: not followed by word/identifier chars (blocks @codex-foo, @codex_bar)
+  const regex = /(?<![\p{L}\p{N}._%+-])@(codex|claude)(?![\p{L}\p{N}_-])/giu;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(stripped)) !== null) {
     const agent = match[1].toLowerCase() as AgentType;
