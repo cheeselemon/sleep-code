@@ -329,8 +329,8 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    // Send Ctrl+B (ASCII 2)
-    const sent = sessionManager.sendInput(sessionId, '\x02');
+    // Send Ctrl+B (ASCII 2) - no submit (raw control char)
+    const sent = sessionManager.sendInput(sessionId, '\x02', false);
     if (sent) {
       await respond(':arrow_heading_down: Sent background command (Ctrl+B)');
     } else {
@@ -354,8 +354,8 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    // Send Escape (ASCII 27)
-    const sent = sessionManager.sendInput(sessionId, '\x1b');
+    // Send Escape x2 (no submit) - double-tap for reliability
+    const sent = sessionManager.sendInput(sessionId, '\x1b\x1b', false);
     if (sent) {
       await respond(':stop_sign: Sent interrupt (Escape)');
     } else {
@@ -379,8 +379,8 @@ export function createSlackApp(config: SlackConfig) {
       return;
     }
 
-    // Send Shift+Tab (ESC [ Z)
-    const sent = sessionManager.sendInput(sessionId, '\x1b[Z');
+    // Send Shift+Tab (ESC [ Z) - no submit (raw control sequence)
+    const sent = sessionManager.sendInput(sessionId, '\x1b[Z', false);
     if (sent) {
       await respond(':arrows_counterclockwise: Sent mode toggle (Shift+Tab)');
     } else {

@@ -175,15 +175,23 @@ export class SessionManager {
     }
   }
 
-  sendInput(sessionId: string, text: string): boolean {
+  sendInput(sessionId: string, text: string, submit = true): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) {
       log.error({ sessionId }, 'Session not found');
       return false;
     }
 
+    if (session.socket.destroyed || !session.socket.writable) {
+      log.error({ sessionId }, 'Socket not writable');
+      this.stopWatching(session);
+      this.sessions.delete(sessionId);
+      this.events.onSessionEnd(sessionId);
+      return false;
+    }
+
     try {
-      session.socket.write(JSON.stringify({ type: 'input', text, submit: true }) + '\n');
+      session.socket.write(JSON.stringify({ type: 'input', text, submit }) + '\n');
     } catch (err) {
       log.error({ sessionId, err }, 'Failed to send input');
       this.stopWatching(session);

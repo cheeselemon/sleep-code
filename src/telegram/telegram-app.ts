@@ -331,7 +331,7 @@ export function createTelegramApp(config: TelegramConfig) {
           await ctx.reply('No active session.');
           return;
         }
-        const sent = sessionManager.sendInput(targetSession.sessionId, '\x02');
+        const sent = sessionManager.sendInput(targetSession.sessionId, '\x02', false);
         await ctx.reply(sent ? 'Sent background command (Ctrl+B)' : 'Failed - session not connected.');
         break;
       }
@@ -342,7 +342,7 @@ export function createTelegramApp(config: TelegramConfig) {
           await ctx.reply('No active session.');
           return;
         }
-        const sent = sessionManager.sendInput(targetSession.sessionId, '\x1b');
+        const sent = sessionManager.sendInput(targetSession.sessionId, '\x1b\x1b', false);
         await ctx.reply(sent ? 'Sent interrupt (Escape)' : 'Failed - session not connected.');
         break;
       }
@@ -352,7 +352,7 @@ export function createTelegramApp(config: TelegramConfig) {
           await ctx.reply('No active session.');
           return;
         }
-        const sent = sessionManager.sendInput(targetSession.sessionId, '\x1b[Z');
+        const sent = sessionManager.sendInput(targetSession.sessionId, '\x1b[Z', false);
         await ctx.reply(sent ? 'Sent mode toggle (Shift+Tab)' : 'Failed - session not connected.');
         break;
       }

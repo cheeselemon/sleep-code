@@ -33,7 +33,7 @@ export const handleBackground: CommandHandler = async (interaction, context) => 
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x02'); // Ctrl+B
+  const sent = context.sessionManager.sendInput(result.sessionId, '\x02', false); // Ctrl+B
   if (sent) {
     await interaction.reply('⬇️ Sent background command (Ctrl+B)');
   } else {
@@ -48,7 +48,9 @@ export const handleInterrupt: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b'); // Escape
+  // Send Escape twice (submit: false to avoid appending Enter)
+  // Double-tap improves reliability when Claude is mid-stream
+  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b\x1b', false);
   if (sent) {
     await interaction.reply('🛑 Sent interrupt (Escape)');
   } else {
@@ -63,7 +65,7 @@ export const handleMode: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b[Z'); // Shift+Tab
+  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b[Z', false); // Shift+Tab
   if (sent) {
     await interaction.reply('🔄 Sent mode toggle (Shift+Tab)');
   } else {

@@ -17,7 +17,7 @@ export const handleInterruptButton: ButtonHandler = async (interaction, context)
   const customId = interaction.customId;
 
   const sessionId = customId.slice('interrupt:'.length);
-  const sent = sessionManager.sendInput(sessionId, '\x1b'); // Escape
+  const sent = sessionManager.sendInput(sessionId, '\x1b\x1b', false); // Escape x2
   if (sent) {
     await interaction.reply({ content: '🛑 Interrupt sent', ephemeral: true });
   } else {
