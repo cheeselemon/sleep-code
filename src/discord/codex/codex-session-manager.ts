@@ -10,6 +10,8 @@ import type { Thread, SandboxMode } from '@openai/codex-sdk';
 import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
 
+const CODEX_MODEL = 'gpt-5.3-codex';
+
 export type { SandboxMode } from '@openai/codex-sdk';
 
 export interface CodexSessionEntry {
@@ -68,6 +70,7 @@ export class CodexSessionManager {
     const sandboxMode = options?.sandboxMode ?? 'read-only';
 
     const codexThread = this.codex.startThread({
+      model: CODEX_MODEL,
       workingDirectory: cwd,
       sandboxMode,
       approvalPolicy: 'never',
@@ -182,6 +185,7 @@ export class CodexSessionManager {
     }
 
     const threadOptions = {
+      model: CODEX_MODEL,
       workingDirectory: session.cwd,
       sandboxMode: newMode,
       approvalPolicy: 'never' as const,
@@ -220,6 +224,7 @@ export class CodexSessionManager {
 
       try {
         const codexThread = this.codex.resumeThread(m.codexThreadId, {
+          model: CODEX_MODEL,
           skipGitRepoCheck: true,
         });
 
