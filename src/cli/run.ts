@@ -265,10 +265,19 @@ export async function run(command: string[], providedSessionId?: string): Promis
       // Write text in chunks to avoid overwhelming PTY buffer, then press Enter
       const CHUNK_SIZE = 1024;
       const CHUNK_DELAY = 10; // ms between chunks
-      const SUBMIT_DELAY = 50; // ms before pressing Enter
+      const lineCount = text.split(/\r?\n/).length;
+      const chunkCount = Math.max(1, Math.ceil(text.length / CHUNK_SIZE));
+      const isMultiLinePaste = lineCount > 1;
+
+      // Long/multi-line paste needs more time for Claude Code to finish paste-mode transition.
+      const SUBMIT_DELAY = Math.min(
+        1500,
+        (isMultiLinePaste ? 200 : 80)
+          + (chunkCount - 1) * 20
+          + (isMultiLinePaste ? Math.min((lineCount - 1) * 3, 900) : 0),
+      );
 
       const pressEnter = () => {
-        // Try both \r and \n to handle different terminal modes
         ptyProcess.write('\r');
       };
 
