@@ -23,7 +23,7 @@ export const handleStatus: CommandHandler = async (interaction, context) => {
 
   // Thread check
   if (!interaction.channel?.isThread()) {
-    await interaction.reply({ content: '이 명령은 세션 스레드에서만 사용할 수 있습니다.', ephemeral: true });
+    await interaction.reply({ content: 'This command can only be used in a session thread.', ephemeral: true });
     return;
   }
 
@@ -31,7 +31,7 @@ export const handleStatus: CommandHandler = async (interaction, context) => {
   const agents = channelManager.getAgentsInThread(threadId);
 
   if (!agents.claude && !agents.codex) {
-    await interaction.reply({ content: '이 스레드에 활성 세션이 없습니다.', ephemeral: true });
+    await interaction.reply({ content: 'No active session in this thread.', ephemeral: true });
     return;
   }
 

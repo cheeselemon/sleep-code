@@ -98,36 +98,36 @@ This project uses a **Claude + Codex collaboration** model:
 
 ### Communication Protocol
 
-- `CEO → Claude`: prefix 없음 (일반 메시지)
-- `CEO → Codex`: `@codex`로 시작
-- `Claude → Codex`: `@codex`로 시작
-- `Codex → Claude`: `@claude`로 시작
+- `CEO → Claude`: no prefix (regular message)
+- `CEO → Codex`: starts with `@codex`
+- `Claude → Codex`: starts with `@codex`
+- `Codex → Claude`: starts with `@claude`
 
-**`@` 멘션 규칙:**
-- `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용
-- 상대 에이전트를 지칭할 때는 `@` 없이 "codex", "claude"로 표기
-  - O: "codex 의견을 반영했어"
-  - X: "@codex 의견을 반영했어" ← 이러면 라우팅 시도됨
+**`@` Mention Rules:**
+- `@codex`, `@claude` are used **only for message routing**
+- When referring to the other agent without routing, omit `@` (use "codex", "claude")
+  - OK: "incorporated codex's feedback"
+  - BAD: "incorporated @codex's feedback" — this triggers routing
 
 ### File-Based Context Sharing
 
-긴 메시지는 Discord 라우팅에서 잘리거나 실패할 수 있음. **에이전트 간 긴 컨텍스트는 반드시 파일로 공유**.
+Long messages may be truncated or fail in Discord routing. **Long context between agents must be shared via files**.
 
-**규칙:**
-1. 계획, 리뷰, 보고서 등 3줄 이상의 내용은 `docs/plans/` 아래 파일로 작성
-2. 상대 에이전트에게는 **파일 경로 + 핵심 요약 1~2줄**만 전달
-3. 상대 에이전트는 해당 파일을 읽고 응답 (파일에 섹션 추가 또는 별도 파일 생성)
-4. Codex는 read-only 세션일 수 있으므로, 파일 수정이 필요하면 내용을 메시지로 전달 → Claude가 반영
+**Rules:**
+1. Plans, reviews, reports, and any content 3+ lines long go in files under `docs/plans/`
+2. Send only **file path + 1-2 line summary** to the other agent
+3. The receiving agent reads the file and responds (adds a section or creates a separate file)
+4. Codex may be in a read-only session — if file modification is needed, send content via message and Claude writes it to the file
 
-**예시:**
+**Example:**
 ```
-@codex docs/plans/feature-plan.md 읽고 리뷰해줘. 하단에 피드백 추가해줘.
+@codex Read docs/plans/feature-plan.md and review it. Add your feedback at the bottom.
 ```
 
-**파일명 컨벤션:**
-- 계획: `docs/plans/<feature>-plan.md`
-- 보고서: `docs/plans/<feature>-report.md`
-- 토론: `docs/plans/<feature>-discussion.md`
+**File naming convention:**
+- Plans: `docs/plans/<feature>-plan.md`
+- Reports: `docs/plans/<feature>-report.md`
+- Discussions: `docs/plans/<feature>-discussion.md`
 
 ### Plan File Convention
 

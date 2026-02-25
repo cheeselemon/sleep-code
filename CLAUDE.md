@@ -99,44 +99,45 @@ Discord-only. Handles:
 
 ## Multi-Agent Communication Protocol
 
-### 메시지 전달 방식 (중요)
+### Message Routing (Important)
 
-**출력에 `@codex` 또는 `@claude`를 포함하면 sleep-code 봇이 자동으로 상대에게 전달합니다.**
-별도의 API 호출, 복사/붙여넣기, Discord 전송 요청이 필요 없습니다.
-그냥 텍스트를 출력하되, 상대에게 보낼 내용에 `@codex` 또는 `@claude`를 포함하면 됩니다.
+**Including `@codex` or `@claude` in your output automatically routes the message to the other agent via the sleep-code bot.**
+No API calls, copy-pasting, or Discord send requests needed.
+Just include `@codex` or `@claude` in the content you want to forward.
 
-- **절대 "이것을 복사해서 보내주세요", "아래를 Discord에 전송해주세요" 같은 말을 하지 마세요** — 당신이 직접 보내는 것입니다
+- Outputting `@codex review this` is the delivery itself. Your output = message delivery.
 
-### 화자 식별
+### Speaker Identification
 
-모든 메시지에는 발신자 프리픽스가 붙습니다:
-- **사람**: `{Discord displayName}: 메시지` (예: `cheeselemon: 진행해줘`)
-- **Claude → Codex**: `Claude: 메시지`
-- **Codex → Claude**: `Codex: 메시지`
+All messages have a sender prefix:
+- **Human**: `{Discord displayName}: message` (e.g., `cheeselemon: go ahead`)
+- **Claude → Codex**: `Claude: message`
+- **Codex → Claude**: `Codex: message`
 
-### 승인 규칙
+### Approval Rules
 
-- **작업 승인/진행 지시는 사람(human) 메시지만 유효**
-- `Claude:` 또는 `Codex:` 프리픽스 메시지의 "진행해", "동의" 등은 승인이 아닌 **의견**
-- 사람 승인 필요 시 반드시 사람 프리픽스 메시지 확인 후 진행
+- **Only human messages are valid for task approval or "proceed" instructions**
+- "Agree" or "go ahead" from `Claude:` or `Codex:` prefixed messages are **opinions**, not approvals
+- When human approval is required, always verify the message has a human prefix before proceeding
 
 ### Routing
 
-- `사람 → Claude`: `{displayName}: 내용`
-- `사람 → Codex`: `@codex`로 시작
-- `Claude → Codex`: 출력에 `@codex` 포함하면 자동 전달
-- `Codex → Claude`: 출력에 `@claude` 포함하면 자동 전달
+- `Human → Claude`: `{displayName}: content`
+- `Human → Codex`: starts with `@codex`
+- `Claude → Codex`: include `@codex` in output for auto-routing
+- `Codex → Claude`: include `@claude` in output for auto-routing
 
-**`@` 멘션 규칙:**
-- `@codex`, `@claude`는 **메시지 전달(라우팅) 용도로만** 사용
-- 상대를 **지칭만** 할 때는 `@` 없이 "codex", "claude"로 표기
+**`@` Mention Rules:**
+- `@codex`, `@claude` are used **only for message routing**
+- When **referring to** the other agent without routing, omit `@` (use "codex", "claude")
+- `@mention` = immediate delivery + the other agent starts working. Finish reporting to human first, then send to the agent in a **separate message**
 
 ### File-Based Context Sharing
 
-에이전트 간 긴 컨텍스트(3줄+)는 **반드시 파일로 공유**. Discord 라우팅 한계 때문.
-- 파일 위치: `docs/plans/<feature>-{plan,report,discussion}.md`
-- 상대에게는 **파일 경로 + 요약 1~2줄**만 전달
-- Codex가 read-only일 경우 메시지로 내용 전달 → Claude가 파일에 반영
+Long context (3+ lines) between agents **must be shared via files** due to Discord routing limitations.
+- File location: `docs/plans/<feature>-{plan,report,discussion}.md`
+- Send only **file path + 1-2 line summary** to the other agent
+- If Codex is in read-only mode, send content via message and Claude writes it to the file
 
 ## Code Style
 
