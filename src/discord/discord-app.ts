@@ -240,10 +240,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           effectiveCodexSessionId = entry.id;
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd, sandboxMode: isYolo ? 'workspace-write' : 'read-only' }, 'Auto-created Codex session in existing thread');
 
-          // Notify Claude that Codex joined (informational tone to avoid prompt injection suspicion)
-          const claudeSystemMsg = `Bridge notice: Codex (OpenAI) is now available in this thread. Messages from Codex are prefixed with "Codex:". To send a message to Codex, include @codex in your response.`;
-          sessionManager.sendInput(claudeSessionId!, claudeSystemMsg);
-          state.discordSentMessages.add(claudeSystemMsg);
+          // Notify Discord thread only — no PTY injection to avoid prompt injection suspicion
+          // Claude learns about Codex via CLAUDE.md protocol (set up with /setup-multi-agent)
+          try {
+            await message.channel.send('**Codex joined this thread.** Messages are prefixed with agent names.');
+          } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Codex session');
           await message.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
@@ -251,14 +252,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
-      // Prepend system context on first message if multi-agent thread
-      const codexSession = codexSessionManager.getSession(effectiveCodexSessionId);
-      const isFirstMessage = codexSession && !codexSession.codexThreadId; // No thread ID yet = first turn
-      const systemPrefix = (isFirstMessage && claudeSessionId)
-        ? `Bridge notice: Claude Code (Anthropic) is available in this thread. Messages from Claude are prefixed with "Claude:". To send a message to Claude, include @claude in your response.\n\n`
-        : '';
-
-      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, systemPrefix + inputText);
+      // No system prefix injection to Codex — Codex learns about Claude via its own system prompt
+      const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, inputText);
       if (!sent) {
         await message.reply('⚠️ Failed to send input to Codex - session busy or ended.');
       }
