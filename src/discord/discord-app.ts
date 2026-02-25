@@ -25,6 +25,7 @@ import type { ProcessManager } from './process-manager.js';
 import type { SettingsManager } from './settings-manager.js';
 import { CodexSessionManager } from './codex/codex-session-manager.js';
 import { createCodexEvents } from './codex/codex-handlers.js';
+import { CODEX_MODEL } from './codex/codex-session-manager.js';
 
 // Import state management
 import { createState, cleanupState } from './state.js';
@@ -246,7 +247,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           // Notify Discord thread only — no PTY injection to avoid prompt injection suspicion
           // Claude learns about Codex via CLAUDE.md protocol (set up with /setup-multi-agent)
           try {
-            await message.channel.send('**Codex joined this thread.** Messages are prefixed with agent names.');
+            await message.channel.send(`**Codex joined this thread.** Model: \`${CODEX_MODEL}\`. Messages are prefixed with agent names.`);
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Codex session');
