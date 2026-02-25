@@ -120,6 +120,7 @@ export interface RoutingDirective {
   cleanContent: string;
   explicit: boolean;         // true = first token is @codex/@claude or legacy prefix
   invalidMention: boolean;   // true = @codex/@claude found mid-body (not in code blocks)
+  bodyMentionTarget?: AgentType; // which agent was @mentioned mid-body (for fallback routing)
 }
 
 /**
@@ -131,22 +132,32 @@ function stripCodeBlocks(text: string): string {
 }
 
 /**
- * Check if @codex or @claude appears in body text (outside code blocks).
+ * Strip BOM and zero-width characters that LLMs sometimes emit.
  */
-function hasBodyMention(text: string): boolean {
-  const stripped = stripCodeBlocks(text);
-  return /@(?:codex|claude)\b/i.test(stripped);
+function normalizeInvisible(text: string): string {
+  return text.replace(/[\uFEFF\u200B\u200C\u200D\u2060]/g, '');
+}
+
+/**
+ * Extract which agent is @mentioned in body text (outside code blocks).
+ * Returns the first match found, or undefined.
+ */
+function extractBodyMentionTarget(text: string): AgentType | undefined {
+  const stripped = normalizeInvisible(stripCodeBlocks(text));
+  const match = stripped.match(/@(codex|claude)\b/i);
+  return match ? (match[1].toLowerCase() as AgentType) : undefined;
 }
 
 export function parseRoutingDirective(
   content: string,
   context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
 ): RoutingDirective {
-  const trimmed = content.trimStart();
+  const trimmed = normalizeInvisible(content).trimStart();
 
   // Check @mention style: @codex or @claude (with optional colon/space after)
-  const codexMention = /^@codex[:\s]*/i;
-  const claudeMention = /^@claude[:\s]*/i;
+  // Use lookahead to prevent matching @codex-foo or @claude-bar
+  const codexMention = /^@codex(?=[:\s]|$)[:\s]*/i;
+  const claudeMention = /^@claude(?=[:\s]|$)[:\s]*/i;
 
   if (codexMention.test(trimmed)) {
     const cleanContent = trimmed.replace(codexMention, '').trimStart();
@@ -169,7 +180,8 @@ export function parseRoutingDirective(
   }
 
   // No explicit prefix — detect mid-body mentions (outside code blocks)
-  const invalidMention = hasBodyMention(content);
+  const bodyMentionTarget = extractBodyMentionTarget(content);
+  const invalidMention = bodyMentionTarget !== undefined;
 
   // Default routing: single agent → that agent, both → lastActive ?? claude
   let target: AgentType;
@@ -177,7 +189,7 @@ export function parseRoutingDirective(
   else if (context.hasCodex && !context.hasClaude) target = 'codex';
   else target = context.lastActive || 'claude';
 
-  return { target, cleanContent: content, explicit: false, invalidMention };
+  return { target, cleanContent: content, explicit: false, invalidMention, bodyMentionTarget };
 }
 
 /** @deprecated Use parseRoutingDirective instead */
