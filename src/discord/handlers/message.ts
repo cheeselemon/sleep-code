@@ -10,6 +10,7 @@ import { chunkMessage, formatCommandMessage, formatTodos } from '../../slack/mes
 import { extractImagePaths } from '../../utils/image-extractor.js';
 import { getThread } from '../utils.js';
 import { tryRouteToAgent } from '../agent-routing.js';
+import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { HandlerContext } from './types.js';
 import type { SessionManagerRef } from './index.js';
 
@@ -41,8 +42,7 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
       const commandFormatted = formatCommandMessage(formatted);
       const displayContent = commandFormatted ?? formatted;
 
-      // Discord has 4000 char limit, leave room for "**User:** " prefix
-      const chunks = chunkMessage(displayContent, 3900);
+      const chunks = chunkMessage(displayContent, DISCORD_SAFE_CONTENT_LIMIT);
       try {
         for (const chunk of chunks) {
           await thread.send(`**User:** ${chunk}`);
@@ -58,7 +58,6 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
         state.pendingTitles.delete(sessionId);
       }
 
-      // Claude's response - Discord has 4000 char limit
       // Add "Claude:" prefix when both agents are in the same thread
       const agents = channelManager.getAgentsInThread(thread.id);
       const multiAgent = !!(agents.claude && agents.codex);
@@ -81,7 +80,7 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
       }
 
       const prefix = multiAgent ? '**Claude:** ' : '';
-      const maxLen = 3900 - prefix.length;
+      const maxLen = DISCORD_SAFE_CONTENT_LIMIT - prefix.length;
       const chunks = chunkMessage(formatted, maxLen);
       log.debug({ chunks: chunks.length, threadId: thread.id, multiAgent }, 'Sending chunks to thread');
       try {

@@ -6,6 +6,7 @@ import type { Client, ThreadChannel } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage } from '../../slack/message-formatter.js';
 import { tryRouteToAgent } from '../agent-routing.js';
+import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { ChannelManager } from '../channel-manager.js';
 import type { DiscordState } from '../state.js';
 import type { SessionManager } from '../../slack/session-manager.js';
@@ -112,7 +113,7 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       }
 
       const prefix = multiAgent ? '**Codex:** ' : '';
-      const maxLen = 3900 - prefix.length;
+      const maxLen = DISCORD_SAFE_CONTENT_LIMIT - prefix.length;
       const chunks = chunkMessage(content, maxLen);
 
       try {
@@ -149,7 +150,7 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       }
 
       try {
-        await thread.send(text.slice(0, 3900));
+        await thread.send(text.slice(0, DISCORD_SAFE_CONTENT_LIMIT));
       } catch (err: any) {
         log.error({ threadId: thread.id, error: err.message }, 'Failed to send Codex command execution');
       }
@@ -172,7 +173,7 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       }
 
       try {
-        await thread.send(text.slice(0, 3900));
+        await thread.send(text.slice(0, DISCORD_SAFE_CONTENT_LIMIT));
       } catch (err: any) {
         log.error({ threadId: thread.id, error: err.message }, 'Failed to send Codex file change');
       }

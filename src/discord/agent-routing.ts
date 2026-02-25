@@ -8,6 +8,7 @@ import { discordLogger as log } from '../utils/logger.js';
 import { parseRoutingDirective } from './utils.js';
 import { MAX_AGENT_ROUTING } from './state.js';
 import type { DiscordState } from './state.js';
+import { DISCORD_SAFE_CONTENT_LIMIT } from './constants.js';
 
 type AgentType = 'claude' | 'codex';
 
@@ -83,7 +84,7 @@ export async function tryRouteToAgent(params: RouteParams): Promise<RouteResult>
   log.info({ from: sourceAgent, to: targetAgent, count: routingCount + 1, fallback: isFallback, preview: routeContent.slice(0, 50) }, 'Agent-to-agent routing');
 
   try {
-    await thread.send(`**${routeLabel}:** ${routeContent.slice(0, 3900)}`);
+    await thread.send(`**${routeLabel}:** ${routeContent.slice(0, DISCORD_SAFE_CONTENT_LIMIT)}`);
   } catch { /* ignore */ }
 
   const messageForTarget = `${sourceLabel}: ${routeContent}\n\n(Start with @${sourceAgent} to reply)`;
