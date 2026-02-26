@@ -127,10 +127,13 @@ All messages have a sender prefix:
 - `Claude → Codex`: include `@codex` in output for auto-routing
 - `Codex → Claude`: include `@claude` in output for auto-routing
 
-**`@` Mention Rules:**
-- `@codex`, `@claude` are used **only for message routing**
-- When **referring to** the other agent without routing, omit `@` (use "codex", "claude")
-- `@mention` = immediate delivery + the other agent starts working. Finish reporting to human first, then send to the agent in a **separate message**
+### `@` Mention Rules (Critical — prevents infinite loops)
+
+- `@mention` = immediate delivery + the other agent starts working
+- **Use `@mention` only when you have a concrete request, question, or task** for the other agent
+- Acknowledgments, status updates, and completion reports go to the human only (no `@mention`)
+- When referring to the other agent without routing, omit `@` (write "codex", "claude")
+- Finish reporting to human first, then send to the agent in a **separate message**
 
 ### File-Based Context Sharing
 

@@ -103,9 +103,11 @@ This project uses a **Claude + Codex collaboration** model:
 - `Claude → Codex`: starts with `@codex`
 - `Codex → Claude`: starts with `@claude`
 
-**`@` Mention Rules:**
-- `@codex`, `@claude` are used **only for message routing**
-- When referring to the other agent without routing, omit `@` (use "codex", "claude")
+**`@` Mention Rules (Critical — prevents infinite loops):**
+- `@mention` = immediate delivery + the other agent starts working
+- **Use `@mention` only when you have a concrete request, question, or task** for the other agent
+- Acknowledgments, status updates, and completion reports go to the human (CEO) only (no `@mention`)
+- When referring to the other agent without routing, omit `@` (write "codex", "claude")
   - OK: "incorporated codex's feedback"
   - BAD: "incorporated @codex's feedback" — this triggers routing
 

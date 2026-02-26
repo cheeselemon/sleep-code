@@ -297,6 +297,17 @@ Using `x:` in a Claude-only thread will auto-create a Codex session in the same 
 
 See [docs/codex-integration-en.md](docs/codex-integration-en.md) for full details.
 
+### Multi-Agent Protocol Skill
+
+A Claude Code skill is included to quickly set up the multi-agent protocol on any project. Copy it to your skills directory:
+
+```bash
+mkdir -p ~/.claude/skills/setup-multi-agent
+cp docs/skills/setup-multi-agent.md ~/.claude/skills/setup-multi-agent/SKILL.md
+```
+
+Then use `/setup-multi-agent` in Claude Code to add the collaboration protocol to your project's `CLAUDE.md` and `AGENTS.md`.
+
 ## Warning: YOLO Mode
 
 > **Use YOLO mode at your own risk.**
