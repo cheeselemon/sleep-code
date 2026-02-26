@@ -47,6 +47,51 @@ function isMultiAgentThread(channelManager: ChannelManager, threadId: string): b
   return !!(agents.claude && agents.codex);
 }
 
+const MAX_CMD_DISPLAY = 120;
+
+function unwrapShellCommand(command: string): string {
+  const trimmed = command.trim();
+  const wrapped = trimmed.match(/^(?:\/[\w/-]+\/)?(?:bash|zsh|sh)\s+-lc\s+(['"])([\s\S]*)\1$/i);
+  return wrapped ? wrapped[2] : trimmed;
+}
+
+function normalizePathToken(token: string): string {
+  const trimmed = token.trim();
+  const unquoted = trimmed.replace(/^['"`](.*)['"`]$/, '$1');
+  return unquoted.replace(/[;|&]+$/, '');
+}
+
+function getFileWriteTarget(command: string): string | null {
+  const patterns = [
+    /\bcat\s*>\s*(["'`]?[^"'`\s>;&|]+["'`]?)\s*<</i,
+    /\bcat\s*<<[\s\S]*?>\s*(["'`]?[^"'`\s>;&|]+["'`]?)\b/i,
+    /\btee(?:\s+-a)?\s+(["'`]?[^"'`\s>;&|]+["'`]?)\s*<</i,
+    /\b(?:echo|printf)\b[\s\S]*?>>\s*(["'`]?[^"'`\s>;&|]+["'`]?)\b/i,
+    /\b(?:echo|printf)\b[\s\S]*?>\s*(["'`]?[^"'`\s>;&|]+["'`]?)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = command.match(pattern);
+    if (match?.[1]) {
+      return normalizePathToken(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function summarizeCommand(command: string): string {
+  const unwrapped = unwrapShellCommand(command);
+  const writeTarget = getFileWriteTarget(unwrapped);
+  if (writeTarget) {
+    return `write -> ${writeTarget}`;
+  }
+
+  return unwrapped.length > MAX_CMD_DISPLAY
+    ? `${unwrapped.slice(0, MAX_CMD_DISPLAY)}...`
+    : unwrapped;
+}
+
 export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
   const { client, channelManager, state } = context;
 
@@ -135,6 +180,7 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       const isError = info.exitCode !== undefined && info.exitCode !== 0;
       const duration = info.durationMs ? `, ${(info.durationMs / 1000).toFixed(1)}s` : '';
       const exitLabel = info.exitCode !== undefined ? `exit: ${info.exitCode}` : 'done';
+      const displayCommand = summarizeCommand(info.command);
 
       let text: string;
       if (isError && info.output) {
@@ -143,10 +189,10 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
         const output = info.output.length > maxOutput
           ? info.output.slice(0, maxOutput) + '\n... (truncated)'
           : info.output;
-        text = `⚙️ \`${info.command}\` (${exitLabel}${duration})\n\`\`\`\n${output}\n\`\`\``;
+        text = `⚙️ \`${displayCommand}\` (${exitLabel}${duration})\n\`\`\`\n${output}\n\`\`\``;
       } else {
         // One-line summary for successful commands
-        text = `⚙️ \`${info.command}\` (${exitLabel}${duration})`;
+        text = `⚙️ \`${displayCommand}\` (${exitLabel}${duration})`;
       }
 
       try {
