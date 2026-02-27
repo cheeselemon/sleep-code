@@ -609,6 +609,13 @@ export class SessionManager {
               }
             }
 
+            // Skip local command output (e.g. /compact summary, /changelog)
+            // These are internal CLI outputs wrapped in <local-command-stdout> tags
+            if (textContent.includes('<local-command-stdout>')) {
+              log.debug({ preview: textContent.slice(0, 50) }, 'Skipping local command stdout');
+              continue;
+            }
+
             if (textContent.trim()) {
               const messageTime = new Date(data.timestamp || Date.now());
               if (messageTime >= session.startedAt) {
