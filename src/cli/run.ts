@@ -262,38 +262,57 @@ export async function run(command: string[], providedSessionId?: string): Promis
         return;
       }
 
-      // Write text in chunks to avoid overwhelming PTY buffer, then press Enter
-      const CHUNK_SIZE = 1024;
+      // Chunk by UTF-8 bytes (not JS chars) to avoid splitting multi-byte characters
+      // at chunk boundaries, which corrupts CJK text in the PTY.
+      const CHUNK_BYTES = 2048;
       const CHUNK_DELAY = 10; // ms between chunks
+      const buf = Buffer.from(text, 'utf-8');
+
+      // Split buffer into chunks at valid UTF-8 character boundaries
+      const chunks: Buffer[] = [];
+      let pos = 0;
+      while (pos < buf.length) {
+        let end = Math.min(pos + CHUNK_BYTES, buf.length);
+        // Walk back to a valid UTF-8 character boundary
+        if (end < buf.length) {
+          while (end > pos && (buf[end] & 0xC0) === 0x80) {
+            end--;
+          }
+        }
+        chunks.push(buf.subarray(pos, end));
+        pos = end;
+      }
+
       const lineCount = text.split(/\r?\n/).length;
-      const chunkCount = Math.max(1, Math.ceil(text.length / CHUNK_SIZE));
       const isMultiLinePaste = lineCount > 1;
 
       // Long/multi-line paste needs more time for Claude Code to finish paste-mode transition.
       const SUBMIT_DELAY = Math.min(
         1500,
         (isMultiLinePaste ? 200 : 80)
-          + (chunkCount - 1) * 20
+          + (chunks.length - 1) * 20
           + (isMultiLinePaste ? Math.min((lineCount - 1) * 3, 900) : 0),
       );
 
+      const writeStart = Date.now();
       const pressEnter = () => {
+        const elapsed = Date.now() - writeStart;
+        console.error(`[sleep-code] pressEnter after ${elapsed}ms (delay=${SUBMIT_DELAY}ms, lines=${lineCount}, chunks=${chunks.length}, bytes=${buf.length})`);
         ptyProcess.write('\r');
       };
 
-      if (text.length <= CHUNK_SIZE) {
+      if (chunks.length <= 1) {
         ptyProcess.write(text);
         setTimeout(pressEnter, SUBMIT_DELAY);
         return;
       }
 
-      let offset = 0;
+      let idx = 0;
       const writeNext = () => {
-        const chunk = text.slice(offset, offset + CHUNK_SIZE);
-        ptyProcess.write(chunk);
-        offset += CHUNK_SIZE;
+        ptyProcess.write(chunks[idx].toString('utf-8'));
+        idx++;
 
-        if (offset < text.length) {
+        if (idx < chunks.length) {
           setTimeout(writeNext, CHUNK_DELAY);
         } else {
           setTimeout(pressEnter, SUBMIT_DELAY);
