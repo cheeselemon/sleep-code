@@ -192,11 +192,12 @@ export function parseRoutingDirective(
   const bodyMentionTarget = extractBodyMentionTarget(content, context.lastActive);
   const invalidMention = bodyMentionTarget !== undefined;
 
-  // Default routing: single agent → that agent, both → lastActive ?? claude
+  // Default routing: single agent → that agent, both → always claude
+  // Use explicit @codex prefix to route to Codex
   let target: AgentType;
   if (context.hasClaude && !context.hasCodex) target = 'claude';
   else if (context.hasCodex && !context.hasClaude) target = 'codex';
-  else target = context.lastActive || 'claude';
+  else target = 'claude';
 
   return { target, cleanContent: content, explicit: false, invalidMention, bodyMentionTarget };
 }
