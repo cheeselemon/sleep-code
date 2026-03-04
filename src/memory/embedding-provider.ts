@@ -28,14 +28,14 @@ export interface OllamaProviderOptions {
 
 const OLLAMA_DEFAULTS = {
   baseUrl: 'http://127.0.0.1:11434',
-  model: 'qwen3-embedding:0.6b',
-  dimension: 1024,
+  model: 'qwen3-embedding:4b',
+  dimension: 2560,
 } as const;
 
 const MODEL_DIMENSIONS: Record<string, number> = {
   'qwen3-embedding:0.6b': 1024,
-  'qwen3-embedding:4b': 1024,
-  'qwen3-embedding:8b': 1024,
+  'qwen3-embedding:4b': 2560,
+  'qwen3-embedding:8b': 4096,
   'bge-m3': 1024,
   'nomic-embed-text': 768,
   'embeddinggemma': 768,

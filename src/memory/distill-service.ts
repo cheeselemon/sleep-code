@@ -52,14 +52,16 @@ CRITICAL - distilled text rules:
 - Include WHO decided/said WHAT about WHICH topic
 - Max 200 chars, 1-2 sentences
 
-Respond ONLY with valid JSON:
-{
-  "shouldStore": boolean,
-  "distilled": "string",
-  "kind": "string",
-  "priority": number,
-  "topicKey": "string"
-}`;
+Respond ONLY with valid JSON matching this EXACT schema (use these EXACT field names):
+{"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string"}
+
+Example — worth remembering:
+{"shouldStore": true, "distilled": "LanceDB를 벡터DB로 사용하기로 확정", "kind": "decision", "priority": 7, "topicKey": "vector-db"}
+
+Example — not worth remembering:
+{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": ""}
+
+IMPORTANT: Always include ALL 5 fields. Field name must be "shouldStore", not "remember" or "should_remember".`;
 
 // ── Service ──────────────────────────────────────────────────
 
@@ -133,8 +135,16 @@ export class DistillService {
     try {
       const parsed = JSON.parse(raw.trim());
 
-      if (typeof parsed.shouldStore !== 'boolean') return null;
-      if (!parsed.shouldStore) return { ...DEFAULT_SKIP, shouldStore: false };
+      // Accept common LLM field-name variants for the boolean
+      const shouldStore =
+        parsed.shouldStore ??
+        parsed.should_store ??
+        parsed.remember ??
+        parsed.should_remember ??
+        parsed.shouldRemember;
+
+      if (typeof shouldStore !== 'boolean') return null;
+      if (!shouldStore) return { ...DEFAULT_SKIP, shouldStore: false };
 
       if (typeof parsed.distilled !== 'string' || parsed.distilled.length === 0) return null;
       if (!VALID_KINDS.has(parsed.kind)) return null;

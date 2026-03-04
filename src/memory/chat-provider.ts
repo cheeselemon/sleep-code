@@ -27,7 +27,7 @@ export interface OllamaChatProviderOptions {
 
 const OLLAMA_DEFAULTS = {
   baseUrl: 'http://127.0.0.1:11434',
-  model: 'qwen2.5:3b',
+  model: 'qwen2.5:7b',
 } as const;
 
 export class OllamaChatProvider implements ChatProvider {

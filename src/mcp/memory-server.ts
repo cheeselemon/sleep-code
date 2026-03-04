@@ -46,24 +46,16 @@ function formatMemoryUnit(m: MemoryUnit): string {
   return `[${meta}]\n  ${m.text}\n  (${m.createdAt})`;
 }
 
-// ── Main ────────────────────────────────────────────────────
+// ── Server Factory ──────────────────────────────────────────
 
-async function main() {
-  // Initialize services
-  const embeddingProvider = new OllamaEmbeddingProvider();
-  const embeddingService = new EmbeddingService(embeddingProvider);
-  await embeddingService.initialize();
+const VALID_KINDS: MemoryKind[] = ['fact', 'task', 'observation', 'proposal', 'feedback', 'dialog_summary', 'decision'];
+const VALID_SPEAKERS: MemorySpeaker[] = ['user', 'claude', 'codex', 'system'];
 
-  const memoryService = new MemoryService(embeddingService);
-  await memoryService.initialize();
-
-  // Create MCP server
+function createMcpServerWithTools(memoryService: MemoryService): McpServer {
   const server = new McpServer({
     name: 'sleep-code-memory',
     version: '1.0.0',
   });
-
-  // ── sc_memory_search ────────────────────────────────────
 
   server.registerTool(
     'sc_memory_search',
@@ -90,8 +82,6 @@ async function main() {
     },
   );
 
-  // ── sc_memory_list ──────────────────────────────────────
-
   server.registerTool(
     'sc_memory_list',
     {
@@ -114,11 +104,6 @@ async function main() {
       return { content: [{ type: 'text', text: `${results.length} memories for "${project}":\n\n${text}` }] };
     },
   );
-
-  // ── sc_memory_store ─────────────────────────────────────
-
-  const VALID_KINDS: MemoryKind[] = ['fact', 'task', 'observation', 'proposal', 'feedback', 'dialog_summary', 'decision'];
-  const VALID_SPEAKERS: MemorySpeaker[] = ['user', 'claude', 'codex', 'system'];
 
   server.registerTool(
     'sc_memory_store',
@@ -150,11 +135,26 @@ async function main() {
     },
   );
 
-  // ── HTTP Transport ─────────────────────────────────────
+  return server;
+}
+
+// ── Main ────────────────────────────────────────────────────
+
+async function main() {
+  // Initialize services (shared singletons)
+  const embeddingProvider = new OllamaEmbeddingProvider();
+  const embeddingService = new EmbeddingService(embeddingProvider);
+  await embeddingService.initialize();
+
+  const memoryService = new MemoryService(embeddingService);
+  await memoryService.initialize();
+
+  // ── HTTP Transport (stateless: new server per request) ──
 
   const PORT = Number(process.env.MCP_PORT) || 24242;
 
   createServer(async (req, res) => {
+    const server = createMcpServerWithTools(memoryService);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     await transport.handleRequest(req, res);

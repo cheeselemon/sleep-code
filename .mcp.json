@@ -1,5 +1,8 @@
 {
-  "sleep-code-memory": {
-    "url": "http://127.0.0.1:24242/mcp"
+  "mcpServers": {
+    "sleep-code-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:24242/mcp"
+    }
   }
 }

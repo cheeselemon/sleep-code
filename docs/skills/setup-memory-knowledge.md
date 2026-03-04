@@ -27,7 +27,7 @@ Add the content below as-is (markdown inside the code block), after replacing `{
 
 ### 동작 원리
 1. Discord/터미널 대화가 실시간으로 수집됨
-2. 로컬 LLM(Ollama qwen2.5:3b)이 각 메시지를 분류 — 기억할 가치가 있으면 distill
+2. 로컬 LLM(Ollama qwen2.5:7b)이 각 메시지를 분류 — 기억할 가치가 있으면 distill
 3. LanceDB에 벡터 임베딩과 함께 저장 (프로젝트별 분리)
 4. 중복 기억은 자동 병합 (cosine similarity 0.85 이상)
 
@@ -44,7 +44,7 @@ Add the content below as-is (markdown inside the code block), after replacing `{
 ### 사용법 (MCP Tools)
 - `sc_memory_search` — 시맨틱 검색. "환불 로직 어떻게 하기로 했지?" 같은 질문에 관련 기억 반환
 - `sc_memory_list` — 프로젝트의 최근 기억 목록
-- `sc_memory_store` — 유저가 명시적으로 "기억해", "저장해" 등 요청할 때만 사용. 자동으로 호출하지 말 것.
+- `sc_memory_store` — 유저가 "기억해", "저장해" 등 명시적으로 요청했을 때만 사용한다.
 
 ### 이 프로젝트 설정
 - project name: `{PROJECT_NAME}`
