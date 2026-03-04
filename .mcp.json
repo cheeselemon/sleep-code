@@ -1,0 +1,6 @@
+{
+  "sleep-code-memory": {
+    "command": "node",
+    "args": ["/Users/cheeselemon/Documents/GitHub/cheeselemon/sleep-code/dist/mcp/memory-server.js"]
+  }
+}

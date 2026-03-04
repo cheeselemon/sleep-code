@@ -39,10 +39,18 @@ Rules:
   - "ㅇㅇ" after "이거 LanceDB로 할까?" = decision confirmation → REMEMBER
   - "ㅇㅇ" after "밥 먹었어?" = casual → SKIP
 - Keep the original language (Korean/English) in distilled text
-- distilled must be 1-2 sentences, max 200 chars, capturing the essence
 - kind must be one of: fact, task, observation, proposal, feedback, dialog_summary, decision
 - priority: 0-10 (10 = critical decision, 0 = trivial)
 - topicKey: short topic tag in English (e.g., "vector-db", "refund-logic", "api-cost")
+
+CRITICAL - distilled text rules:
+- distilled MUST contain the SPECIFIC SUBSTANCE of the decision/fact, not a meta-description
+- BAD: "SnoopDuck 요청. 업데이트 후 코덱스와 논의" (what was requested? what update?)
+- GOOD: "환불 로직에서 위약금은 계약일 기준 30일 이내면 면제하기로 결정"
+- BAD: "Claude confirmed the plan" (what plan?)
+- GOOD: "LanceDB를 벡터DB로 사용하고, Ollama로 로컬 임베딩 처리하기로 확정"
+- Include WHO decided/said WHAT about WHICH topic
+- Max 200 chars, 1-2 sentences
 
 Respond ONLY with valid JSON:
 {

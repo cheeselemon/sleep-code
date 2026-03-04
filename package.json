@@ -46,6 +46,7 @@
   "license": "MIT",
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@openai/codex-sdk": "^0.104.0",
     "@slack/bolt": "^4.6.0",
     "chokidar": "^5.0.0",
@@ -55,7 +56,8 @@
     "pino": "^10.3.0",
     "rotating-file-stream": "^3.2.7",
     "stream-json": "^1.9.1",
-    "strip-ansi": "^7.1.2"
+    "strip-ansi": "^7.1.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20.19.30",
