@@ -3,6 +3,7 @@ import { slackSetup, slackRun } from './slack.js';
 import { discordSetup, discordRun } from './discord.js';
 import { telegramSetup, telegramRun } from './telegram.js';
 import { handlePermissionHook } from './hook.js';
+import { memoryCommand } from './memory.js';
 import { readFile, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { resolve } from 'path';
@@ -115,6 +116,11 @@ async function main() {
       break;
     }
 
+    case 'memory': {
+      await memoryCommand(args.slice(1));
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -130,6 +136,7 @@ Commands:
   slack              Run the Slack bot
   slack setup        Configure Slack integration
   hook setup         Configure Claude Code permission hook
+  memory             Memory management commands
   run -- <cmd>       Start a monitored session
   run --session-id <uuid> -- <cmd>  Start with specific session ID
   help               Show this help message

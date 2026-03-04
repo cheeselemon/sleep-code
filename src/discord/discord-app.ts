@@ -32,6 +32,7 @@ import { createState, cleanupState } from './state.js';
 
 // Import utils
 import { downloadAttachment, downloadTextAttachment, parseRoutingDirective } from './utils.js';
+import { basename } from 'path';
 
 // Import command handlers
 import { commands, handleCommand } from './commands/index.js';
@@ -49,11 +50,14 @@ process.on('unhandledRejection', (reason) => {
   log.error({ reason }, 'Unhandled promise rejection');
 });
 
+import type { MemoryCollector } from '../memory/memory-collector.js';
+
 export interface DiscordAppOptions {
   config: DiscordConfig;
   processManager?: ProcessManager;
   settingsManager?: SettingsManager;
   enableCodex?: boolean;
+  memoryCollector?: MemoryCollector;
 }
 
 export function createDiscordApp(config: DiscordConfig, options?: Partial<DiscordAppOptions>) {
@@ -94,6 +98,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     processManager,
     codexSessionManager,
     state,
+    memoryCollector: options?.memoryCollector,
   };
 
   // Create events with the ref (handlers will access sessionManager through ref.current)
@@ -162,6 +167,19 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     // React with checkmark to acknowledge receipt
     await message.react('✅').catch(() => {});
+
+    // Collect user message for memory
+    if (handlerContext.memoryCollector && cleanContent.trim()) {
+      const sessionCwd = claudeSessionId ? sessionManager.getSession(claudeSessionId)?.cwd : undefined;
+      handlerContext.memoryCollector.onMessage({
+        speaker: 'user',
+        displayName: message.member?.displayName ?? message.author.username,
+        content: cleanContent,
+        channelId: message.channel.parentId ?? message.channelId,
+        threadId: message.channelId,
+        project: sessionCwd ? basename(sessionCwd) : undefined,
+      }).catch(err => log.error({ err }, 'Memory collect failed'));
+    }
 
     // Download any image attachments
     const imagePaths: string[] = [];

@@ -45,6 +45,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@lancedb/lancedb": "^0.26.2",
     "@openai/codex-sdk": "^0.104.0",
     "@slack/bolt": "^4.6.0",
     "chokidar": "^5.0.0",

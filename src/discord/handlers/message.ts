@@ -13,6 +13,13 @@ import { tryRouteToAgent } from '../agent-routing.js';
 import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { HandlerContext } from './types.js';
 import type { SessionManagerRef } from './index.js';
+import { basename } from 'path';
+
+/** Extract project name from session cwd (last directory component) */
+function getProjectFromSession(sessionManagerRef: SessionManagerRef, sessionId: string): string | undefined {
+  const session = sessionManagerRef.current?.getSession(sessionId);
+  return session?.cwd ? basename(session.cwd) : undefined;
+}
 
 export function createMessageHandler(context: HandlerContext, sessionManagerRef: SessionManagerRef) {
   const { client, channelManager, codexSessionManager, state } = context;
@@ -35,6 +42,18 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
         state.discordSentMessages.delete(contentKey);
         log.debug('Skipping Discord-originated message');
         return;
+      }
+
+      // Collect terminal user message for memory
+      if (context.memoryCollector && content.trim()) {
+        context.memoryCollector.onMessage({
+          speaker: 'user',
+          displayName: 'User',
+          content,
+          channelId: thread.id,
+          threadId: thread.id,
+          project: getProjectFromSession(sessionManagerRef, sessionId),
+        }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
       // User message from terminal
@@ -77,6 +96,18 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
           sendToTarget: (msg) => codexSessionManager.sendInput(agents.codex!, msg),
         });
         if (routed) return;
+      }
+
+      // Collect Claude response for memory
+      if (context.memoryCollector && content.trim()) {
+        context.memoryCollector.onMessage({
+          speaker: 'claude',
+          displayName: 'Claude',
+          content,
+          channelId: thread.id,
+          threadId: thread.id,
+          project: getProjectFromSession(sessionManagerRef, sessionId),
+        }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
       const prefix = multiAgent ? '**Claude:** ' : '';

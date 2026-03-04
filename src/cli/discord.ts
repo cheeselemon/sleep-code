@@ -4,6 +4,15 @@ import * as readline from 'readline';
 import { cliLogger as log } from '../utils/logger.js';
 import { ProcessManager } from '../discord/process-manager.js';
 import { SettingsManager } from '../discord/settings-manager.js';
+import {
+  OllamaEmbeddingProvider,
+  EmbeddingService,
+  MemoryService,
+  OllamaChatProvider,
+  ChatService,
+  DistillService,
+  MemoryCollector,
+} from '../memory/index.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const DISCORD_CONFIG_FILE = `${CONFIG_DIR}/discord.env`;
@@ -208,10 +217,29 @@ export async function discordRun(): Promise<void> {
     log.info('No Codex auth found (run `codex login` or set OPENAI_API_KEY), Codex disabled');
   }
 
+  // Initialize memory collector (optional — fails gracefully if Ollama not running)
+  let memoryCollector: MemoryCollector | undefined;
+  try {
+    const embeddingProvider = new OllamaEmbeddingProvider();
+    const embeddingService = new EmbeddingService(embeddingProvider);
+    await embeddingService.initialize();
+    const memoryService = new MemoryService(embeddingService);
+    await memoryService.initialize();
+    const chatProvider = new OllamaChatProvider();
+    const chatService = new ChatService(chatProvider);
+    await chatService.initialize();
+    const distillService = new DistillService(chatService);
+    memoryCollector = new MemoryCollector(memoryService, distillService);
+    log.info('Memory collector initialized');
+  } catch (err) {
+    log.warn({ err }, 'Memory collector disabled (Ollama not available?)');
+  }
+
   const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {
     processManager,
     settingsManager,
     enableCodex,
+    memoryCollector,
   });
 
   // Start session manager (Unix socket server for CLI connections)
