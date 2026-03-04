@@ -11,12 +11,15 @@ import type { ChannelManager } from '../channel-manager.js';
 import type { DiscordState } from '../state.js';
 import type { SessionManager } from '../../slack/session-manager.js';
 import type { CodexEvents } from './codex-session-manager.js';
+import type { MemoryCollector } from '../../memory/memory-collector.js';
+import { basename } from 'path';
 
 interface CodexHandlerContext {
   client: Client;
   channelManager: ChannelManager;
   state: DiscordState;
   sessionManagerRef: { current: SessionManager | null };
+  memoryCollector?: MemoryCollector;
 }
 
 async function getCodexThread(
@@ -155,6 +158,20 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
           onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
         });
         if (routed) return;
+      }
+
+      // Collect Codex response for memory
+      if (context.memoryCollector && content.trim()) {
+        const mapping = channelManager.getCodexSession(sessionId);
+        const project = mapping?.cwd ? basename(mapping.cwd) : undefined;
+        context.memoryCollector.onMessage({
+          speaker: 'codex',
+          displayName: 'Codex',
+          content,
+          channelId: thread.id,
+          threadId: thread.id,
+          project,
+        }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
       const prefix = multiAgent ? '**Codex:** ' : '';

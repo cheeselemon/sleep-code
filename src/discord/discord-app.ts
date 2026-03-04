@@ -82,7 +82,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Initialize Codex session manager if enabled
   let codexSessionManager: CodexSessionManager | undefined;
   if (enableCodex) {
-    const codexEvents = createCodexEvents({ client, channelManager, state, sessionManagerRef });
+    const codexEvents = createCodexEvents({ client, channelManager, state, sessionManagerRef, memoryCollector: options?.memoryCollector });
     codexSessionManager = new CodexSessionManager(codexEvents, {
       onCodexThreadIdSet: (sessionId, codexThreadId) => {
         channelManager.setCodexThreadId(sessionId, codexThreadId);

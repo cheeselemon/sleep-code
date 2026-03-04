@@ -1,6 +1,5 @@
-#!/usr/bin/env node
 /**
- * MCP Memory Server for Sleep Code
+ * MCP Memory Server for Sleep Code (HTTP transport)
  *
  * Exposes LanceDB memory store as MCP tools:
  * - sc_memory_search: semantic search
@@ -8,8 +7,9 @@
  * - sc_memory_store: manual store
  */
 
+import { createServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import {
   OllamaEmbeddingProvider,
@@ -150,11 +150,17 @@ async function main() {
     },
   );
 
-  // ── Connect ─────────────────────────────────────────────
+  // ── HTTP Transport ─────────────────────────────────────
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('sleep-code-memory MCP server running on stdio');
+  const PORT = Number(process.env.MCP_PORT) || 24242;
+
+  createServer(async (req, res) => {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+  }).listen(PORT, '127.0.0.1', () => {
+    console.error(`sleep-code-memory MCP server listening on http://127.0.0.1:${PORT}/mcp`);
+  });
 }
 
 main().catch((err) => {

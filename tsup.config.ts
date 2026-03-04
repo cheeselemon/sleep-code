@@ -31,9 +31,6 @@ export default defineConfig([
     sourcemap: false,
     clean: true,
     dts: false,
-    banner: {
-      js: '#!/usr/bin/env node',
-    },
     noExternal: [],
     external: [
       '@lancedb/lancedb',
