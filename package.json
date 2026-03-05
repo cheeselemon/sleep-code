@@ -22,6 +22,8 @@
     "slack:setup": "node dist/cli/index.js slack setup",
     "hook:setup": "node dist/cli/index.js hook setup",
     "claude": "node dist/cli/index.js claude",
+    "explorer": "cd explorer && npm run dev",
+    "explorer:build": "cd explorer && npm run build",
     "prepublishOnly": "npm run build",
     "postinstall": "node -e \"const fs = require('fs'); const path = require('path'); const dir = path.dirname(path.dirname(require.resolve('node-pty'))); const prebuilds = path.join(dir, 'prebuilds'); if (fs.existsSync(prebuilds)) { fs.readdirSync(prebuilds).forEach(p => { const helper = path.join(prebuilds, p, 'spawn-helper'); if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755); }); }\""
   },

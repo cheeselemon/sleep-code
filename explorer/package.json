@@ -1,0 +1,29 @@
+{
+  "name": "sleep-code-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3333 --webpack",
+    "build": "next build",
+    "start": "next start --port 3333"
+  },
+  "dependencies": {
+    "next": "^16.1",
+    "react": "^19",
+    "react-dom": "^19",
+    "d3": "^7",
+    "server-only": "^0.0.1",
+    "@lancedb/lancedb": "^0.26.2",
+    "pino": "^10.3.0",
+    "rotating-file-stream": "^3.2.7"
+  },
+  "devDependencies": {
+    "@types/d3": "^7",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5",
+    "@tailwindcss/postcss": "^4",
+    "tailwindcss": "^4"
+  }
+}

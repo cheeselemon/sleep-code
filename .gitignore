@@ -3,3 +3,5 @@ dist/
 *.log
 .env
 .env.local
+explorer/.next/
+explorer/node_modules/
