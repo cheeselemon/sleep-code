@@ -281,17 +281,45 @@ env: { DISABLE_MEMORY: '1' }
 
 ### MCP 메모리 서버
 
-메모리 저장소는 Claude Code 세션에서 사용할 수 있도록 MCP 서버로 제공됩니다:
+메모리 저장소는 [MCP](https://modelcontextprotocol.io/) 서버(HTTP)로 제공되어, 이 프로젝트의 모든 Claude Code 세션에서 메모리를 사용할 수 있습니다.
+
+**전송 방식:** HTTP (Streamable HTTP), `http://127.0.0.1:24242/mcp`
+
+**서버 시작 방법:**
 
 ```bash
-# MCP 서버 시작 (.mcp.json에 자동 설정됨)
+# 방법 1: npm 스크립트
 npm run memory-server
 
-# 사용 가능한 MCP 도구:
-# - sc_memory_search  — 시맨틱 검색 ("벡터 DB 결정"으로 관련 메모리 검색)
-# - sc_memory_list    — 프로젝트별 최근 메모리 목록
-# - sc_memory_store   — 수동 메모리 저장
+# 방법 2: PM2 (백그라운드, 자동 재시작)
+pm2 start ecosystem.config.cjs --only sleep-memory-mcp
+
+# 방법 3: 직접 실행
+node dist/mcp/memory-server.js
 ```
+
+**Claude Code 자동 연결** — 프로젝트 루트의 `.mcp.json`으로 설정됩니다:
+
+```json
+{
+  "mcpServers": {
+    "sleep-code-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:24242/mcp"
+    }
+  }
+}
+```
+
+다른 프로젝트에서 사용하려면 이 `.mcp.json`을 복사하거나 해당 프로젝트의 `.mcp.json`에 항목을 추가하세요.
+
+**사용 가능한 MCP 도구:**
+
+| 도구 | 설명 |
+|------|------|
+| `sc_memory_search` | 메모리 시맨틱 검색. 자연어 쿼리와 선택적 프로젝트 필터를 전달합니다. |
+| `sc_memory_list` | 프로젝트의 최근 메모리 목록을 조회합니다. |
+| `sc_memory_store` | 수동으로 메모리를 저장합니다 (텍스트, 프로젝트, 종류, 우선순위, 토픽). |
 
 ### 메모리 탐색기
 

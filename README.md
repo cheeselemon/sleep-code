@@ -281,17 +281,45 @@ env: { DISABLE_MEMORY: '1' }
 
 ### MCP Memory Server
 
-The memory store is exposed as an MCP server for use in Claude Code sessions:
+The memory store is exposed as an [MCP](https://modelcontextprotocol.io/) server over HTTP, making memories available to any Claude Code session in this project.
+
+**Transport:** HTTP (Streamable HTTP) at `http://127.0.0.1:24242/mcp`
+
+**Starting the server:**
 
 ```bash
-# Start the MCP server (auto-configured in .mcp.json)
+# Option 1: npm script
 npm run memory-server
 
-# Available MCP tools:
-# - sc_memory_search  — Semantic search ("vector DB decision" finds related memories)
-# - sc_memory_list    — List recent memories by project
-# - sc_memory_store   — Manually store a memory
+# Option 2: PM2 (background, auto-restart)
+pm2 start ecosystem.config.cjs --only sleep-memory-mcp
+
+# Option 3: Direct
+node dist/mcp/memory-server.js
 ```
+
+**Claude Code auto-connects** via `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "sleep-code-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:24242/mcp"
+    }
+  }
+}
+```
+
+To use in other projects, copy this `.mcp.json` or add the entry to that project's `.mcp.json`.
+
+**Available MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `sc_memory_search` | Semantic search over memories. Pass a natural language query and optional project filter. |
+| `sc_memory_list` | List recent memories for a project. |
+| `sc_memory_store` | Manually store a memory (text, project, kind, priority, topic). |
 
 ### Memory Explorer
 
