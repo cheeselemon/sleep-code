@@ -102,15 +102,19 @@ export default function MemoryGraph({
     );
 
     // Simulation
+    const nodeRadius = (d: Node) => 3 + d.priority * 0.8;
+
     const sim = d3.forceSimulation<Node>(nodesCopy)
       .force('link', d3.forceLink<Node, Edge>(edgesCopy)
         .id((d) => d.id)
-        .distance(100)
-        .strength((d) => (typeof d.similarity === 'number' ? d.similarity : 0.7) * 0.3)
+        .distance(150)
+        .strength((d) => (typeof d.similarity === 'number' ? d.similarity : 0.7) * 0.2)
       )
-      .force('charge', d3.forceManyBody().strength(-150))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide<Node>().radius((d) => 6 + d.priority * 2));
+      .force('charge', d3.forceManyBody().strength(-200).distanceMax(500))
+      .force('x', d3.forceX(width / 2).strength(0.03))
+      .force('y', d3.forceY(height / 2).strength(0.03))
+      .force('collision', d3.forceCollide<Node>().radius((d) => nodeRadius(d) + 8))
+      .alphaDecay(0.03);
 
     simRef.current = sim;
 
@@ -128,7 +132,7 @@ export default function MemoryGraph({
       .selectAll('circle')
       .data(nodesCopy)
       .join('circle')
-      .attr('r', (d) => 6 + d.priority * 1.8)
+      .attr('r', (d) => nodeRadius(d))
       .attr('fill', (d) => PROJECT_COLORS[d.project] ?? DEFAULT_COLOR)
       .attr('stroke', '#fff')
       .attr('stroke-width', 0.8)
@@ -139,7 +143,7 @@ export default function MemoryGraph({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         d3.drag<any, Node>()
           .on('start', (e, d) => {
-            if (!e.active) sim.alphaTarget(0.3).restart();
+            if (!e.active) sim.alphaTarget(0.1).restart();
             d.fx = d.x;
             d.fy = d.y;
           })

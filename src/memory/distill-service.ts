@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js';
-import { ChatService } from './chat-provider.js';
+import { ChatService, type ChatMessage } from './chat-provider.js';
 import type { MemoryKind } from './memory-service.js';
 
 const log = logger.child({ component: 'distill' });
@@ -66,6 +66,18 @@ Example — not worth remembering:
 
 IMPORTANT: Always include ALL 5 fields. Field name must be "shouldStore", not "remember" or "should_remember".`;
 
+// ── CJK Detection ───────────────────────────────────────────
+
+const CJK_PATTERN = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]/;
+const KOREAN_PATTERN = /[\uac00-\ud7af]/;
+
+function hasCJKWithoutKorean(text: string): boolean {
+  return CJK_PATTERN.test(text) && !KOREAN_PATTERN.test(text);
+}
+
+const CJK_RETRY_PROMPT = `Your previous response contained Chinese/Japanese text. This is NOT allowed.
+Rewrite your response in Korean or English ONLY. Respond with JSON only.`;
+
 // ── Service ──────────────────────────────────────────────────
 
 const MAX_RETRIES = 1;
@@ -82,6 +94,11 @@ const VALID_KINDS = new Set<string>([
   'fact', 'task', 'observation', 'proposal', 'feedback', 'dialog_summary', 'decision',
 ]);
 
+interface ParseResult {
+  result: DistillResult | null;
+  cjkRejected: boolean;
+}
+
 export class DistillService {
   private chat: ChatService;
 
@@ -91,15 +108,29 @@ export class DistillService {
 
   async distill(input: DistillInput): Promise<DistillResult> {
     const userPrompt = this.buildUserPrompt(input);
+    const messages: ChatMessage[] = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ];
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const raw = await this.chat.chat([
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ]);
+        const raw = await this.chat.chat(messages);
+        const { result, cjkRejected } = this.parseResponse(raw);
 
-        const result = this.parseResponse(raw);
+        // CJK detected → append correction and retry
+        if (cjkRejected && attempt < MAX_RETRIES) {
+          log.warn({ attempt, text: raw.slice(0, 80) }, 'CJK detected, retrying with correction');
+          messages.push({ role: 'assistant', content: raw });
+          messages.push({ role: 'user', content: CJK_RETRY_PROMPT });
+          continue;
+        }
+
+        if (cjkRejected) {
+          log.warn('CJK retry also failed, skipping');
+          return DEFAULT_SKIP;
+        }
+
         if (result) {
           log.debug(
             { shouldStore: result.shouldStore, kind: result.kind, topic: result.topicKey },
@@ -134,7 +165,7 @@ export class DistillService {
     return prompt;
   }
 
-  private parseResponse(raw: string): DistillResult | null {
+  private parseResponse(raw: string): ParseResult {
     try {
       const parsed = JSON.parse(raw.trim());
 
@@ -146,32 +177,33 @@ export class DistillService {
         parsed.should_remember ??
         parsed.shouldRemember;
 
-      if (typeof shouldStore !== 'boolean') return null;
-      if (!shouldStore) return { ...DEFAULT_SKIP, shouldStore: false };
+      if (typeof shouldStore !== 'boolean') return { result: null, cjkRejected: false };
+      if (!shouldStore) return { result: { ...DEFAULT_SKIP, shouldStore: false }, cjkRejected: false };
 
-      if (typeof parsed.distilled !== 'string' || parsed.distilled.length === 0) return null;
+      if (typeof parsed.distilled !== 'string' || parsed.distilled.length === 0) return { result: null, cjkRejected: false };
 
-      // Reject CJK language errors (Chinese/Japanese without Korean)
-      const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]/.test(parsed.distilled);
-      const hasKorean = /[\uac00-\ud7af]/.test(parsed.distilled);
-      if (hasCJK && !hasKorean) {
-        log.warn({ text: parsed.distilled.slice(0, 80) }, 'Rejected CJK language error in distill');
-        return { ...DEFAULT_SKIP, shouldStore: false };
+      // Detect CJK language errors (Chinese/Japanese without Korean) → signal retry
+      if (hasCJKWithoutKorean(parsed.distilled)) {
+        return { result: null, cjkRejected: true };
       }
-      if (!VALID_KINDS.has(parsed.kind)) return null;
+
+      if (!VALID_KINDS.has(parsed.kind)) return { result: null, cjkRejected: false };
 
       const priority = Number(parsed.priority);
-      if (isNaN(priority) || priority < 0 || priority > 10) return null;
+      if (isNaN(priority) || priority < 0 || priority > 10) return { result: null, cjkRejected: false };
 
       return {
-        shouldStore: true,
-        distilled: parsed.distilled.slice(0, 200),
-        kind: parsed.kind as MemoryKind,
-        priority: Math.round(priority),
-        topicKey: typeof parsed.topicKey === 'string' ? parsed.topicKey : '',
+        result: {
+          shouldStore: true,
+          distilled: parsed.distilled.slice(0, 200),
+          kind: parsed.kind as MemoryKind,
+          priority: Math.round(priority),
+          topicKey: typeof parsed.topicKey === 'string' ? parsed.topicKey : '',
+        },
+        cjkRejected: false,
       };
     } catch {
-      return null;
+      return { result: null, cjkRejected: false };
     }
   }
 }
