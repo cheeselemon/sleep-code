@@ -217,22 +217,26 @@ export async function discordRun(): Promise<void> {
     log.info('No Codex auth found (run `codex login` or set OPENAI_API_KEY), Codex disabled');
   }
 
-  // Initialize memory collector (optional — fails gracefully if Ollama not running)
+  // Initialize memory collector (optional — disable with DISABLE_MEMORY=1)
   let memoryCollector: MemoryCollector | undefined;
-  try {
-    const embeddingProvider = new OllamaEmbeddingProvider();
-    const embeddingService = new EmbeddingService(embeddingProvider);
-    await embeddingService.initialize();
-    const memoryService = new MemoryService(embeddingService);
-    await memoryService.initialize();
-    const chatProvider = new OllamaChatProvider();
-    const chatService = new ChatService(chatProvider);
-    await chatService.initialize();
-    const distillService = new DistillService(chatService);
-    memoryCollector = new MemoryCollector(memoryService, distillService);
-    log.info('Memory collector initialized');
-  } catch (err) {
-    log.warn({ err }, 'Memory collector disabled (Ollama not available?)');
+  if (process.env.DISABLE_MEMORY === '1') {
+    log.info('Memory collector disabled via DISABLE_MEMORY=1');
+  } else {
+    try {
+      const embeddingProvider = new OllamaEmbeddingProvider();
+      const embeddingService = new EmbeddingService(embeddingProvider);
+      await embeddingService.initialize();
+      const memoryService = new MemoryService(embeddingService);
+      await memoryService.initialize();
+      const chatProvider = new OllamaChatProvider();
+      const chatService = new ChatService(chatProvider);
+      await chatService.initialize();
+      const distillService = new DistillService(chatService);
+      memoryCollector = new MemoryCollector(memoryService, distillService);
+      log.info('Memory collector initialized');
+    } catch (err) {
+      log.warn({ err }, 'Memory collector disabled (Ollama not available?)');
+    }
   }
 
   const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {

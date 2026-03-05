@@ -253,16 +253,31 @@ sleep-code hook setup
 4. 채팅에서 보낸 메시지를 터미널로 전달
 5. 훅을 통해 권한 요청을 채팅으로 전달하여 승인 (Discord/Slack)
 
-## 시맨틱 메모리
+## 시맨틱 메모리 (선택사항)
 
-Sleep Code는 중요한 대화 — 결정, 선호사항, 작업 지시 등 — 을 로컬 벡터 데이터베이스에 자동으로 기억합니다.
+Sleep Code는 중요한 대화 — 결정, 선호사항, 작업 지시 등 — 을 로컬 벡터 데이터베이스에 자동으로 기억할 수 있습니다. 메모리 수집은 **선택사항**이며 [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다. Ollama가 없으면 메모리 기능 없이 정상 작동합니다.
 
 ### 작동 방식
 
-1. **정제(Distill)** — LLM(Ollama `qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵
-2. **임베딩(Embed)** — 저장할 메모리를 Ollama(`qwen3-embedding`)로 벡터화
-3. **저장(Store)** — 벡터 + 메타데이터를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
-4. **검색(Recall)** — 키워드가 아닌 의미 기반으로 관련 메모리 검색
+1. **수집(Collect)** — Discord 메시지를 슬라이딩 컨텍스트 윈도우로 실시간 수집
+2. **정제(Distill)** — 로컬 LLM(Ollama `qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵. 결정, 사실, 선호, 작업, 피드백만 저장 — 일상 대화는 무시
+3. **임베딩(Embed)** — 저장할 메모리를 Ollama(`qwen3-embedding`)로 1024차원 벡터화
+4. **저장(Store)** — 벡터 + 메타데이터(프로젝트, 화자, 우선순위, 토픽)를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
+5. **검색(Recall)** — 키워드가 아닌 의미 기반으로 관련 메모리 검색
+
+### 메모리 비활성화
+
+Ollama가 실행 중이면 메모리가 기본으로 활성화됩니다. 비활성화 방법:
+
+```bash
+# 방법 1: 환경변수
+DISABLE_MEMORY=1 npm run discord
+
+# 방법 2: PM2용 ecosystem.config.cjs에서
+env: { DISABLE_MEMORY: '1' }
+
+# 방법 3: Ollama를 실행하지 않으면 자동으로 비활성화
+```
 
 ### MCP 메모리 서버
 
@@ -289,9 +304,9 @@ cd explorer && npm run dev   # http://localhost:3000 에서 열림
 ### 요구사항
 
 - [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다:
-  - `qwen2.5:7b` (정제 모델)
-  - `qwen3-embedding` (임베딩 모델, 자동 다운로드)
-
+  - `qwen2.5:7b` — 정제 모델 (메시지 분류)
+  - `qwen3-embedding` — 임베딩 모델 (첫 사용 시 자동 다운로드)
+- 메모리 데이터는 `~/.sleep-code/memory/lancedb`에 저장됩니다
 
 ## 아키텍처
 

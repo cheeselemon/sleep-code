@@ -253,16 +253,31 @@ The hook is configured with a 24-hour timeout, so you can respond to permission 
 4. Messages you send in chat are forwarded to the terminal
 5. Permission requests are forwarded to chat for approval (Discord/Slack) via the hook
 
-## Semantic Memory
+## Semantic Memory (Optional)
 
-Sleep Code automatically remembers important conversations — decisions, preferences, task assignments, and more — using a local vector database.
+Sleep Code can automatically remember important conversations — decisions, preferences, task assignments, and more — using a local vector database. Memory collection is **optional** and requires [Ollama](https://ollama.com/) running locally. If Ollama is not available, the bot runs normally without memory features.
 
 ### How It Works
 
-1. **Distill** — An LLM (Ollama `qwen2.5:7b`) classifies each message: store or skip
-2. **Embed** — Stored memories are embedded via Ollama (`qwen3-embedding`) into vectors
-3. **Store** — Vectors + metadata are saved in LanceDB (`~/.sleep-code/memory/lancedb`)
-4. **Recall** — Semantic search retrieves relevant memories by meaning, not just keywords
+1. **Collect** — Discord messages are collected in real-time with a sliding context window
+2. **Distill** — A local LLM (Ollama `qwen2.5:7b`) classifies each message: store or skip. Only decisions, facts, preferences, tasks, and feedback are stored — casual chat is ignored
+3. **Embed** — Stored memories are embedded via Ollama (`qwen3-embedding`) into 1024-dimensional vectors
+4. **Store** — Vectors + metadata (project, speaker, priority, topic) are saved in LanceDB (`~/.sleep-code/memory/lancedb`)
+5. **Recall** — Semantic search retrieves relevant memories by meaning, not just keywords
+
+### Disabling Memory
+
+Memory is enabled by default when Ollama is available. To disable it:
+
+```bash
+# Option 1: Environment variable
+DISABLE_MEMORY=1 npm run discord
+
+# Option 2: In ecosystem.config.cjs for PM2
+env: { DISABLE_MEMORY: '1' }
+
+# Option 3: Simply don't run Ollama — memory auto-disables gracefully
+```
 
 ### MCP Memory Server
 
@@ -289,9 +304,9 @@ cd explorer && npm run dev   # Opens at http://localhost:3000
 ### Requirements
 
 - [Ollama](https://ollama.com/) running locally with:
-  - `qwen2.5:7b` (distill model)
-  - `qwen3-embedding` (embedding model, pulls automatically)
-
+  - `qwen2.5:7b` — distill model (classifies messages)
+  - `qwen3-embedding` — embedding model (auto-pulled on first use)
+- Memory data is stored at `~/.sleep-code/memory/lancedb`
 ## Architecture
 
 ```
