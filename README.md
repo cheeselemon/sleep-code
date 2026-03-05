@@ -21,6 +21,7 @@
 - **Codex integration** - Run OpenAI Codex sessions alongside Claude in the same thread
 - **Terminal app support** - Open sessions in Terminal.app or iTerm2 (macOS)
 - **Multi-platform** - Works with Telegram, Discord, and Slack
+- **Semantic memory** - Auto-distills conversations into a local vector DB (LanceDB + Ollama), searchable via MCP
 
 ## Platform Comparison
 
@@ -252,6 +253,45 @@ The hook is configured with a 24-hour timeout, so you can respond to permission 
 4. Messages you send in chat are forwarded to the terminal
 5. Permission requests are forwarded to chat for approval (Discord/Slack) via the hook
 
+## Semantic Memory
+
+Sleep Code automatically remembers important conversations — decisions, preferences, task assignments, and more — using a local vector database.
+
+### How It Works
+
+1. **Distill** — An LLM (Ollama `qwen2.5:7b`) classifies each message: store or skip
+2. **Embed** — Stored memories are embedded via Ollama (`qwen3-embedding`) into vectors
+3. **Store** — Vectors + metadata are saved in LanceDB (`~/.sleep-code/memory/lancedb`)
+4. **Recall** — Semantic search retrieves relevant memories by meaning, not just keywords
+
+### MCP Memory Server
+
+The memory store is exposed as an MCP server for use in Claude Code sessions:
+
+```bash
+# Start the MCP server (auto-configured in .mcp.json)
+npm run memory-server
+
+# Available MCP tools:
+# - sc_memory_search  — Semantic search ("vector DB decision" finds related memories)
+# - sc_memory_list    — List recent memories by project
+# - sc_memory_store   — Manually store a memory
+```
+
+### Memory Explorer
+
+A web UI for browsing and visualizing the memory graph:
+
+```bash
+cd explorer && npm run dev   # Opens at http://localhost:3000
+```
+
+### Requirements
+
+- [Ollama](https://ollama.com/) running locally with:
+  - `qwen2.5:7b` (distill model)
+  - `qwen3-embedding` (embedding model, pulls automatically)
+
 ## Architecture
 
 ```
@@ -260,6 +300,15 @@ src/
 │   ├── index.ts   # Main CLI entry
 │   ├── run.ts     # Session runner (PTY + JSONL watching)
 │   └── {telegram,discord,slack}.ts  # Platform setup/run
+├── memory/        # Semantic memory pipeline
+│   ├── memory-service.ts       # LanceDB store (vector + metadata)
+│   ├── memory-collector.ts     # Message ingestion from Discord
+│   ├── distill-service.ts      # LLM classifier (store or skip)
+│   ├── embedding-provider.ts   # Ollama embedding abstraction
+│   ├── consolidation-service.ts # Memory dedup and cleanup
+│   └── chat-provider.ts        # LLM chat abstraction
+├── mcp/
+│   └── memory-server.ts  # MCP server (HTTP transport)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js app and event handlers
 │   ├── channel-manager.ts  # Thread/channel management

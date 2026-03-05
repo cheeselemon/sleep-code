@@ -21,6 +21,7 @@
 - **Codex 연동** - 같은 스레드에서 Claude와 OpenAI Codex를 함께 실행
 - **터미널 앱 지원** - Terminal.app 또는 iTerm2에서 세션 열기 (macOS)
 - **멀티 플랫폼** - Telegram, Discord, Slack 지원
+- **시맨틱 메모리** - 대화를 자동 정제하여 로컬 벡터 DB(LanceDB + Ollama)에 저장, MCP로 검색 가능
 
 ## 플랫폼 비교
 
@@ -252,6 +253,46 @@ sleep-code hook setup
 4. 채팅에서 보낸 메시지를 터미널로 전달
 5. 훅을 통해 권한 요청을 채팅으로 전달하여 승인 (Discord/Slack)
 
+## 시맨틱 메모리
+
+Sleep Code는 중요한 대화 — 결정, 선호사항, 작업 지시 등 — 을 로컬 벡터 데이터베이스에 자동으로 기억합니다.
+
+### 작동 방식
+
+1. **정제(Distill)** — LLM(Ollama `qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵
+2. **임베딩(Embed)** — 저장할 메모리를 Ollama(`qwen3-embedding`)로 벡터화
+3. **저장(Store)** — 벡터 + 메타데이터를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
+4. **검색(Recall)** — 키워드가 아닌 의미 기반으로 관련 메모리 검색
+
+### MCP 메모리 서버
+
+메모리 저장소는 Claude Code 세션에서 사용할 수 있도록 MCP 서버로 제공됩니다:
+
+```bash
+# MCP 서버 시작 (.mcp.json에 자동 설정됨)
+npm run memory-server
+
+# 사용 가능한 MCP 도구:
+# - sc_memory_search  — 시맨틱 검색 ("벡터 DB 결정"으로 관련 메모리 검색)
+# - sc_memory_list    — 프로젝트별 최근 메모리 목록
+# - sc_memory_store   — 수동 메모리 저장
+```
+
+### 메모리 탐색기
+
+메모리 그래프를 시각화하는 웹 UI:
+
+```bash
+cd explorer && npm run dev   # http://localhost:3000 에서 열림
+```
+
+### 요구사항
+
+- [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다:
+  - `qwen2.5:7b` (정제 모델)
+  - `qwen3-embedding` (임베딩 모델, 자동 다운로드)
+
+
 ## 아키텍처
 
 ```
@@ -260,6 +301,15 @@ src/
 │   ├── index.ts   # 메인 CLI 진입점
 │   ├── run.ts     # 세션 러너 (PTY + JSONL 감시)
 │   └── {telegram,discord,slack}.ts  # 플랫폼별 설정/실행
+├── memory/        # 시맨틱 메모리 파이프라인
+│   ├── memory-service.ts       # LanceDB 저장소 (벡터 + 메타데이터)
+│   ├── memory-collector.ts     # Discord에서 메시지 수집
+│   ├── distill-service.ts      # LLM 분류기 (저장 또는 스킵)
+│   ├── embedding-provider.ts   # Ollama 임베딩 추상화
+│   ├── consolidation-service.ts # 메모리 중복제거 및 정리
+│   └── chat-provider.ts        # LLM 채팅 추상화
+├── mcp/
+│   └── memory-server.ts  # MCP 서버 (HTTP 전송)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js 앱 및 이벤트 핸들러
 │   ├── channel-manager.ts  # 스레드/채널 관리
