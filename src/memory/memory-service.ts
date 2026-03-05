@@ -163,7 +163,7 @@ export class MemoryService {
     const similar = await this.searchByVector(vector, {
       project: options.project,
       limit: 3,
-      minScore: 0.85,
+      minScore: 0.90,
     });
 
     if (similar.length > 0) {
@@ -324,6 +324,27 @@ export class MemoryService {
     if (!this.table) return;
     await this.table.delete(`id = '${id}'`);
     log.info({ id }, 'Removed memory unit');
+  }
+
+  // ── Bulk Read ──────────────────────────────────────────
+
+  async listProjects(): Promise<string[]> {
+    if (!this.table) return [];
+    const results = await this.table.query().select(['project']).toArray();
+    const projects = new Set(results.map((r: Record<string, unknown>) => r.project as string));
+    return [...projects] as string[];
+  }
+
+  async getAllWithVectors(project: string): Promise<MemoryRecord[]> {
+    if (!this.table) return [];
+    const results = await this.table
+      .query()
+      .where(`project = '${project}'`)
+      .toArray();
+    return results.map((row: Record<string, unknown>) => ({
+      ...this.mapRowToUnit(row),
+      vector: Array.from(row.vector as Float32Array | number[]),
+    }));
   }
 
   // ── Stats ────────────────────────────────────────────────

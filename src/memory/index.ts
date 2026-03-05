@@ -40,3 +40,10 @@ export {
   type MemoryCollectorOptions,
   MemoryCollector,
 } from './memory-collector.js';
+
+export {
+  type ConsolidationOptions,
+  type ConsolidationReport,
+  type ProjectReport,
+  ConsolidationService,
+} from './consolidation-service.js';

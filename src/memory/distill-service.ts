@@ -38,7 +38,10 @@ Rules:
 - Casual chat, greetings, simple acknowledgments = JUDGE BY CONTEXT
   - "ㅇㅇ" after "이거 LanceDB로 할까?" = decision confirmation → REMEMBER
   - "ㅇㅇ" after "밥 먹었어?" = casual → SKIP
+- Agent (Claude/Codex) progress reports = SKIP (e.g., "확인 중", "시작했다", "검증 완료", "reviewing now")
+  - Only store agent messages if they contain a NEW decision, finding, or recommendation
 - Keep the original language (Korean/English) in distilled text
+- NEVER output Chinese or Japanese text. Always write in Korean or English.
 - kind must be one of: fact, task, observation, proposal, feedback, dialog_summary, decision
 - priority: 0-10 (10 = critical decision, 0 = trivial)
 - topicKey: short topic tag in English (e.g., "vector-db", "refund-logic", "api-cost")

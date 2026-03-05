@@ -5,6 +5,7 @@ import {
   OllamaChatProvider,
   ChatService,
   DistillService,
+  ConsolidationService,
 } from '../memory/index.js';
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -45,7 +46,7 @@ async function memorySearch(query: string, project?: string) {
     console.log(`[${r.kind}] (score: ${r.score.toFixed(3)}, priority: ${r.priority}, speaker: ${r.speaker})`);
     console.log(`  ${r.text}`);
     if (r.topicKey) console.log(`  topic: ${r.topicKey}`);
-    console.log(`  created: ${r.createdAt}\n`);
+    console.log(`  id: ${r.id}  created: ${r.createdAt}\n`);
   }
 
   memoryService.shutdown();
@@ -144,6 +145,79 @@ async function memoryDistillTest() {
   }
 }
 
+async function memoryDelete(id: string) {
+  const { memoryService } = await createServices();
+
+  // Verify it exists first
+  const projects = await memoryService.listProjects();
+  let found = false;
+  for (const project of projects) {
+    const memories = await memoryService.getByProject(project, { limit: 1000 });
+    const match = memories.find((m) => m.id === id);
+    if (match) {
+      console.log(`Found: [${match.kind}] "${match.text}"`);
+      console.log(`  project: ${match.project}, priority: ${match.priority}`);
+      await memoryService.remove(id);
+      console.log(`Deleted: ${id}`);
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    console.error(`Memory not found: ${id}`);
+  }
+
+  memoryService.shutdown();
+}
+
+async function memoryConsolidate(project: string | undefined, dryRun: boolean) {
+  const { memoryService } = await createServices();
+  const consolidation = new ConsolidationService(memoryService);
+
+  if (dryRun) {
+    console.log('=== DRY RUN (no changes will be made) ===\n');
+  }
+
+  const report = await consolidation.consolidate({ project, dryRun });
+
+  for (const pr of report.projectReports) {
+    console.log(`\nProject: ${pr.project} (${pr.beforeCount} memories)`);
+
+    if (pr.mergeDetails.length > 0) {
+      console.log(`  Merges: ${pr.merged}`);
+      for (const m of pr.mergeDetails) {
+        console.log(`    [merge] sim=${(m.similarity * 100).toFixed(1)}%`);
+        console.log(`      keep:   "${m.keptText.slice(0, 80)}"`);
+        console.log(`      delete: "${m.deletedText.slice(0, 80)}"`);
+      }
+    }
+
+    if (pr.cleanDetails.length > 0) {
+      console.log(`  Cleanup: ${pr.cleaned}`);
+      for (const c of pr.cleanDetails) {
+        console.log(`    [${c.reason}] ${c.kind}, priority=${c.priority}, speaker=${c.speaker}`);
+        console.log(`      "${c.text.slice(0, 80)}"`);
+      }
+    }
+
+    if (pr.merged === 0 && pr.cleaned === 0) {
+      console.log('  Nothing to consolidate.');
+    }
+
+    console.log(`  Result: ${pr.beforeCount} → ${pr.afterCount}`);
+  }
+
+  console.log(`\n--- Summary ---`);
+  console.log(`Merged: ${report.totalMerged}, Cleaned: ${report.totalCleaned}, Remaining: ${report.totalRemaining}`);
+
+  if (dryRun && (report.totalMerged > 0 || report.totalCleaned > 0)) {
+    console.log('\nRe-run without --dry-run to apply changes.');
+  }
+
+  memoryService.shutdown();
+}
+
 // ── Entry ────────────────────────────────────────────────────
 
 export async function memoryCommand(args: string[]): Promise<void> {
@@ -188,13 +262,33 @@ export async function memoryCommand(args: string[]): Promise<void> {
       break;
     }
 
+    case 'delete': {
+      const id = args[1];
+      if (!id) {
+        console.error('Usage: sleep-code memory delete <id>');
+        process.exit(1);
+      }
+      await memoryDelete(id);
+      break;
+    }
+
+    case 'consolidate': {
+      const projectIdx = args.indexOf('--project');
+      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+      const dryRun = args.includes('--dry-run');
+      await memoryConsolidate(project, dryRun);
+      break;
+    }
+
     default: {
       console.log(`
 Memory commands:
   memory search <query> [--project <name>]                 Search memories
   memory store <text> [--project <name>] [--kind <kind>]   Store a memory
+  memory delete <id>                                        Delete a memory by ID
   memory stats <project>                                    Show memory stats
-  memory distill-test                                       Test distill with qwen3:4b
+  memory distill-test                                       Test distill with qwen2.5:7b
+  memory consolidate [--project <name>] [--dry-run]        Consolidate memories
 
 Kinds: fact, task, observation, proposal, feedback, decision, dialog_summary
 `);
