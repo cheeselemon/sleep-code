@@ -218,6 +218,181 @@ async function memoryConsolidate(project: string | undefined, dryRun: boolean) {
   memoryService.shutdown();
 }
 
+async function memoryGraph(project: string | undefined, threshold: number) {
+  const { memoryService } = await createServices();
+
+  const projects = project ? [project] : await memoryService.listProjects();
+  console.log(`Loading memories from ${projects.length} project(s)...`);
+
+  // Load all memories with vectors
+  interface NodeData {
+    id: string; text: string; project: string; kind: string;
+    speaker: string; priority: number; topicKey: string; createdAt: string;
+    vector: number[];
+  }
+  const allNodes: NodeData[] = [];
+
+  for (const p of projects) {
+    const records = await memoryService.getAllWithVectors(p);
+    for (const r of records) {
+      allNodes.push({
+        id: r.id, text: r.text, project: r.project, kind: r.kind,
+        speaker: r.speaker, priority: r.priority,
+        topicKey: r.topicKey ?? '', createdAt: r.createdAt, vector: r.vector,
+      });
+    }
+  }
+
+  console.log(`${allNodes.length} memories loaded. Computing similarities...`);
+
+  // Cosine similarity
+  function cosine(a: number[], b: number[]): number {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      na += a[i] * a[i];
+      nb += b[i] * b[i];
+    }
+    const denom = Math.sqrt(na) * Math.sqrt(nb);
+    return denom === 0 ? 0 : dot / denom;
+  }
+
+  // Compute edges
+  const edges: { source: string; target: string; similarity: number }[] = [];
+  for (let i = 0; i < allNodes.length; i++) {
+    for (let j = i + 1; j < allNodes.length; j++) {
+      const sim = cosine(allNodes[i].vector, allNodes[j].vector);
+      if (sim >= threshold) {
+        edges.push({ source: allNodes[i].id, target: allNodes[j].id, similarity: sim });
+      }
+    }
+  }
+
+  console.log(`${edges.length} edges (threshold: ${threshold})`);
+
+  // Build graph JSON (strip vectors)
+  const nodes = allNodes.map(({ vector: _, ...rest }) => rest);
+  const graphData = JSON.stringify({ nodes, edges });
+
+  const PROJECT_COLORS: Record<string, string> = {
+    'sleep-code': '#4A90D9',
+    'cpik-inc': '#50C878',
+    'tpt-strategy': '#F5A623',
+    'personal-memory': '#9B59B6',
+  };
+
+  const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Memory Graph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: -apple-system, sans-serif; }
+  svg { width: 100vw; height: 100vh; }
+  .tooltip {
+    position: absolute; background: #16213e; color: #e8e8e8; padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; max-width: 360px; pointer-events: none;
+    border: 1px solid #334; line-height: 1.5; display: none; z-index: 10;
+  }
+  .tooltip .kind { color: #7ec8e3; font-weight: 600; }
+  .tooltip .project { color: #ccc; font-size: 11px; }
+  .legend {
+    position: fixed; top: 16px; left: 16px; background: #16213e; padding: 12px 16px;
+    border-radius: 8px; border: 1px solid #334; color: #ccc; font-size: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .stats {
+    position: fixed; bottom: 16px; left: 16px; color: #666; font-size: 11px;
+  }
+</style>
+</head><body>
+<div class="tooltip" id="tooltip"></div>
+<div class="legend" id="legend"></div>
+<div class="stats" id="stats"></div>
+<svg id="graph"></svg>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const data = ${graphData};
+const colors = ${JSON.stringify(PROJECT_COLORS)};
+const defaultColor = '#888';
+
+// Legend
+const projectSet = [...new Set(data.nodes.map(n => n.project))];
+document.getElementById('legend').innerHTML =
+  '<div style="font-weight:600;margin-bottom:6px">Projects</div>' +
+  projectSet.map(p =>
+    '<div class="legend-item"><div class="legend-dot" style="background:' +
+    (colors[p]||defaultColor) + '"></div>' + p + '</div>'
+  ).join('');
+
+document.getElementById('stats').textContent =
+  data.nodes.length + ' memories, ' + data.edges.length + ' connections';
+
+const width = window.innerWidth, height = window.innerHeight;
+const svg = d3.select('#graph').attr('viewBox', [0, 0, width, height]);
+const g = svg.append('g');
+
+// Zoom
+svg.call(d3.zoom().scaleExtent([0.1, 8]).on('zoom', e => g.attr('transform', e.transform)));
+
+const sim = d3.forceSimulation(data.nodes)
+  .force('link', d3.forceLink(data.edges).id(d => d.id).distance(80).strength(d => d.similarity * 0.3))
+  .force('charge', d3.forceManyBody().strength(-120))
+  .force('center', d3.forceCenter(width/2, height/2))
+  .force('collision', d3.forceCollide().radius(d => 4 + d.priority * 1.5));
+
+const link = g.append('g').selectAll('line').data(data.edges).join('line')
+  .attr('stroke', '#334').attr('stroke-opacity', 0.5)
+  .attr('stroke-width', d => 0.5 + (d.similarity - 0.7) * 5);
+
+const node = g.append('g').selectAll('circle').data(data.nodes).join('circle')
+  .attr('r', d => 4 + d.priority * 1.2)
+  .attr('fill', d => colors[d.project] || defaultColor)
+  .attr('stroke', '#fff').attr('stroke-width', 0.5)
+  .attr('cursor', 'grab')
+  .call(d3.drag()
+    .on('start', (e,d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+    .on('drag', (e,d) => { d.fx=e.x; d.fy=e.y; })
+    .on('end', (e,d) => { if (!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; })
+  );
+
+const label = g.append('g').selectAll('text').data(data.nodes).join('text')
+  .text(d => d.topicKey || d.text.slice(0, 15))
+  .attr('font-size', 9).attr('fill', '#888').attr('dx', 10).attr('dy', 3)
+  .style('pointer-events', 'none');
+
+// Tooltip
+const tooltip = document.getElementById('tooltip');
+node.on('mouseover', (e, d) => {
+  tooltip.style.display = 'block';
+  tooltip.innerHTML = '<span class="kind">[' + d.kind + ']</span> priority: ' + d.priority +
+    '<br>' + d.text +
+    '<br><span class="project">' + d.project + ' | ' + d.speaker + ' | ' + d.createdAt.slice(0,10) + '</span>';
+}).on('mousemove', e => {
+  tooltip.style.left = (e.pageX + 14) + 'px';
+  tooltip.style.top = (e.pageY - 14) + 'px';
+}).on('mouseout', () => { tooltip.style.display = 'none'; });
+
+sim.on('tick', () => {
+  link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+  node.attr('cx',d=>d.x).attr('cy',d=>d.y);
+  label.attr('x',d=>d.x).attr('y',d=>d.y);
+});
+</script></body></html>`;
+
+  const { writeFileSync } = await import('fs');
+  const outPath = '/tmp/sleep-code-memory-graph.html';
+  writeFileSync(outPath, html);
+  console.log(`Graph saved: ${outPath}`);
+
+  // Open in browser
+  const { exec } = await import('child_process');
+  exec(`open "${outPath}"`);
+
+  memoryService.shutdown();
+}
+
 // ── Entry ────────────────────────────────────────────────────
 
 export async function memoryCommand(args: string[]): Promise<void> {
@@ -280,6 +455,15 @@ export async function memoryCommand(args: string[]): Promise<void> {
       break;
     }
 
+    case 'graph': {
+      const projectIdx = args.indexOf('--project');
+      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+      const threshIdx = args.indexOf('--threshold');
+      const threshold = threshIdx !== -1 ? parseFloat(args[threshIdx + 1]) : 0.7;
+      await memoryGraph(project, threshold);
+      break;
+    }
+
     default: {
       console.log(`
 Memory commands:
@@ -289,6 +473,7 @@ Memory commands:
   memory stats <project>                                    Show memory stats
   memory distill-test                                       Test distill with qwen2.5:7b
   memory consolidate [--project <name>] [--dry-run]        Consolidate memories
+  memory graph [--project <name>] [--threshold 0.7]        Visualize memory graph
 
 Kinds: fact, task, observation, proposal, feedback, decision, dialog_summary
 `);

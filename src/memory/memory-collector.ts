@@ -107,6 +107,12 @@ export class MemoryCollector {
         return;
       }
 
+      // Agent observations are almost always noise (status updates, not decisions)
+      if ((msg.speaker === 'claude' || msg.speaker === 'codex') && result.kind === 'observation') {
+        log.debug({ speaker: msg.speaker, text: result.distilled.slice(0, 50) }, 'Skipped agent observation');
+        return;
+      }
+
       const id = await this.memory.storeIfNew(result.distilled, {
         project: msg.project ?? this.defaultProject,
         kind: result.kind as MemoryKind,

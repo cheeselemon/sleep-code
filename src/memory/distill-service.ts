@@ -150,6 +150,14 @@ export class DistillService {
       if (!shouldStore) return { ...DEFAULT_SKIP, shouldStore: false };
 
       if (typeof parsed.distilled !== 'string' || parsed.distilled.length === 0) return null;
+
+      // Reject CJK language errors (Chinese/Japanese without Korean)
+      const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]/.test(parsed.distilled);
+      const hasKorean = /[\uac00-\ud7af]/.test(parsed.distilled);
+      if (hasCJK && !hasKorean) {
+        log.warn({ text: parsed.distilled.slice(0, 80) }, 'Rejected CJK language error in distill');
+        return { ...DEFAULT_SKIP, shouldStore: false };
+      }
       if (!VALID_KINDS.has(parsed.kind)) return null;
 
       const priority = Number(parsed.priority);
