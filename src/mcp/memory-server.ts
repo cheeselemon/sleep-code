@@ -32,8 +32,10 @@ function formatSearchResult(r: MemorySearchResult): string {
     r.speaker !== 'system' ? `speaker:${r.speaker}` : '',
     r.topicKey ? `topic:${r.topicKey}` : '',
     `project:${r.project}`,
+    r.status === 'superseded' ? 'SUPERSEDED' : '',
+    r.supersedesId ? `supersedes:${r.supersedesId.slice(0, 8)}` : '',
   ].filter(Boolean).join(', ');
-  return `[${meta}]\n  ${r.text}\n  (${r.createdAt})`;
+  return `[${meta}] id:${r.id}\n  ${r.text}\n  (${r.createdAt})`;
 }
 
 function formatMemoryUnit(m: MemoryUnit): string {
@@ -42,8 +44,10 @@ function formatMemoryUnit(m: MemoryUnit): string {
     `priority:${m.priority}`,
     m.speaker !== 'system' ? `speaker:${m.speaker}` : '',
     m.topicKey ? `topic:${m.topicKey}` : '',
+    m.status === 'superseded' ? 'SUPERSEDED' : '',
+    m.supersedesId ? `supersedes:${m.supersedesId.slice(0, 8)}` : '',
   ].filter(Boolean).join(', ');
-  return `[${meta}]\n  ${m.text}\n  (${m.createdAt})`;
+  return `[${meta}] id:${m.id}\n  ${m.text}\n  (${m.createdAt})`;
 }
 
 // ── Server Factory ──────────────────────────────────────────
@@ -65,12 +69,14 @@ function createMcpServerWithTools(memoryService: MemoryService): McpServer {
         query: z.string().describe('Search query (natural language)'),
         project: z.string().optional().describe('Filter by project name (e.g. "sleep-code", "cpik-inc")'),
         limit: z.number().optional().describe('Max results (default 5)'),
+        includeSuperseded: z.boolean().optional().describe('Include superseded memories (default false)'),
       }),
     },
-    async ({ query, project, limit }) => {
+    async ({ query, project, limit, includeSuperseded }) => {
       const results = await memoryService.search(query, {
         project,
         limit: limit ?? 5,
+        includeSuperseded: includeSuperseded ?? false,
       });
 
       if (results.length === 0) {
@@ -89,11 +95,13 @@ function createMcpServerWithTools(memoryService: MemoryService): McpServer {
       inputSchema: z.object({
         project: z.string().describe('Project name (e.g. "sleep-code", "cpik-inc")'),
         limit: z.number().optional().describe('Max results (default 20)'),
+        includeSuperseded: z.boolean().optional().describe('Include superseded memories (default false)'),
       }),
     },
-    async ({ project, limit }) => {
+    async ({ project, limit, includeSuperseded }) => {
       const results = await memoryService.getByProject(project, {
         limit: limit ?? 20,
+        includeSuperseded: includeSuperseded ?? false,
       });
 
       if (results.length === 0) {
@@ -132,6 +140,65 @@ function createMcpServerWithTools(memoryService: MemoryService): McpServer {
         return { content: [{ type: 'text', text: `Stored memory: ${id}` }] };
       }
       return { content: [{ type: 'text', text: 'Similar memory already exists (reinforced priority).' }] };
+    },
+  );
+
+  server.registerTool(
+    'sc_memory_update',
+    {
+      description: 'Update fields of an existing memory. Use to correct text, change priority, fix speaker attribution, or update topicKey.',
+      inputSchema: z.object({
+        id: z.string().describe('Memory ID to update'),
+        text: z.string().optional().describe('New text content'),
+        kind: z.enum(VALID_KINDS as [string, ...string[]]).optional().describe('New memory type'),
+        speaker: z.enum(VALID_SPEAKERS as [string, ...string[]]).optional().describe('New speaker'),
+        priority: z.number().min(0).max(10).optional().describe('New priority 0-10'),
+        topicKey: z.string().optional().describe('New topic tag'),
+      }),
+    },
+    async ({ id, text, kind, speaker, priority, topicKey }) => {
+      const fields: Record<string, unknown> = {};
+      if (text !== undefined) fields.text = text;
+      if (kind !== undefined) fields.kind = kind;
+      if (speaker !== undefined) fields.speaker = speaker;
+      if (priority !== undefined) fields.priority = priority;
+      if (topicKey !== undefined) fields.topicKey = topicKey;
+
+      if (Object.keys(fields).length === 0) {
+        return { content: [{ type: 'text', text: 'No fields to update. Provide at least one of: text, kind, speaker, priority, topicKey.' }] };
+      }
+
+      await memoryService.updateFields(id, fields as Parameters<typeof memoryService.updateFields>[1]);
+      return { content: [{ type: 'text', text: `Updated memory ${id}: ${Object.keys(fields).join(', ')}` }] };
+    },
+  );
+
+  server.registerTool(
+    'sc_memory_delete',
+    {
+      description: 'Delete a memory by ID. Use when a memory is wrong, outdated, or no longer relevant.',
+      inputSchema: z.object({
+        id: z.string().describe('Memory ID to delete'),
+      }),
+    },
+    async ({ id }) => {
+      await memoryService.remove(id);
+      return { content: [{ type: 'text', text: `Deleted memory: ${id}` }] };
+    },
+  );
+
+  server.registerTool(
+    'sc_memory_supersede',
+    {
+      description: 'Mark an old memory as superseded by a new one. Use when new info replaces old info (e.g., time change, name correction). The old memory is preserved but hidden from default search.',
+      inputSchema: z.object({
+        oldId: z.string().describe('ID of the old memory to supersede'),
+        newId: z.string().describe('ID of the new memory that replaces it'),
+      }),
+    },
+    async ({ oldId, newId }) => {
+      await memoryService.markSuperseded(oldId, newId);
+      return { content: [{ type: 'text', text: `Superseded: ${oldId} → ${newId}` }] };
     },
   );
 

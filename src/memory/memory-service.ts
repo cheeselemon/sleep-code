@@ -14,7 +14,7 @@ const DB_PATH = join(MEMORY_DIR, 'lancedb');
 // ── Types ────────────────────────────────────────────────────
 
 export type MemoryKind = 'fact' | 'task' | 'observation' | 'proposal' | 'feedback' | 'dialog_summary' | 'decision';
-export type MemoryStatus = 'open' | 'in_progress' | 'snoozed' | 'resolved' | 'expired';
+export type MemoryStatus = 'open' | 'in_progress' | 'snoozed' | 'resolved' | 'expired' | 'superseded';
 export type MemorySource = 'user' | 'heartbeat' | 'session' | 'system';
 export type MemorySpeaker = 'user' | 'claude' | 'codex' | 'system';
 
@@ -32,6 +32,9 @@ export interface MemoryUnit {
   threadId?: string;
   snoozeUntil?: string;      // ISO timestamp
   expiresAt?: string;        // ISO timestamp
+  supersedesId?: string;     // this memory supersedes (replaces) an older one
+  supersededById?: string;   // this memory was superseded by a newer one
+  supersededAt?: string;     // ISO timestamp when superseded
   createdAt: string;
   updatedAt: string;
   // Embedding metadata
@@ -53,6 +56,7 @@ export interface SearchOptions {
   kinds?: MemoryKind[];
   statuses?: MemoryStatus[];
   limit?: number;
+  includeSuperseded?: boolean;
 }
 
 // ── Service ──────────────────────────────────────────────────
@@ -86,8 +90,42 @@ export class MemoryService {
     if (tables.includes(TABLE_NAME)) {
       this.table = await this.db.openTable(TABLE_NAME);
       log.info('Opened existing memory table');
+      await this.migrateSupersedeCols();
     } else {
       log.info('Memory table will be created on first insert');
+    }
+  }
+
+  private async migrateSupersedeCols(): Promise<void> {
+    if (!this.table) return;
+    const supersedeCols = ['supersedesId', 'supersededById', 'supersededAt'];
+    try {
+      const schema = await this.table.schema();
+      const fieldNames = schema.fields.map((f: { name: string }) => f.name);
+      const existing = supersedeCols.filter((col) => fieldNames.includes(col));
+      const missing = supersedeCols.filter((col) => !fieldNames.includes(col));
+
+      if (existing.length === supersedeCols.length && missing.length === 0) {
+        // All columns present — verify with a test read
+        try {
+          await this.table.query().select(supersedeCols).limit(1).toArray();
+          return; // Healthy
+        } catch {
+          // Corrupt (null data) — drop and re-add
+          log.warn('Supersede columns corrupted, recreating...');
+          await this.table.dropColumns(existing);
+        }
+      } else if (existing.length > 0) {
+        await this.table.dropColumns(existing);
+      }
+
+      // Add all columns with proper empty-string default
+      for (const col of supersedeCols) {
+        await this.table.addColumns([{ name: col, valueSql: "''" }]);
+      }
+      log.info({ columns: supersedeCols }, 'Supersede columns ready');
+    } catch (err) {
+      log.warn({ err }, 'Supersede column migration failed — supersede features disabled');
     }
   }
 
@@ -115,6 +153,7 @@ export class MemoryService {
       threadId?: string;
       expiresAt?: string;
       vector?: number[];       // pre-computed vector to avoid re-embedding
+      supersedesId?: string;   // ID of the memory this one supersedes
     }
   ): Promise<string> {
     const vector = options.vector ?? await this.embedding.embedSingle(text);
@@ -136,6 +175,9 @@ export class MemoryService {
       threadId: options.threadId ?? '',
       snoozeUntil: '',
       expiresAt: options.expiresAt ?? '',
+      supersedesId: options.supersedesId ?? '',
+      supersededById: '',
+      supersededAt: '',
       createdAt: now,
       updatedAt: now,
       embeddingModel: spec.modelId,
@@ -268,6 +310,8 @@ export class MemoryService {
     if (options?.statuses?.length) {
       const statusList = options.statuses.map((s) => `'${escapeSqlLiteral(s)}'`).join(', ');
       filters.push(`status IN (${statusList})`);
+    } else if (!options?.includeSuperseded) {
+      filters.push(`status != 'superseded'`);
     }
 
     let queryBuilder = this.table.search(vector).distanceType('cosine').limit(fetchLimit);
@@ -315,7 +359,7 @@ export class MemoryService {
 
   async getByProject(
     project: string,
-    options?: { statuses?: MemoryStatus[]; limit?: number }
+    options?: { statuses?: MemoryStatus[]; limit?: number; includeSuperseded?: boolean }
   ): Promise<MemoryUnit[]> {
     if (!this.table) return [];
 
@@ -323,6 +367,8 @@ export class MemoryService {
     if (options?.statuses?.length) {
       const statusList = options.statuses.map((s) => `'${s}'`).join(', ');
       filters.push(`status IN (${statusList})`);
+    } else if (!options?.includeSuperseded) {
+      filters.push(`status != 'superseded'`);
     }
 
     const results = await this.table
@@ -349,6 +395,9 @@ export class MemoryService {
       threadId: row.threadId as string,
       snoozeUntil: row.snoozeUntil as string,
       expiresAt: row.expiresAt as string,
+      supersedesId: (row.supersedesId as string) || undefined,
+      supersededById: (row.supersededById as string) || undefined,
+      supersededAt: (row.supersededAt as string) || undefined,
       createdAt: row.createdAt as string,
       updatedAt: row.updatedAt as string,
       embeddingModel: row.embeddingModel as string,
@@ -406,6 +455,139 @@ export class MemoryService {
       if (tk && tk.length > 0) topics.add(tk);
     }
     return [...topics].sort();
+  }
+
+  // ── Supersede ──────────────────────────────────────────
+
+  async markSuperseded(oldId: string, newId: string): Promise<void> {
+    if (!this.table) return;
+    const now = new Date().toISOString();
+    try {
+      await this.table.update({
+        where: `id = '${escapeSqlLiteral(oldId)}'`,
+        values: {
+          status: 'superseded' as MemoryStatus,
+          supersededById: newId,
+          supersededAt: now,
+          updatedAt: now,
+        },
+      });
+      await this.table.update({
+        where: `id = '${escapeSqlLiteral(newId)}'`,
+        values: {
+          supersedesId: oldId,
+          updatedAt: now,
+        },
+      });
+      log.info({ oldId, newId }, 'Marked memory as superseded');
+    } catch (err) {
+      log.error({ err, oldId, newId }, 'Failed to mark superseded — reverting');
+      // Best-effort rollback: restore old memory to open
+      try {
+        await this.table.update({
+          where: `id = '${escapeSqlLiteral(oldId)}'`,
+          values: { status: 'open' as MemoryStatus, supersededById: '', supersededAt: '', updatedAt: now },
+        });
+      } catch { /* swallow rollback error */ }
+    }
+  }
+
+  async undoSupersede(id: string): Promise<void> {
+    if (!this.table) return;
+    const now = new Date().toISOString();
+    // Find the memory and its linked new memory
+    const rows = await this.table.query()
+      .where(`id = '${escapeSqlLiteral(id)}'`)
+      .limit(1)
+      .toArray();
+    if (rows.length === 0) return;
+    const row = rows[0];
+    const linkedNewId = row.supersededById as string;
+
+    // Restore this memory to open
+    await this.table.update({
+      where: `id = '${escapeSqlLiteral(id)}'`,
+      values: { status: 'open' as MemoryStatus, supersededById: '', supersededAt: '', updatedAt: now },
+    });
+    // Clear the link on the new memory
+    if (linkedNewId) {
+      await this.table.update({
+        where: `id = '${escapeSqlLiteral(linkedNewId)}'`,
+        values: { supersedesId: '', updatedAt: now },
+      });
+    }
+    log.info({ id, linkedNewId }, 'Undo supersede');
+  }
+
+  async findSupersedeCandidate(
+    vector: number[],
+    options: {
+      project: string;
+      topicKey?: string;
+      anchorTerms?: string[];
+      kind?: MemoryKind;
+    },
+  ): Promise<{ id: string; score: number } | null> {
+    if (!this.table) return null;
+
+    // Vector candidates (cosine >= 0.7, limit 10)
+    const vectorCandidates = await this.searchByVector(vector, {
+      project: options.project,
+      limit: 10,
+      minScore: 0.7,
+    });
+
+    // Filter: active only + within 30 days
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const activeCandidates = vectorCandidates.filter(
+      (c) => c.status !== 'superseded' && c.createdAt >= thirtyDaysAgo,
+    );
+
+    if (activeCandidates.length === 0) return null;
+
+    const anchorTerms = options.anchorTerms ?? [];
+    let best: { id: string; score: number } | null = null;
+
+    for (const candidate of activeCandidates) {
+      // Hard gate: vector must be >= 0.78
+      if (candidate.score < 0.78) continue;
+
+      let score = 0;
+
+      // topicKey exact match: +0.30
+      const topicMatch = !!(options.topicKey && candidate.topicKey === options.topicKey);
+      if (topicMatch) score += 0.30;
+
+      // anchor term overlap: +0.20
+      let anchorOverlap = 0;
+      if (anchorTerms.length > 0) {
+        const candidateText = candidate.text.toLowerCase();
+        const matches = anchorTerms.filter((t) => candidateText.includes(t.toLowerCase()));
+        anchorOverlap = matches.length / anchorTerms.length;
+        score += anchorOverlap * 0.20;
+      }
+
+      // Hard gate: topicKey match OR anchor overlap >= 0.5
+      if (!topicMatch && anchorOverlap < 0.5) continue;
+
+      // vector similarity: +0.40 (scaled from 0.7~1.0 → 0~0.40)
+      const vecContrib = Math.max(0, (candidate.score - 0.7) / 0.3) * 0.40;
+      score += vecContrib;
+
+      // kind compatibility: +0.10
+      if (options.kind && candidate.kind === options.kind) score += 0.10;
+
+      if (!best || score > best.score) {
+        best = { id: candidate.id, score };
+      }
+    }
+
+    // Threshold: 0.72
+    return best && best.score >= 0.72 ? best : null;
+  }
+
+  async embedForSearch(text: string): Promise<number[]> {
+    return this.embedding.embedSingle(text);
   }
 
   // ── Delete ───────────────────────────────────────────────

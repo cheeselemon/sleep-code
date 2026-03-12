@@ -121,11 +121,46 @@ export class MemoryCollector {
         return;
       }
 
+      const speakerResolved = (result.speaker as MemorySpeaker) ?? msg.speaker;
+
+      // Supersede path: if distill detected an update with anchor terms
+      if (result.memoryAction === 'update' && result.anchorTerms && result.anchorTerms.length > 0) {
+        const vector = await this.memory.embedForSearch(result.distilled);
+        const candidate = await this.memory.findSupersedeCandidate(vector, {
+          project,
+          topicKey: result.topicKey,
+          anchorTerms: result.anchorTerms,
+          kind: result.kind as MemoryKind,
+        });
+
+        if (candidate) {
+          const newId = await this.memory.store(result.distilled, {
+            project,
+            kind: result.kind as MemoryKind,
+            source: 'session',
+            speaker: speakerResolved,
+            priority: result.priority,
+            topicKey: result.topicKey,
+            channelId: msg.channelId,
+            threadId: msg.threadId,
+            vector,
+            supersedesId: candidate.id,
+          });
+          await this.memory.markSuperseded(candidate.id, newId);
+          log.info(
+            { newId, oldId: candidate.id, score: candidate.score, topic: result.topicKey },
+            'Memory superseded',
+          );
+          return;
+        }
+        // No candidate found — fall through to normal create
+      }
+
       const id = await this.memory.storeIfNew(result.distilled, {
         project,
         kind: result.kind as MemoryKind,
         source: 'session',
-        speaker: (result.speaker as MemorySpeaker) ?? msg.speaker,
+        speaker: speakerResolved,
         priority: result.priority,
         topicKey: result.topicKey,
         channelId: msg.channelId,

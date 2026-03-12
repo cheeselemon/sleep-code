@@ -464,6 +464,40 @@ async function memoryRetag(project: string | undefined, dryRun: boolean) {
   memoryService.shutdown();
 }
 
+async function memorySupersede(oldId: string, newId: string) {
+  const { memoryService } = await createServices();
+
+  // Verify both exist
+  const projects = await memoryService.listProjects();
+  let oldFound = false, newFound = false;
+  for (const p of projects) {
+    const memories = await memoryService.getByProject(p, { limit: 1000, includeSuperseded: true });
+    for (const m of memories) {
+      if (m.id === oldId) { oldFound = true; console.log(`Old: [${m.kind}] "${m.text.slice(0, 80)}"`); }
+      if (m.id === newId) { newFound = true; console.log(`New: [${m.kind}] "${m.text.slice(0, 80)}"`); }
+    }
+  }
+
+  if (!oldFound || !newFound) {
+    if (!oldFound) console.error(`Old memory not found: ${oldId}`);
+    if (!newFound) console.error(`New memory not found: ${newId}`);
+    memoryService.shutdown();
+    return;
+  }
+
+  await memoryService.markSuperseded(oldId, newId);
+  console.log(`Done: ${oldId} superseded by ${newId}`);
+  memoryService.shutdown();
+}
+
+async function memoryUnsupersede(id: string) {
+  const { memoryService } = await createServices();
+
+  await memoryService.undoSupersede(id);
+  console.log(`Done: ${id} restored to open`);
+  memoryService.shutdown();
+}
+
 // ── Entry ────────────────────────────────────────────────────
 
 export async function memoryCommand(args: string[]): Promise<void> {
@@ -534,6 +568,27 @@ export async function memoryCommand(args: string[]): Promise<void> {
       break;
     }
 
+    case 'supersede': {
+      const oldId = args[1];
+      const newId = args[2];
+      if (!oldId || !newId) {
+        console.error('Usage: sleep-code memory supersede <oldId> <newId>');
+        process.exit(1);
+      }
+      await memorySupersede(oldId, newId);
+      break;
+    }
+
+    case 'unsupersede': {
+      const id = args[1];
+      if (!id) {
+        console.error('Usage: sleep-code memory unsupersede <id>');
+        process.exit(1);
+      }
+      await memoryUnsupersede(id);
+      break;
+    }
+
     case 'graph': {
       const projectIdx = args.indexOf('--project');
       const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
@@ -549,6 +604,8 @@ Memory commands:
   memory search <query> [--project <name>]                 Search memories
   memory store <text> [--project <name>] [--kind <kind>]   Store a memory
   memory delete <id>                                        Delete a memory by ID
+  memory supersede <oldId> <newId>                          Mark oldId as superseded by newId
+  memory unsupersede <id>                                   Undo supersede, restore to open
   memory stats <project>                                    Show memory stats
   memory distill-test                                       Test distill with qwen2.5:7b
   memory consolidate [--project <name>] [--dry-run]        Consolidate memories

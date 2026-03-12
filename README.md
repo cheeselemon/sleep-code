@@ -255,47 +255,85 @@ The hook is configured with a 24-hour timeout, so you can respond to permission 
 
 ## Semantic Memory (Optional)
 
-Sleep Code can automatically remember important conversations — decisions, preferences, task assignments, and more — using a local vector database. Memory collection is **optional** and requires [Ollama](https://ollama.com/) running locally. If Ollama is not available, the bot runs normally without memory features.
+Sleep Code automatically remembers important conversations — decisions, preferences, task assignments, and more — using a local vector database. Memory is **optional** and requires [Ollama](https://ollama.com/) running locally. If Ollama is not available, the bot runs normally without memory features.
 
-### How It Works
+### Pipeline Overview
 
-1. **Collect** — Discord messages are collected in real-time with a sliding context window
-2. **Distill** — A local LLM (Ollama `qwen2.5:7b`) classifies each message: store or skip. Only decisions, facts, preferences, tasks, and feedback are stored — casual chat is ignored
-3. **Embed** — Stored memories are embedded via Ollama (`qwen3-embedding`) into 1024-dimensional vectors
-4. **Store** — Vectors + metadata (project, speaker, priority, topic) are saved in LanceDB (`~/.sleep-code/memory/lancedb`)
-5. **Recall** — Semantic search retrieves relevant memories by meaning, not just keywords
+```
+Message → Collect → Distill → Dedup → Store → Recall
+                       ↓
+              Supersede (update detection)
+```
 
-### Disabling Memory
+1. **Collect** — Messages are collected in real-time with a per-channel sliding context window (default 15 messages)
+2. **Distill** — A local LLM (`qwen2.5:7b`) classifies each message: store or skip. Only decisions, facts, preferences, tasks, and feedback are stored — casual chat and agent status reports are filtered out
+3. **Validate** — Substance validation rejects vague distilled text (e.g. "SnoopDuck 요청함") that lacks concrete content (dates, numbers, file paths, code tokens)
+4. **Dedup** — Two-layer deduplication prevents redundant storage:
+   - Exact text match (before embedding, saves cost)
+   - Vector similarity ≥ 0.90 (catches paraphrases)
+5. **Supersede** — If the distill detects a correction or update (time change, name fix, price revision), it automatically finds the old memory and marks it `superseded` instead of creating a duplicate. Uses multi-signal scoring: vector similarity, topic match, anchor term overlap, and kind compatibility
+6. **Embed** — Stored memories are embedded via Ollama (`qwen3-embedding`) into 1024-dimensional vectors
+7. **Store** — Vectors + metadata are saved in LanceDB (`~/.sleep-code/memory/lancedb`)
+8. **Recall** — Hybrid search blends vector similarity with keyword overlap for better results. Short queries lean more on keyword matching; longer queries favor semantic similarity
 
-Memory is enabled by default when Ollama is available. To disable it:
+### Quality Controls
+
+| Feature | What it does |
+|---------|-------------|
+| **Substance validation** | Rejects vague meta-descriptions, requires concrete signals (dates, numbers, names) |
+| **Speaker attribution** | Tracks who _made_ the decision, not who _reported_ it |
+| **TopicKey injection** | Feeds existing topic tags into the distill prompt to prevent fragmentation |
+| **CJK language guard** | Detects Chinese/Japanese output and retries in Korean/English |
+| **Agent noise filter** | Skips agent observation messages (status updates, not decisions) |
+
+### Memory Lifecycle
+
+Memories go through these statuses:
+
+```
+open → in_progress → resolved
+  ↓         ↓
+snoozed   expired
+  ↓
+superseded (soft-delete: old info replaced by newer info)
+```
+
+**Superseded memories** are hidden from search by default but preserved for history. They can be viewed with `--include-superseded` and restored with `unsupersede`.
+
+### Consolidation
+
+Periodic cleanup that merges similar memories and removes noise:
+
+1. **TopicKey merge** — Same topic + kind, within 7 days, cosine ≥ 0.85 → merge
+2. **Vector merge** — Any two memories with cosine ≥ 0.93 → merge
+3. **Cleanup** — Removes priority-0 observations
+
+Run with `--dry-run` to preview, then without to apply.
+
+### CLI Commands
 
 ```bash
-# Option 1: Environment variable
-DISABLE_MEMORY=1 npm run discord
-
-# Option 2: In ecosystem.config.cjs for PM2
-env: { DISABLE_MEMORY: '1' }
-
-# Option 3: Simply don't run Ollama — memory auto-disables gracefully
+sleep-code memory search <query> [--project <name>]          # Hybrid search (vector + keyword)
+sleep-code memory store <text> [--project <name>] [--kind <kind>]  # Manual store
+sleep-code memory delete <id>                                 # Delete by ID
+sleep-code memory supersede <oldId> <newId>                   # Manually mark old as superseded
+sleep-code memory unsupersede <id>                            # Undo supersede, restore to open
+sleep-code memory stats <project>                             # Count memories
+sleep-code memory consolidate [--project <name>] [--dry-run]  # Merge duplicates, clean noise
+sleep-code memory retag [--project <name>] [--dry-run]        # Re-classify topicKeys via LLM
+sleep-code memory graph [--project <name>] [--threshold 0.7]  # Open memory graph in browser
+sleep-code memory distill-test                                # Test distill with sample messages
 ```
 
 ### MCP Memory Server
 
-The memory store is exposed as an [MCP](https://modelcontextprotocol.io/) server over HTTP, making memories available to any Claude Code session in this project.
+The memory store is exposed as an [MCP](https://modelcontextprotocol.io/) server over HTTP, making memories available to any Claude Code session.
 
 **Transport:** HTTP (Streamable HTTP) at `http://127.0.0.1:24242/mcp`
 
-**Starting the server:**
-
 ```bash
-# Option 1: npm script
-npm run memory-server
-
-# Option 2: PM2 (background, auto-restart)
-pm2 start ecosystem.config.cjs --only sleep-memory-mcp
-
-# Option 3: Direct
-node dist/mcp/memory-server.js
+npm run memory-server                                    # Direct
+pm2 start ecosystem.config.cjs --only sleep-memory-mcp   # Background
 ```
 
 **Claude Code auto-connects** via `.mcp.json` in the project root:
@@ -313,13 +351,13 @@ node dist/mcp/memory-server.js
 
 To use in other projects, copy this `.mcp.json` or add the entry to that project's `.mcp.json`.
 
-**Available MCP tools:**
+**MCP tools:**
 
 | Tool | Description |
 |------|-------------|
-| `sc_memory_search` | Semantic search over memories. Pass a natural language query and optional project filter. |
-| `sc_memory_list` | List recent memories for a project. |
-| `sc_memory_store` | Manually store a memory (text, project, kind, priority, topic). |
+| `sc_memory_search` | Semantic search. Supports `query`, `project`, `limit`, `includeSuperseded`. |
+| `sc_memory_list` | List memories for a project. Supports `includeSuperseded`. |
+| `sc_memory_store` | Manually store a memory (text, project, kind, speaker, priority, topicKey). |
 
 ### Memory Explorer
 
@@ -329,12 +367,19 @@ A web UI for browsing and visualizing the memory graph:
 cd explorer && npm run dev   # Opens at http://localhost:3000
 ```
 
+### Disabling Memory
+
+```bash
+DISABLE_MEMORY=1 npm run discord          # Environment variable
+# Or simply don't run Ollama — memory auto-disables gracefully
+```
+
 ### Requirements
 
 - [Ollama](https://ollama.com/) running locally with:
-  - `qwen2.5:7b` — distill model (classifies messages)
+  - `qwen2.5:7b` — distill model (classifies and evaluates messages)
   - `qwen3-embedding` — embedding model (auto-pulled on first use)
-- Memory data is stored at `~/.sleep-code/memory/lancedb`
+- Memory data: `~/.sleep-code/memory/lancedb`
 ## Architecture
 
 ```

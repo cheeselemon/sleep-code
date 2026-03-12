@@ -27,7 +27,10 @@ export interface DistillResult {
   kind: MemoryKind;
   priority: number;
   topicKey: string;
-  speaker?: string;  // LLM-determined decision maker override
+  speaker?: string;           // LLM-determined decision maker override
+  memoryAction?: 'create' | 'update';  // LLM判定: new info vs correction/update
+  updateConfidence?: number;            // 0.0 ~ 1.0
+  anchorTerms?: string[];               // key entities (names, places, dates, times)
 }
 
 // ── Prompt ───────────────────────────────────────────────────
@@ -63,15 +66,24 @@ CRITICAL - distilled text rules:
 - Max 200 chars, 1-2 sentences
 
 Respond ONLY with valid JSON matching this EXACT schema (use these EXACT field names):
-{"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string"}
+{"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string", "memoryAction": "create"|"update", "updateConfidence": number, "anchorTerms": ["string"]}
 
-Example — worth remembering:
-{"shouldStore": true, "distilled": "LanceDB를 벡터DB로 사용하기로 확정", "kind": "decision", "priority": 7, "topicKey": "vector-db", "speaker": "user"}
+- memoryAction: "create" for new info, "update" if this CORRECTS/CHANGES/RESCHEDULES existing info
+  - Update signals: "->", "→", "에서 ... 로", "변경", "정정", "바뀜", "확정", "취소", "수정", "오타", "아니고", "아니라", "대신", "말고", "actually", "instead", "renamed", "moved to", "not ... but ..."
+  - If unsure, default to "create"
+- updateConfidence: 0.0-1.0 (how confident this is an update to existing info vs genuinely new)
+- anchorTerms: array of key entities (person names, places, dates, times, amounts) mentioned in the message
+
+Example — worth remembering (new):
+{"shouldStore": true, "distilled": "LanceDB를 벡터DB로 사용하기로 확정", "kind": "decision", "priority": 7, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB"]}
+
+Example — worth remembering (update):
+{"shouldStore": true, "distilled": "회의 시간 2시에서 3시로 변경", "kind": "decision", "priority": 7, "topicKey": "meeting-schedule", "speaker": "user", "memoryAction": "update", "updateConfidence": 0.95, "anchorTerms": ["회의", "3시"]}
 
 Example — not worth remembering:
-{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system"}
+{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": []}
 
-IMPORTANT: Always include ALL 6 fields. Field name must be "shouldStore", not "remember" or "should_remember".`;
+IMPORTANT: Always include ALL 9 fields. Field name must be "shouldStore", not "remember" or "should_remember".`;
 
 // ── CJK Detection ───────────────────────────────────────────
 
@@ -242,6 +254,23 @@ export class DistillService {
         ? parsed.speaker
         : undefined;
 
+      // Parse supersede fields
+      const rawAction = parsed.memoryAction === 'update' ? 'update' : 'create';
+      const updateConfidence = typeof parsed.updateConfidence === 'number'
+        ? Math.max(0, Math.min(1, parsed.updateConfidence)) : 0;
+      const anchorTerms = Array.isArray(parsed.anchorTerms)
+        ? parsed.anchorTerms.filter((t: unknown) => typeof t === 'string' && (t as string).length > 0)
+        : [];
+
+      // Rule gate: validate "update" action with signal patterns
+      let memoryAction: 'create' | 'update' = 'create';
+      if (rawAction === 'update' && updateConfidence >= 0.8) {
+        const updateSignals = /->|→|에서\s.*로|변경|정정|바뀜|확정|취소|수정|오타|아니고|아니라|대신|말고|actually|instead|renamed|moved to|not\s.*but/i;
+        if (updateSignals.test(parsed.distilled) || updateConfidence >= 0.95) {
+          memoryAction = 'update';
+        }
+      }
+
       return {
         result: {
           shouldStore: true,
@@ -250,6 +279,9 @@ export class DistillService {
           priority: Math.round(priority),
           topicKey: typeof parsed.topicKey === 'string' ? parsed.topicKey : '',
           speaker,
+          memoryAction,
+          updateConfidence,
+          anchorTerms,
         },
         cjkRejected: false,
       };

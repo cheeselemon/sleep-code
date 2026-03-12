@@ -257,48 +257,84 @@ sleep-code hook setup
 
 Sleep Code는 중요한 대화 — 결정, 선호사항, 작업 지시 등 — 을 로컬 벡터 데이터베이스에 자동으로 기억할 수 있습니다. 메모리 수집은 **선택사항**이며 [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다. Ollama가 없으면 메모리 기능 없이 정상 작동합니다.
 
-### 작동 방식
+### 파이프라인 개요
 
-1. **수집(Collect)** — Discord 메시지를 슬라이딩 컨텍스트 윈도우로 실시간 수집
-2. **정제(Distill)** — 로컬 LLM(Ollama `qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵. 결정, 사실, 선호, 작업, 피드백만 저장 — 일상 대화는 무시
-3. **임베딩(Embed)** — 저장할 메모리를 Ollama(`qwen3-embedding`)로 1024차원 벡터화
-4. **저장(Store)** — 벡터 + 메타데이터(프로젝트, 화자, 우선순위, 토픽)를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
-5. **검색(Recall)** — 키워드가 아닌 의미 기반으로 관련 메모리 검색
+```
+메시지 → 수집 → 정제 → 중복제거 → 저장 → 검색
+                  ↓
+          대체(Supersede) 감지
+```
 
-### 메모리 비활성화
+1. **수집(Collect)** — 채널별 슬라이딩 컨텍스트 윈도우(기본 15개)로 실시간 수집
+2. **정제(Distill)** — 로컬 LLM(`qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵. 결정, 사실, 선호, 작업, 피드백만 저장 — 일상 대화와 에이전트 상태 보고는 필터링
+3. **검증(Validate)** — 구체적 내용 없는 모호한 텍스트(예: "SnoopDuck 요청함") 거부. 날짜, 숫자, 파일명, 코드 토큰이 있어야 통과
+4. **중복제거(Dedup)** — 2단계 중복 방지:
+   - 완전 동일 텍스트 매칭 (임베딩 전, 비용 절약)
+   - 벡터 유사도 ≥ 0.90 (의역 감지)
+5. **대체(Supersede)** — 정제 단계에서 수정/변경을 감지하면(시간 변경, 이름 정정, 가격 수정), 기존 기억을 찾아 `superseded` 상태로 전환. 다중 신호 스코어링 사용: 벡터 유사도, 토픽 일치, 핵심 용어 겹침, 종류 호환성
+6. **임베딩(Embed)** — Ollama(`qwen3-embedding`)로 1024차원 벡터화
+7. **저장(Store)** — 벡터 + 메타데이터를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
+8. **검색(Recall)** — 벡터 유사도 + 키워드 매칭을 혼합한 하이브리드 검색. 짧은 쿼리는 키워드 비중 높고, 긴 쿼리는 의미 유사도 비중 높음
 
-Ollama가 실행 중이면 메모리가 기본으로 활성화됩니다. 비활성화 방법:
+### 품질 관리
+
+| 기능 | 설명 |
+|------|------|
+| **내용 검증** | 모호한 메타 설명 거부, 구체적 신호(날짜, 숫자, 이름) 필요 |
+| **화자 귀속** | 결정을 _보고한_ 사람이 아닌 _내린_ 사람을 추적 |
+| **토픽키 주입** | 기존 토픽 태그를 정제 프롬프트에 주입해 파편화 방지 |
+| **CJK 언어 가드** | 중국어/일본어 출력 감지 시 한국어/영어로 재시도 |
+| **에이전트 노이즈 필터** | 에이전트 상태 업데이트 메시지(결정이 아닌 것) 스킵 |
+
+### 메모리 생명주기
+
+```
+open → in_progress → resolved
+  ↓         ↓
+snoozed   expired
+  ↓
+superseded (소프트 삭제: 새 정보로 대체된 이전 기억)
+```
+
+**대체된 기억(superseded)** 은 기본 검색에서 숨겨지지만 이력용으로 보존됩니다. `--include-superseded`로 조회하고 `unsupersede`로 복원할 수 있습니다.
+
+### 통합 정리(Consolidation)
+
+주기적으로 유사 기억을 병합하고 노이즈를 제거합니다:
+
+1. **토픽키 병합** — 같은 토픽+종류, 7일 이내, 코사인 ≥ 0.85 → 병합
+2. **벡터 병합** — 토픽 무관, 코사인 ≥ 0.93 → 병합
+3. **정리** — 우선순위 0인 관찰(observation) 삭제
+
+`--dry-run`으로 미리보기, 제거 후 적용.
+
+### CLI 명령어
 
 ```bash
-# 방법 1: 환경변수
-DISABLE_MEMORY=1 npm run discord
-
-# 방법 2: PM2용 ecosystem.config.cjs에서
-env: { DISABLE_MEMORY: '1' }
-
-# 방법 3: Ollama를 실행하지 않으면 자동으로 비활성화
+sleep-code memory search <쿼리> [--project <이름>]            # 하이브리드 검색 (벡터 + 키워드)
+sleep-code memory store <텍스트> [--project <이름>] [--kind <종류>]  # 수동 저장
+sleep-code memory delete <id>                                  # ID로 삭제
+sleep-code memory supersede <이전id> <새id>                    # 수동으로 대체 처리
+sleep-code memory unsupersede <id>                             # 대체 취소, open으로 복원
+sleep-code memory stats <프로젝트>                             # 메모리 수 확인
+sleep-code memory consolidate [--project <이름>] [--dry-run]   # 중복 병합, 노이즈 정리
+sleep-code memory retag [--project <이름>] [--dry-run]         # LLM으로 토픽키 재분류
+sleep-code memory graph [--project <이름>] [--threshold 0.7]   # 브라우저에서 메모리 그래프 열기
+sleep-code memory distill-test                                 # 샘플 메시지로 정제 테스트
 ```
 
 ### MCP 메모리 서버
 
-메모리 저장소는 [MCP](https://modelcontextprotocol.io/) 서버(HTTP)로 제공되어, 이 프로젝트의 모든 Claude Code 세션에서 메모리를 사용할 수 있습니다.
+메모리 저장소는 [MCP](https://modelcontextprotocol.io/) 서버(HTTP)로 제공되어, 모든 Claude Code 세션에서 사용 가능합니다.
 
 **전송 방식:** HTTP (Streamable HTTP), `http://127.0.0.1:24242/mcp`
 
-**서버 시작 방법:**
-
 ```bash
-# 방법 1: npm 스크립트
-npm run memory-server
-
-# 방법 2: PM2 (백그라운드, 자동 재시작)
-pm2 start ecosystem.config.cjs --only sleep-memory-mcp
-
-# 방법 3: 직접 실행
-node dist/mcp/memory-server.js
+npm run memory-server                                    # 직접 실행
+pm2 start ecosystem.config.cjs --only sleep-memory-mcp   # 백그라운드
 ```
 
-**Claude Code 자동 연결** — 프로젝트 루트의 `.mcp.json`으로 설정됩니다:
+**Claude Code 자동 연결** — 프로젝트 루트의 `.mcp.json`:
 
 ```json
 {
@@ -311,15 +347,15 @@ node dist/mcp/memory-server.js
 }
 ```
 
-다른 프로젝트에서 사용하려면 이 `.mcp.json`을 복사하거나 해당 프로젝트의 `.mcp.json`에 항목을 추가하세요.
+다른 프로젝트에서 사용하려면 이 `.mcp.json`을 복사하세요.
 
-**사용 가능한 MCP 도구:**
+**MCP 도구:**
 
 | 도구 | 설명 |
 |------|------|
-| `sc_memory_search` | 메모리 시맨틱 검색. 자연어 쿼리와 선택적 프로젝트 필터를 전달합니다. |
-| `sc_memory_list` | 프로젝트의 최근 메모리 목록을 조회합니다. |
-| `sc_memory_store` | 수동으로 메모리를 저장합니다 (텍스트, 프로젝트, 종류, 우선순위, 토픽). |
+| `sc_memory_search` | 시맨틱 검색. `query`, `project`, `limit`, `includeSuperseded` 지원. |
+| `sc_memory_list` | 프로젝트별 메모리 목록. `includeSuperseded` 지원. |
+| `sc_memory_store` | 수동 저장 (텍스트, 프로젝트, 종류, 화자, 우선순위, 토픽키). |
 
 ### 메모리 탐색기
 
@@ -329,12 +365,19 @@ node dist/mcp/memory-server.js
 cd explorer && npm run dev   # http://localhost:3000 에서 열림
 ```
 
+### 메모리 비활성화
+
+```bash
+DISABLE_MEMORY=1 npm run discord          # 환경변수
+# 또는 Ollama를 실행하지 않으면 자동으로 비활성화
+```
+
 ### 요구사항
 
 - [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다:
-  - `qwen2.5:7b` — 정제 모델 (메시지 분류)
+  - `qwen2.5:7b` — 정제 모델 (메시지 분류 및 업데이트 감지)
   - `qwen3-embedding` — 임베딩 모델 (첫 사용 시 자동 다운로드)
-- 메모리 데이터는 `~/.sleep-code/memory/lancedb`에 저장됩니다
+- 메모리 데이터: `~/.sleep-code/memory/lancedb`
 
 ## 아키텍처
 
@@ -343,16 +386,17 @@ src/
 ├── cli/           # CLI 진입점 및 명령어
 │   ├── index.ts   # 메인 CLI 진입점
 │   ├── run.ts     # 세션 러너 (PTY + JSONL 감시)
+│   ├── memory.ts  # 메모리 CLI (search, store, consolidate, retag, supersede, graph)
 │   └── {telegram,discord,slack}.ts  # 플랫폼별 설정/실행
 ├── memory/        # 시맨틱 메모리 파이프라인
-│   ├── memory-service.ts       # LanceDB 저장소 (벡터 + 메타데이터)
-│   ├── memory-collector.ts     # Discord에서 메시지 수집
-│   ├── distill-service.ts      # LLM 분류기 (저장 또는 스킵)
+│   ├── memory-service.ts       # LanceDB 저장소, 검색, 중복제거, 대체(supersede)
+│   ├── memory-collector.ts     # 슬라이딩 윈도우 수집 + 대체 라우팅
+│   ├── distill-service.ts      # LLM 분류기 (저장/스킵/업데이트 감지)
+│   ├── consolidation-service.ts # 주기적 병합 및 정리
 │   ├── embedding-provider.ts   # Ollama 임베딩 추상화
-│   ├── consolidation-service.ts # 메모리 중복제거 및 정리
-│   └── chat-provider.ts        # LLM 채팅 추상화
+│   └── chat-provider.ts        # LLM 채팅 추상화 (Ollama/Claude)
 ├── mcp/
-│   └── memory-server.ts  # MCP 서버 (HTTP 전송)
+│   └── memory-server.ts  # MCP 서버 (HTTP 전송, 메모리 도구)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js 앱 및 이벤트 핸들러
 │   ├── channel-manager.ts  # 스레드/채널 관리

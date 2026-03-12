@@ -44,7 +44,17 @@ src/
 │   ├── index.ts            # Main CLI entry (commander.js)
 │   ├── run.ts              # Session runner (PTY + Unix socket connection)
 │   ├── hook.ts             # Claude Code permission hook handler
+│   ├── memory.ts           # Memory CLI commands (search, store, consolidate, retag, supersede, graph)
 │   └── {telegram,discord,slack}.ts  # Platform-specific setup/run
+├── memory/                 # Semantic memory pipeline
+│   ├── memory-service.ts       # LanceDB store, search, dedup, supersede
+│   ├── memory-collector.ts     # Message ingestion with sliding window + supersede routing
+│   ├── distill-service.ts      # LLM classifier (store/skip/update detection)
+│   ├── consolidation-service.ts # Periodic merge and cleanup
+│   ├── embedding-provider.ts   # Ollama embedding abstraction
+│   └── chat-provider.ts        # LLM chat abstraction (Ollama/Claude)
+├── mcp/
+│   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js app, slash commands, button handlers
 │   ├── channel-manager.ts  # Thread/channel management, session mapping
