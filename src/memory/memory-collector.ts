@@ -36,6 +36,10 @@ export class MemoryCollector {
   // Queue for messages that arrive while processing
   private queue: CollectorMessage[] = [];
 
+  // Cached topicKeys per project (refreshed periodically)
+  private topicKeysCache: Map<string, { keys: string[]; fetchedAt: number }> = new Map();
+  private static TOPIC_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     memory: MemoryService,
     distill: DistillService,
@@ -93,6 +97,9 @@ export class MemoryCollector {
     const context = window.slice(0, -1);
 
     try {
+      const project = msg.project ?? this.defaultProject;
+      const existingTopicKeys = await this.getTopicKeys(project);
+
       const result = await this.distill.distill({
         message: {
           speaker: `${msg.displayName} (${msg.speaker})`,
@@ -100,6 +107,7 @@ export class MemoryCollector {
           timestamp: msg.timestamp ?? new Date().toISOString(),
         },
         context,
+        existingTopicKeys,
       });
 
       if (!result.shouldStore) {
@@ -114,10 +122,10 @@ export class MemoryCollector {
       }
 
       const id = await this.memory.storeIfNew(result.distilled, {
-        project: msg.project ?? this.defaultProject,
+        project,
         kind: result.kind as MemoryKind,
         source: 'session',
-        speaker: msg.speaker,
+        speaker: (result.speaker as MemorySpeaker) ?? msg.speaker,
         priority: result.priority,
         topicKey: result.topicKey,
         channelId: msg.channelId,
@@ -134,6 +142,20 @@ export class MemoryCollector {
       }
     } catch (err) {
       log.error({ err, speaker: msg.speaker }, 'Distill failed for message');
+    }
+  }
+
+  private async getTopicKeys(project: string): Promise<string[]> {
+    const cached = this.topicKeysCache.get(project);
+    if (cached && Date.now() - cached.fetchedAt < MemoryCollector.TOPIC_CACHE_TTL) {
+      return cached.keys;
+    }
+    try {
+      const keys = await this.memory.getTopicKeys(project);
+      this.topicKeysCache.set(project, { keys, fetchedAt: Date.now() });
+      return keys;
+    } catch {
+      return cached?.keys ?? [];
     }
   }
 

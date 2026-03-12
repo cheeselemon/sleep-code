@@ -393,6 +393,77 @@ sim.on('tick', () => {
   memoryService.shutdown();
 }
 
+async function memoryRetag(project: string | undefined, dryRun: boolean) {
+  const { memoryService } = await createServices();
+  const distill = await createDistillService();
+
+  const projects = project ? [project] : await memoryService.listProjects();
+
+  let totalRetagged = 0;
+  let totalSkipped = 0;
+
+  for (const p of projects) {
+    const memories = await memoryService.getByProject(p, { limit: 1000 });
+    if (memories.length === 0) continue;
+
+    // Collect current topicKeys as reference
+    const existingTopicKeys = [...new Set(
+      memories.map(m => m.topicKey).filter((t): t is string => !!t && t.length > 0),
+    )].sort();
+
+    console.log(`\nProject: ${p} (${memories.length} memories, ${existingTopicKeys.length} unique topics)`);
+    console.log(`  Existing topics: ${existingTopicKeys.join(', ')}`);
+
+    for (const mem of memories) {
+      // Re-distill just for topicKey using the memory text
+      const result = await distill.distill({
+        message: {
+          speaker: mem.speaker,
+          content: mem.text,
+          timestamp: mem.createdAt,
+        },
+        context: [],
+        existingTopicKeys,
+      });
+
+      if (!result.shouldStore || !result.topicKey) {
+        totalSkipped++;
+        continue;
+      }
+
+      const newTopic = result.topicKey;
+      if (newTopic === mem.topicKey) {
+        totalSkipped++;
+        continue;
+      }
+
+      if (dryRun) {
+        console.log(`  [retag] "${mem.text.slice(0, 60)}..."`);
+        console.log(`    ${mem.topicKey || '(none)'} → ${newTopic}`);
+      } else {
+        await memoryService.updateFields(mem.id, { topicKey: newTopic });
+        console.log(`  [retag] ${mem.topicKey || '(none)'} → ${newTopic}: "${mem.text.slice(0, 50)}..."`);
+      }
+
+      // Add newly assigned topic to reference list for consistency
+      if (!existingTopicKeys.includes(newTopic)) {
+        existingTopicKeys.push(newTopic);
+        existingTopicKeys.sort();
+      }
+
+      totalRetagged++;
+    }
+  }
+
+  console.log(`\n--- Summary ---`);
+  console.log(`Retagged: ${totalRetagged}, Skipped: ${totalSkipped}`);
+  if (dryRun && totalRetagged > 0) {
+    console.log('\nRe-run without --dry-run to apply changes.');
+  }
+
+  memoryService.shutdown();
+}
+
 // ── Entry ────────────────────────────────────────────────────
 
 export async function memoryCommand(args: string[]): Promise<void> {
@@ -455,6 +526,14 @@ export async function memoryCommand(args: string[]): Promise<void> {
       break;
     }
 
+    case 'retag': {
+      const projectIdx = args.indexOf('--project');
+      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+      const dryRun = args.includes('--dry-run');
+      await memoryRetag(project, dryRun);
+      break;
+    }
+
     case 'graph': {
       const projectIdx = args.indexOf('--project');
       const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
@@ -473,6 +552,7 @@ Memory commands:
   memory stats <project>                                    Show memory stats
   memory distill-test                                       Test distill with qwen2.5:7b
   memory consolidate [--project <name>] [--dry-run]        Consolidate memories
+  memory retag [--project <name>] [--dry-run]              Re-tag topicKeys via LLM
   memory graph [--project <name>] [--threshold 0.7]        Visualize memory graph
 
 Kinds: fact, task, observation, proposal, feedback, decision, dialog_summary

@@ -47,6 +47,21 @@ export interface ConsolidationReport {
   totalRemaining: number;
 }
 
+// ── Helpers ──────────────────────────────────────────────────
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
 // ── Service ──────────────────────────────────────────────────
 
 export class ConsolidationService {
@@ -90,7 +105,57 @@ export class ConsolidationService {
     const mergeDetails: MergeDetail[] = [];
     const cleanDetails: CleanDetail[] = [];
 
-    // ── Phase 1: Merge near-duplicates ──────────────────
+    // ── Phase 0: TopicKey-based near-duplicate merge ────
+    // Same topicKey+kind within 7 days + cosine >= 0.85 → merge
+    // This catches near-duplicates that the stricter Phase 1 (0.93) misses
+
+    const byTopicKind = new Map<string, typeof allRecords>();
+    for (const record of allRecords) {
+      if (!record.topicKey || deletedIds.has(record.id)) continue;
+      const key = `${record.topicKey}::${record.kind}`;
+      const group = byTopicKind.get(key) ?? [];
+      group.push(record);
+      byTopicKind.set(key, group);
+    }
+
+    for (const [groupKey, group] of byTopicKind) {
+      if (group.length <= 1) continue;
+
+      // Sort: highest priority first, then newest
+      group.sort((a, b) => b.priority - a.priority || b.createdAt.localeCompare(a.createdAt));
+      const keep = group[0];
+
+      for (let i = 1; i < group.length; i++) {
+        const del = group[i];
+        if (deletedIds.has(del.id)) continue;
+
+        // Time guard: only merge within 7-day window
+        const timeDiff = Math.abs(
+          new Date(keep.createdAt).getTime() - new Date(del.createdAt).getTime()
+        );
+        if (timeDiff > SEVEN_DAYS_MS) continue;
+
+        // Cosine similarity guard
+        const sim = cosineSimilarity(keep.vector, del.vector);
+        if (sim < 0.85) continue;
+
+        mergeDetails.push({
+          keptId: keep.id,
+          keptText: keep.text,
+          deletedId: del.id,
+          deletedText: del.text,
+          similarity: sim,
+        });
+
+        if (!dryRun) {
+          await this.memory.remove(del.id);
+        }
+        deletedIds.add(del.id);
+        log.info({ groupKey, keptId: keep.id, deletedId: del.id, sim: sim.toFixed(3) }, 'TopicKey merge');
+      }
+    }
+
+    // ── Phase 1: Merge near-duplicates (vector-only, 0.93) ──
 
     for (const record of allRecords) {
       if (deletedIds.has(record.id)) continue;

@@ -59,6 +59,16 @@ export interface SearchOptions {
 
 const TABLE_NAME = 'memory_units';
 
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for',
+  'of', 'with', 'and', 'or', 'but', 'not', 'this', 'that', 'it', 'be',
+  '이', '그', '저', '것', '수', '등', '및', '또는', '하고', '에서', '으로',
+]);
+
+function escapeSqlLiteral(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "''");
+}
+
 export class MemoryService {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
@@ -157,9 +167,30 @@ export class MemoryService {
       expiresAt?: string;
     }
   ): Promise<string | null> {
+    // Phase 1A: exact text dedup (before embedding to save cost)
+    if (this.table) {
+      const escapedText = escapeSqlLiteral(text);
+      const escapedProject = escapeSqlLiteral(options.project);
+      try {
+        const exactMatches = await this.table
+          .query()
+          .where(`project = '${escapedProject}' AND text = '${escapedText}'`)
+          .limit(1)
+          .toArray();
+        if (exactMatches.length > 0) {
+          const existing = this.mapRowToUnit(exactMatches[0]);
+          await this.reinforcePriority(existing.id, existing.priority);
+          log.info({ existingId: existing.id }, 'Exact text duplicate, reinforced');
+          return null;
+        }
+      } catch (err) {
+        log.debug({ err }, 'Exact text dedup query failed, falling through to vector dedup');
+      }
+    }
+
     const vector = await this.embedding.embedSingle(text);
 
-    // Check for near-duplicates
+    // Check for near-duplicates (vector similarity)
     const similar = await this.searchByVector(vector, {
       project: options.project,
       limit: 3,
@@ -222,32 +253,64 @@ export class MemoryService {
     if (!this.table) return [];
 
     const vector = await this.embedding.embedSingle(query);
-    const limit = options?.limit ?? 10;
+    const requestedLimit = options?.limit ?? 10;
+    // Over-fetch for hybrid re-ranking (min 30 candidates)
+    const fetchLimit = Math.max(requestedLimit * 3, 30);
 
     const filters: string[] = [];
     if (options?.project) {
-      filters.push(`project = '${options.project}'`);
+      filters.push(`project = '${escapeSqlLiteral(options.project)}'`);
     }
     if (options?.kinds?.length) {
-      const kindList = options.kinds.map((k) => `'${k}'`).join(', ');
+      const kindList = options.kinds.map((k) => `'${escapeSqlLiteral(k)}'`).join(', ');
       filters.push(`kind IN (${kindList})`);
     }
     if (options?.statuses?.length) {
-      const statusList = options.statuses.map((s) => `'${s}'`).join(', ');
+      const statusList = options.statuses.map((s) => `'${escapeSqlLiteral(s)}'`).join(', ');
       filters.push(`status IN (${statusList})`);
     }
 
-    let queryBuilder = this.table.search(vector).distanceType('cosine').limit(limit);
+    let queryBuilder = this.table.search(vector).distanceType('cosine').limit(fetchLimit);
     if (filters.length > 0) {
       queryBuilder = queryBuilder.where(filters.join(' AND '));
     }
 
     const results = await queryBuilder.toArray();
 
-    return results.map((row: Record<string, unknown>) => ({
-      ...this.mapRowToUnit(row),
-      score: row._distance != null ? 1 - (row._distance as number) : 0,
-    }));
+    // Hybrid re-ranking: blend vector score with keyword overlap
+    const queryTokens = this.extractKeywords(query);
+    // Adaptive weight: short queries (<=3 tokens) lean more on keywords
+    const vectorWeight = queryTokens.length <= 3 ? 0.6 : 0.75;
+    const keywordWeight = 1 - vectorWeight;
+
+    return results
+      .map((row: Record<string, unknown>) => {
+        const unit = this.mapRowToUnit(row);
+        const vectorScore = row._distance != null ? 1 - (row._distance as number) : 0;
+        const keywordScore = this.computeKeywordScore(unit.text, queryTokens);
+        const score = vectorScore * vectorWeight + keywordScore * keywordWeight;
+        return { ...unit, score };
+      })
+      .sort((a: MemorySearchResult, b: MemorySearchResult) => b.score - a.score)
+      .slice(0, requestedLimit);
+  }
+
+  private extractKeywords(text: string): string[] {
+    return text
+      .toLowerCase()
+      .split(/[\s,;:!?.()\[\]{}]+/)
+      .filter((t) => t.length >= 2)
+      .filter((t) => !STOP_WORDS.has(t));
+  }
+
+  private computeKeywordScore(text: string, queryTokens: string[]): number {
+    if (queryTokens.length === 0) return 0;
+    const textLower = text.toLowerCase();
+    let matches = 0;
+    for (const token of queryTokens) {
+      if (textLower.includes(token)) matches++;
+    }
+    return matches / queryTokens.length;
   }
 
   async getByProject(
@@ -316,6 +379,33 @@ export class MemoryService {
       },
     });
     log.info({ id, until }, 'Snoozed memory');
+  }
+
+  async updateFields(
+    id: string,
+    fields: Partial<Pick<MemoryUnit, 'topicKey' | 'speaker' | 'priority' | 'text' | 'kind'>>,
+  ): Promise<void> {
+    if (!this.table) return;
+    await this.table.update({
+      where: `id = '${escapeSqlLiteral(id)}'`,
+      values: { ...fields, updatedAt: new Date().toISOString() },
+    });
+    log.info({ id, fields: Object.keys(fields) }, 'Updated memory fields');
+  }
+
+  async getTopicKeys(project: string): Promise<string[]> {
+    if (!this.table) return [];
+    const results = await this.table
+      .query()
+      .where(`project = '${escapeSqlLiteral(project)}'`)
+      .select(['topicKey'])
+      .toArray();
+    const topics = new Set<string>();
+    for (const r of results) {
+      const tk = r.topicKey as string;
+      if (tk && tk.length > 0) topics.add(tk);
+    }
+    return [...topics].sort();
   }
 
   // ── Delete ───────────────────────────────────────────────
