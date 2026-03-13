@@ -77,7 +77,14 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       .setCustomId('claude_stop_session')
       .setPlaceholder('Select a session to stop...');
 
-    for (const entry of running.slice(0, 25)) {
+    // Sort: current session first
+    const sorted = [...running].sort((a, b) => {
+      if (a.sessionId === currentSessionId) return -1;
+      if (b.sessionId === currentSessionId) return 1;
+      return 0;
+    });
+
+    for (const entry of sorted.slice(0, 25)) {
       const isCurrent = entry.sessionId === currentSessionId;
       const label = isCurrent
         ? `⭐ ${basename(entry.cwd)} (current)`
