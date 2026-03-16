@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Session management from Discord (start/stop sessions remotely)
 - Terminal app support (Terminal.app, iTerm2) on macOS
 - Multi-platform: Telegram, Discord, Slack
+- Semantic memory pipeline (auto-distill conversations → LanceDB)
+- Memory Explorer web UI (D3.js graph, table, search)
 
 ## Build & Run
 
@@ -26,6 +28,8 @@ npm run telegram        # Start the Telegram bot
 npm run slack:setup     # Configure Slack credentials
 npm run slack           # Start the Slack bot
 npm run claude          # Start a monitored Claude Code session
+npm run explorer        # Start Memory Explorer web UI (port 3333)
+npm run memory-server   # Start MCP memory server
 ```
 
 ### PM2 Background Execution
@@ -34,6 +38,27 @@ npm run claude          # Start a monitored Claude Code session
 pm2 start ecosystem.config.cjs --only sleep-discord  # Or sleep-telegram, sleep-slack
 pm2 restart sleep-discord
 pm2 logs sleep-discord
+```
+
+## Memory System
+
+Semantic memory pipeline powered by local LLMs:
+- **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
+- **Distill**: Ollama qwen2.5:7b (classifies messages → store/skip)
+- **Storage**: LanceDB at `~/.sleep-code/memory/lancedb`
+- **MCP Server**: HTTP transport on port 24242 (PM2: sleep-memory-mcp)
+- **Explorer**: Next.js 16 web UI at `explorer/` (port 3333)
+
+### Memory CLI
+
+```bash
+sleep-code memory search <query> [--project <name>]
+sleep-code memory store <text> [--project <name>] [--kind <kind>]
+sleep-code memory delete <id>
+sleep-code memory consolidate [--project <name>] [--dry-run]
+sleep-code memory graph [--project <name>] [--threshold 0.7]
+sleep-code memory distill-test
+sleep-code memory stats <project>
 ```
 
 ## Architecture
@@ -65,6 +90,12 @@ src/
 │   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
 └── telegram/
     └── telegram-app.ts     # grammY app and event handlers
+
+explorer/                   # Memory Explorer web app (Next.js 16)
+├── src/app/                # Pages: dashboard, graph, memories
+├── src/app/api/            # API routes: projects, memories, search, graph, stats
+├── src/components/         # MemoryGraph (D3.js), MemoryTable, SearchBar
+└── src/lib/memory.ts       # MemoryService singleton
 ```
 
 ## How It Works
