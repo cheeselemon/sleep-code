@@ -10,7 +10,7 @@ import type { Thread, SandboxMode } from '@openai/codex-sdk';
 import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
 
-export const CODEX_MODEL = 'gpt-5.3-codex';
+export const CODEX_MODEL = 'gpt-5.4';
 
 export type { SandboxMode } from '@openai/codex-sdk';
 

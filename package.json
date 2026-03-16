@@ -50,7 +50,7 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@openai/codex-sdk": "^0.104.0",
+    "@openai/codex-sdk": "^0.114.0",
     "@slack/bolt": "^4.6.0",
     "chokidar": "^5.0.0",
     "discord.js": "^14.25.1",
