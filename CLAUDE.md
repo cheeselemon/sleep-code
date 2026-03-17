@@ -35,7 +35,7 @@ npm run memory-server   # Start MCP memory server
 ### PM2 Background Execution
 
 ```bash
-pm2 start ecosystem.config.cjs --only sleep-discord  # Or sleep-telegram, sleep-slack
+pm2 start ecosystem.config.cjs --only sleep-discord  # Or sleep-telegram, sleep-slack, sleep-memory-mcp
 pm2 restart sleep-discord
 pm2 logs sleep-discord
 ```
@@ -46,7 +46,8 @@ Semantic memory pipeline powered by local LLMs:
 - **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
 - **Distill**: Ollama qwen2.5:7b (classifies messages → store/skip)
 - **Storage**: LanceDB at `~/.sleep-code/memory/lancedb`
-- **MCP Server**: HTTP transport on port 24242 (PM2: sleep-memory-mcp)
+- **MCP Server**: HTTP transport on port 24242 (PM2: sleep-memory-mcp, env: `MCP_PORT`)
+- **MCP Tools**: `sc_memory_search`, `sc_memory_list`, `sc_memory_store`, `sc_memory_update`, `sc_memory_supersede`, `sc_memory_delete`
 - **Explorer**: Next.js 16 web UI at `explorer/` (port 3333)
 
 ### Memory CLI
@@ -70,8 +71,8 @@ sleep-code memory stats <project>
 src/
 ├── cli/                    # CLI entry point and commands
 │   ├── index.ts            # Main CLI entry (commander.js)
-│   ├── run.ts              # Session runner (PTY + Unix socket connection)
-│   ├── hook.ts             # Claude Code permission hook handler
+│   ├── run.ts              # Session runner (PTY + socket, CJK-safe chunked input, reconnect backoff)
+│   ├── hook.ts             # Claude Code permission hook handler (writes to ~/.claude/settings.json)
 │   ├── memory.ts           # Memory CLI commands (search, store, consolidate, retag, supersede, graph)
 │   └── {telegram,discord,slack}.ts  # Platform-specific setup/run
 ├── memory/                 # Semantic memory pipeline
@@ -80,14 +81,19 @@ src/
 │   ├── distill-service.ts      # LLM classifier (store/skip/update detection)
 │   ├── consolidation-service.ts # Periodic merge and cleanup
 │   ├── embedding-provider.ts   # Ollama embedding abstraction
-│   └── chat-provider.ts        # LLM chat abstraction (Ollama/Claude)
+│   ├── chat-provider.ts        # LLM chat abstraction (Ollama/Claude)
+│   └── background-claude-runner.ts # Headless Claude PTY for distill (alt to Ollama)
 ├── mcp/
 │   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js app, slash commands, button handlers
 │   ├── channel-manager.ts  # Thread/channel management, session mapping
 │   ├── process-manager.ts  # Session spawning, lifecycle, terminal window tracking
-│   └── settings-manager.ts # User settings (allowed directories, terminal app)
+│   ├── settings-manager.ts # User settings (allowed directories, terminal app)
+│   ├── agent-routing.ts    # @codex/@claude message routing
+│   └── codex/              # Codex CLI agent integration
+│       ├── codex-session-manager.ts
+│       └── codex-handlers.ts
 ├── slack/
 │   ├── slack-app.ts        # Slack Bolt app and event handlers
 │   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
@@ -107,7 +113,8 @@ explorer/                   # Memory Explorer web app (Next.js 16)
 2. `npm run claude` spawns Claude in a PTY and connects via socket
 3. SessionManager watches Claude's JSONL files (`~/.claude/projects/*/{sessionId}.jsonl`)
 4. Messages relay bidirectionally: JSONL → Bot → Chat, Chat → Bot → PTY
-5. Permission requests forward to chat for interactive approval (buttons)
+5. Permission requests forward to chat for interactive approval (Allow / YOLO / Deny buttons)
+6. On bot restart, waits 35s for CLI sessions to reconnect, then reconciles orphaned sessions
 
 ## Key Components
 
@@ -128,15 +135,29 @@ Discord-only. Handles:
 
 ### ChannelManager (`src/discord/channel-manager.ts`)
 Discord-only. Handles:
-- Creating threads for each session
-- Session-to-thread mapping
+- Creating dedicated text channels per CWD (`sleep-{foldername}`) inside "Sleep Code Sessions" category
+- Creating threads for each session within the channel
+- Session-to-thread mapping with persistence (`~/.sleep-code/session-mappings.json`)
 - Thread archival on session end
 
 ### CodexSessionManager (`src/discord/codex/codex-session-manager.ts`)
 Discord-only. Handles:
 - Codex CLI agent sessions via `@openai/codex-sdk`
 - Message routing between Discord and Codex
-- Model: gpt-5.4
+- Model: gpt-5.4, approval_policy: 'never' (no permission prompts)
+- Auto-detected when `~/.codex/auth.json` exists or `OPENAI_API_KEY` is set
+- Sandbox: `read-only` by default, switches to `workspace-write` when YOLO enabled
+
+## Discord Interactive Features
+
+- **Permission buttons**: Allow / YOLO (enables auto-approve) / Deny — YOLO also switches Codex to `workspace-write`
+- **AskUserQuestion**: Renders interactive buttons (single-select) or select menus (multi-select) with "Other..." modal for custom input
+- **View Full**: Tool results > 300 chars are truncated with a "View Full" button → sends `.txt` file attachment
+- **File upload on Write/Edit**: Modified files auto-upload as Discord attachments
+- **Image auto-upload**: Image paths (`.png`, `.jpg`, etc.) in Claude's output auto-upload as attachments
+- **Text file input**: Users can attach `.txt` files to messages → injected into Claude session (max 100KB)
+- **Typing indicator**: Shown every 8s while Claude session is running
+- **Plan mode notifications**: Posts messages when Claude enters/exits plan mode
 
 ## Discord Slash Commands
 
@@ -147,6 +168,7 @@ Discord-only. Handles:
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
 - `/codex start|stop|status` - Codex CLI session management
+- `/sessions` - Show all active Claude + Codex sessions
 - `/status` - Show current thread session status
 
 ## Multi-Agent Communication Protocol
@@ -193,6 +215,30 @@ Long context (3+ lines) between agents **must be shared via files** due to Disco
 - File location: `docs/plans/<feature>-{plan,report,discussion}.md`
 - Send only **file path + 1-2 line summary** to the other agent
 - If Codex is in read-only mode, send content via message and Claude writes it to the file
+
+## Config & Data Files
+
+| Path | Purpose |
+|------|---------|
+| `~/.sleep-code/discord.env` | Discord bot token + user ID |
+| `~/.sleep-code/slack.env` | Slack tokens |
+| `~/.sleep-code/settings.json` | Allowed dirs, terminal app, maxConcurrentSessions |
+| `~/.sleep-code/process-registry.json` | ProcessManager session registry |
+| `~/.sleep-code/session-mappings.json` | Claude session → Discord thread mappings |
+| `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
+| `~/.sleep-code/memory/lancedb/` | LanceDB vector store |
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `DISCORD_BOT_TOKEN` / `DISCORD_USER_ID` | Discord credentials (overrides config) |
+| `OPENAI_API_KEY` | Enables Codex integration |
+| `DISABLE_MEMORY` | Set `1` to skip memory collector |
+| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` | Slack credentials |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram credentials |
+| `MCP_PORT` | MCP server port (default: 24242) |
+| `LOG_LEVEL` | Pino log level (default: info) |
 
 ## Code Style
 
