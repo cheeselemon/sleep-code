@@ -22,7 +22,7 @@ async function createServices() {
 }
 
 async function createDistillService() {
-  const chatProvider = new OllamaChatProvider();  // qwen3:4b
+  const chatProvider = new OllamaChatProvider();  // qwen2.5:7b
   const chatService = new ChatService(chatProvider);
   await chatService.initialize();
   return new DistillService(chatService);

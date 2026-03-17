@@ -57,6 +57,9 @@ sleep-code memory store <text> [--project <name>] [--kind <kind>]
 sleep-code memory delete <id>
 sleep-code memory consolidate [--project <name>] [--dry-run]
 sleep-code memory graph [--project <name>] [--threshold 0.7]
+sleep-code memory retag [--project <name>] [--dry-run]
+sleep-code memory supersede <oldId> <newId>
+sleep-code memory unsupersede <id>
 sleep-code memory distill-test
 sleep-code memory stats <project>
 ```
@@ -129,6 +132,12 @@ Discord-only. Handles:
 - Session-to-thread mapping
 - Thread archival on session end
 
+### CodexSessionManager (`src/discord/codex/codex-session-manager.ts`)
+Discord-only. Handles:
+- Codex CLI agent sessions via `@openai/codex-sdk`
+- Message routing between Discord and Codex
+- Model: gpt-5.4
+
 ## Discord Slash Commands
 
 - `/help` - Show all commands (embed card)
@@ -137,6 +146,8 @@ Discord-only. Handles:
 - `/interrupt`, `/background`, `/mode`, `/compact`, `/model` - In-session controls
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
+- `/codex start|stop|status` - Codex CLI session management
+- `/status` - Show current thread session status
 
 ## Multi-Agent Communication Protocol
 
