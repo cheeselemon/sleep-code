@@ -240,7 +240,7 @@ export async function discordRun(): Promise<void> {
     }
   }
 
-  const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {
+  const { client, sessionManager, channelManager, claudeSdkSessionManager, cleanup } = createDiscordApp(discordConfig, {
     processManager,
     settingsManager,
     enableCodex,
@@ -393,6 +393,73 @@ export async function discordRun(): Promise<void> {
     }
 
     log.info({ restored: restorableIds.length }, 'Startup reconciliation complete');
+
+    // SDK session reconciliation: offer Restore for dead SDK sessions
+    const sdkPersisted = channelManager.getPersistedSdkMappings();
+    if (sdkPersisted.length > 0 && claudeSdkSessionManager) {
+      log.info({ count: sdkPersisted.length }, 'SDK reconciliation: checking persisted SDK sessions');
+
+      for (const mapping of sdkPersisted) {
+        // Check if already alive (shouldn't be after restart, but safety check)
+        const existing = claudeSdkSessionManager.getSession(mapping.sessionId);
+        if (existing && existing.status !== 'ended') continue;
+
+        try {
+          const channel = await client.channels.fetch(mapping.threadId);
+          if (channel?.isThread()) {
+            if (channel.archived) {
+              await channel.setArchived(false);
+            }
+
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`restore_sdk:${mapping.sessionId}`)
+                .setLabel('Restore SDK Session')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`dismiss_sdk:${mapping.sessionId}`)
+                .setLabel('Dismiss')
+                .setStyle(ButtonStyle.Secondary),
+            );
+
+            await channel.send({
+              content:
+                `📡 **SDK Session Lost During Bot Restart**\n` +
+                `Session: \`${mapping.sessionId.slice(0, 8)}...\`\n` +
+                `Directory: \`${mapping.cwd}\`\n\n` +
+                `Click **Restore** to resume, or **Dismiss** to clean up.\n` +
+                `_Auto-dismissed in 1 hour._`,
+              components: [row],
+            });
+
+            log.info({ sessionId: mapping.sessionId }, 'Posted SDK restore offer');
+
+            // Auto-dismiss after 1 hour
+            const sdkSessionId = mapping.sessionId;
+            setTimeout(async () => {
+              // Check if still unclaimed
+              const stillExists = claudeSdkSessionManager.getSession(sdkSessionId);
+              if (stillExists) return; // Already restored
+
+              const persisted = channelManager.getPersistedSdkMappings().find(m => m.sessionId === sdkSessionId);
+              if (!persisted) return; // Already cleaned up
+
+              await channelManager.archiveSdkSession(sdkSessionId);
+              try {
+                const ch = await client.channels.fetch(mapping.threadId);
+                if (ch?.isThread()) {
+                  await ch.send('⏰ **SDK Restore expired** — session cleaned up.');
+                  await ch.setArchived(true);
+                }
+              } catch { /* ignore */ }
+            }, 60 * 60 * 1000);
+          }
+        } catch (err) {
+          log.error({ err, sessionId: mapping.sessionId }, 'Failed to post SDK restore offer');
+          await channelManager.archiveSdkSession(mapping.sessionId);
+        }
+      }
+    }
   }
 
   // Graceful shutdown

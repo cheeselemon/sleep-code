@@ -75,22 +75,33 @@ export const handleStartDirSelect: SelectMenuHandler = async (interaction, conte
  * Handle session selection for stopping
  */
 export const handleStopSessionSelect: SelectMenuHandler = async (interaction, context) => {
-  const { processManager } = context;
+  const { processManager, claudeSdkSessionManager } = context;
 
-  if (!processManager) {
-    await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
-    return;
+  const value = interaction.values[0];
+  // Value format: "type:sessionId" (sdk:xxx or pty:xxx) or legacy "sessionId"
+  let sessionType: 'pty' | 'sdk' = 'pty';
+  let sessionId = value;
+
+  if (value.startsWith('sdk:')) {
+    sessionType = 'sdk';
+    sessionId = value.slice(4);
+  } else if (value.startsWith('pty:')) {
+    sessionId = value.slice(4);
   }
-
-  const sessionId = interaction.values[0];
 
   try {
     await interaction.update({
-      content: `🛑 Stopping session ${sessionId.slice(0, 8)}...`,
+      content: `🛑 Stopping ${sessionType.toUpperCase()} session ${sessionId.slice(0, 8)}...`,
       components: [],
     });
 
-    const success = await processManager.kill(sessionId);
+    let success = false;
+    if (sessionType === 'sdk' && claudeSdkSessionManager) {
+      success = await claudeSdkSessionManager.stopSession(sessionId);
+    } else if (processManager) {
+      success = await processManager.kill(sessionId);
+    }
+
     if (success) {
       await interaction.followUp({
         content: `✅ Session ${sessionId.slice(0, 8)} stopped.`,

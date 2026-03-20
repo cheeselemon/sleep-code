@@ -99,20 +99,52 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  // /claude stop - show session selection
+  // /claude stop - show session selection (PTY + SDK)
   if (subcommand === 'stop') {
-    if (!processManager) {
-      await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
-      return;
+    // Collect all stoppable sessions
+    interface StoppableSession {
+      id: string;
+      cwd: string;
+      type: 'pty' | 'sdk';
+      label: string;
+      description: string;
+    }
+    const sessions: StoppableSession[] = [];
+
+    // PTY sessions
+    if (processManager) {
+      const running = await processManager.getAllRunning();
+      for (const e of running) {
+        sessions.push({
+          id: e.sessionId,
+          cwd: e.cwd,
+          type: 'pty',
+          label: `🔧 ${basename(e.cwd)}`,
+          description: `PTY | PID ${e.pid} | ${e.status}`,
+        });
+      }
     }
 
-    const running = await processManager.getAllRunning();
-    if (running.length === 0) {
+    // SDK sessions
+    if (claudeSdkSessionManager) {
+      for (const s of claudeSdkSessionManager.getAllSessions()) {
+        if (s.status !== 'ended') {
+          sessions.push({
+            id: s.id,
+            cwd: s.cwd,
+            type: 'sdk',
+            label: `📡 ${basename(s.cwd)}`,
+            description: `SDK | ${s.status}`,
+          });
+        }
+      }
+    }
+
+    if (sessions.length === 0) {
       await interaction.reply({ content: '✅ No running sessions to stop.', ephemeral: true });
       return;
     }
 
-    // Get current session if command is run from a session thread
     const currentSessionId = channelManager.getSessionByChannel(interaction.channelId);
 
     const selectMenu = new StringSelectMenuBuilder()
@@ -120,22 +152,22 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       .setPlaceholder('Select a session to stop...');
 
     // Sort: current session first
-    const sorted = [...running].sort((a, b) => {
-      if (a.sessionId === currentSessionId) return -1;
-      if (b.sessionId === currentSessionId) return 1;
+    const sorted = [...sessions].sort((a, b) => {
+      if (a.id === currentSessionId) return -1;
+      if (b.id === currentSessionId) return 1;
       return 0;
     });
 
     for (const entry of sorted.slice(0, 25)) {
-      const isCurrent = entry.sessionId === currentSessionId;
+      const isCurrent = entry.id === currentSessionId;
       const label = isCurrent
-        ? `⭐ ${basename(entry.cwd)} (current)`
-        : `${basename(entry.cwd)} (${entry.sessionId.slice(0, 8)})`;
+        ? `⭐ ${entry.label} (current)`
+        : `${entry.label} (${entry.id.slice(0, 8)})`;
       selectMenu.addOptions(
         new StringSelectMenuOptionBuilder()
           .setLabel(label.slice(0, 100))
-          .setDescription(`PID ${entry.pid} - ${entry.status}`)
-          .setValue(entry.sessionId)
+          .setDescription(entry.description)
+          .setValue(`${entry.type}:${entry.id}`)
       );
     }
 
@@ -149,18 +181,9 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  // /claude status - show all sessions
+  // /claude status - show all sessions (PTY + SDK)
   if (subcommand === 'status') {
-    if (!processManager) {
-      await interaction.reply({ content: '⚠️ Process management not enabled.', ephemeral: true });
-      return;
-    }
-
-    const entries = processManager.getAllEntries();
-    if (entries.length === 0) {
-      await interaction.reply({ content: '📋 No managed sessions.', ephemeral: true });
-      return;
-    }
+    const lines: string[] = [];
 
     const statusEmoji: Record<string, string> = {
       starting: '🔄',
@@ -168,13 +191,33 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       stopping: '🟡',
       stopped: '⚫',
       orphaned: '🔴',
+      idle: '💤',
+      ended: '⚫',
+      needs_restore: '🔄',
     };
 
-    const lines = entries.map(e => {
-      const emoji = statusEmoji[e.status] || '❓';
-      const age = Math.floor((Date.now() - new Date(e.startedAt).getTime()) / 60000);
-      return `${emoji} **${basename(e.cwd)}** (${e.sessionId.slice(0, 8)})\n   PID: ${e.pid} | Status: ${e.status} | Age: ${age}m`;
-    });
+    // PTY sessions
+    if (processManager) {
+      for (const e of processManager.getAllEntries()) {
+        const emoji = statusEmoji[e.status] || '❓';
+        const age = Math.floor((Date.now() - new Date(e.startedAt).getTime()) / 60000);
+        lines.push(`${emoji} 🔧 **${basename(e.cwd)}** (${e.sessionId.slice(0, 8)})\n   PTY | PID: ${e.pid} | ${e.status} | ${age}m`);
+      }
+    }
+
+    // SDK sessions
+    if (claudeSdkSessionManager) {
+      for (const s of claudeSdkSessionManager.getAllSessions()) {
+        const emoji = statusEmoji[s.status] || '❓';
+        const age = Math.floor((Date.now() - s.startedAt.getTime()) / 60000);
+        lines.push(`${emoji} 📡 **${basename(s.cwd)}** (${s.id.slice(0, 8)})\n   SDK | ${s.status} | ${age}m`);
+      }
+    }
+
+    if (lines.length === 0) {
+      await interaction.reply({ content: '📋 No managed sessions.', ephemeral: true });
+      return;
+    }
 
     const embed = new EmbedBuilder()
       .setTitle('📊 Claude Sessions')

@@ -16,7 +16,7 @@ import {
 } from './ask-question.js';
 import { handleInterruptButton, handleYoloButton } from './panel.js';
 import { handleFullResultButton } from './full-result.js';
-import { handleRestoreButton, handleDismissRestoreButton } from './restore.js';
+import { handleRestoreButton, handleDismissRestoreButton, handleRestoreSdkButton, handleDismissSdkButton } from './restore.js';
 import {
   handleStartDirSelect,
   handleStopSessionSelect,
@@ -46,6 +46,18 @@ export async function handleButton(
   // Dismiss restore button
   if (customId.startsWith('dismiss_restore:')) {
     await handleDismissRestoreButton(interaction, context);
+    return;
+  }
+
+  // Restore SDK session button
+  if (customId.startsWith('restore_sdk:')) {
+    await handleRestoreSdkButton(interaction, context);
+    return;
+  }
+
+  // Dismiss SDK restore button
+  if (customId.startsWith('dismiss_sdk:')) {
+    await handleDismissSdkButton(interaction, context);
     return;
   }
 
