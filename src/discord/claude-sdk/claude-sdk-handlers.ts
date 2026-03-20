@@ -9,6 +9,11 @@ import type {
   ClaudeSdkToolCallInfo,
   ClaudeSdkToolResultInfo,
 } from './claude-sdk-session-manager.js';
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import type { DiscordState } from '../state.js';
 import { tryRouteToAgent } from '../agent-routing.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
@@ -203,6 +208,60 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
 
       const text = `✅ Tool result: ${info.summary}`.slice(0, DISCORD_SAFE_CONTENT_LIMIT);
       await thread.send(text);
+    },
+
+    onPermissionRequest: async (sessionId, request) => {
+      const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+      if (!thread) {
+        return;
+      }
+
+      const MAX_INPUT_LENGTH = 500;
+      let inputSummary = '';
+      if (request.toolName === 'Bash' && request.toolInput?.command) {
+        inputSummary = `\`\`\`\n${String(request.toolInput.command).slice(0, MAX_INPUT_LENGTH)}\n\`\`\``;
+      } else if (request.toolInput?.file_path) {
+        inputSummary = `\`${request.toolInput.file_path}\``;
+      } else if (request.toolInput) {
+        inputSummary = `\`\`\`json\n${JSON.stringify(request.toolInput, null, 2).slice(0, MAX_INPUT_LENGTH)}\n\`\`\``;
+      }
+
+      const text = `🔐 **Permission Request: ${request.toolName}**\n${inputSummary}`;
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`perm:${request.requestId}:allow`)
+          .setLabel('Allow')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`perm:${request.requestId}:yolo`)
+          .setLabel('🔥 YOLO')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`perm:${request.requestId}:deny`)
+          .setLabel('Deny')
+          .setStyle(ButtonStyle.Danger),
+      );
+
+      try {
+        await thread.send({ content: text, components: [row] });
+      } catch (err) {
+        log.error({ err, sessionId }, 'Failed to post SDK permission request');
+      }
+    },
+
+    onYoloApprove: async (sessionId, toolName) => {
+      const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+      if (thread) {
+        thread.send(`🔥 **YOLO**: Auto-approved \`${toolName}\``).catch(() => {});
+      }
+    },
+
+    onPermissionTimeout: async (sessionId, _requestId, toolName) => {
+      const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+      if (thread) {
+        thread.send(`⏰ **Permission timed out**: \`${toolName}\` — auto-denied`).catch(() => {});
+      }
     },
 
     onError: async (sessionId, error) => {

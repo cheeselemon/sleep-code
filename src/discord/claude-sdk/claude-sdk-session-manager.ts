@@ -10,6 +10,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { discordLogger as log } from '../../utils/logger.js';
 import type { ClaudeTransport } from '../claude-transport.js';
+import type { DiscordState } from '../state.js';
 
 const END_SENTINEL = Symbol('claude-sdk-end');
 type EndSentinel = typeof END_SENTINEL;
@@ -50,16 +51,26 @@ export interface ClaudeSdkEvents {
   onToolCall: (sessionId: string, info: ClaudeSdkToolCallInfo) => void | Promise<void>;
   onToolResult: (sessionId: string, info: ClaudeSdkToolResultInfo) => void | Promise<void>;
   onError: (sessionId: string, error: Error) => void | Promise<void>;
+  onPermissionRequest?: (sessionId: string, request: { requestId: string; toolName: string; toolInput: Record<string, unknown> }) => void | Promise<void>;
+  onYoloApprove?: (sessionId: string, toolName: string) => void | Promise<void>;
+  onPermissionTimeout?: (sessionId: string, requestId: string, toolName: string) => void | Promise<void>;
 }
+
+const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
+const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 export class ClaudeSdkSessionManager {
   private sessions = new Map<string, ClaudeSdkSessionEntry>();
   private events: ClaudeSdkEvents;
+  private state: DiscordState;
   private maxQueueLength: number;
+  private permissionTimeoutMs: number;
 
-  constructor(events: ClaudeSdkEvents, options?: { maxQueueLength?: number }) {
+  constructor(events: ClaudeSdkEvents, state: DiscordState, options?: { maxQueueLength?: number; permissionTimeoutMs?: number }) {
     this.events = events;
+    this.state = state;
     this.maxQueueLength = options?.maxQueueLength ?? 10;
+    this.permissionTimeoutMs = options?.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
   }
 
   async startSession(
@@ -128,6 +139,13 @@ export class ClaudeSdkSessionManager {
       session.pendingInputResolve = null;
     }
 
+    // Cleanup pending permissions — deny all outstanding
+    for (const [reqId, perm] of session.pendingPermissions) {
+      (perm.resolve as Function)({ behavior: 'deny', message: 'Session ended' });
+      this.state.pendingPermissions.delete(reqId);
+    }
+    session.pendingPermissions.clear();
+
     session.inputQueue.length = 0;
     session.turnAbortController.abort();
     session.sessionAbortController.abort();
@@ -152,6 +170,61 @@ export class ClaudeSdkSessionManager {
 
   getAllSessions(): ClaudeSdkSessionEntry[] {
     return Array.from(this.sessions.values());
+  }
+
+  private async handleCanUseTool(
+    session: ClaudeSdkSessionEntry,
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<{ behavior: 'allow'; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message: string }> {
+    // YOLO mode: auto-approve (except excluded tools)
+    if (this.state.yoloSessions.has(session.id) && !YOLO_EXCLUDED_TOOLS.has(toolName)) {
+      log.info({ sessionId: session.id, tool: toolName }, 'SDK YOLO: auto-approving');
+      await this.events.onYoloApprove?.(session.id, toolName);
+      return { behavior: 'allow', updatedInput: input };
+    }
+
+    // Create Promise with wrappedResolve for dual-map cleanup
+    return new Promise((resolve) => {
+      const requestId = randomUUID();
+      let resolved = false;
+
+      const wrappedResolve = (decision: { behavior: 'allow' | 'deny'; message?: string }) => {
+        if (resolved) return;
+        resolved = true;
+        this.state.pendingPermissions.delete(requestId);
+        session.pendingPermissions.delete(requestId);
+
+        if (decision.behavior === 'allow') {
+          resolve({ behavior: 'allow', updatedInput: input });
+        } else {
+          resolve({ behavior: 'deny', message: decision.message || 'Permission denied' });
+        }
+      };
+
+      // Register in state.pendingPermissions (for button handler)
+      this.state.pendingPermissions.set(requestId, {
+        requestId,
+        sessionId: session.id,
+        resolve: wrappedResolve,
+      });
+
+      // Register in session.pendingPermissions (for cleanup on stop)
+      session.pendingPermissions.set(requestId, { resolve: wrappedResolve, toolName, input });
+
+      // Send permission buttons to Discord
+      this.events.onPermissionRequest?.(session.id, {
+        requestId,
+        toolName,
+        toolInput: input,
+      });
+
+      // Timeout: auto-deny after permissionTimeoutMs
+      setTimeout(() => {
+        wrappedResolve({ behavior: 'deny', message: 'Permission request timed out' });
+        this.events.onPermissionTimeout?.(session.id, requestId, toolName);
+      }, this.permissionTimeoutMs);
+    });
   }
 
   private createEntry(id: string, cwd: string, discordThreadId: string): ClaudeSdkSessionEntry {
@@ -232,10 +305,9 @@ export class ClaudeSdkSessionManager {
         cwd: session.cwd,
         model: options?.model,
         includePartialMessages: false,
-        canUseTool: async (_toolName, input) => ({
-          behavior: 'allow' as const,
-          updatedInput: input,
-        }),
+        canUseTool: async (toolName, input) => {
+          return this.handleCanUseTool(session, toolName, input as Record<string, unknown>);
+        },
       },
     });
 

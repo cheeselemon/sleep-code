@@ -108,7 +108,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     codexSessionManager,
     memoryCollector: options?.memoryCollector,
   });
-  const claudeSdkSessionManager = new ClaudeSdkSessionManager(claudeSdkEvents);
+  const claudeSdkSessionManager = new ClaudeSdkSessionManager(claudeSdkEvents, state);
   claudeSdkSessionManagerRef.current = claudeSdkSessionManager;
   log.info('Claude SDK session manager initialized');
 
