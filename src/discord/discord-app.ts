@@ -350,7 +350,56 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
-      const sdkSession = claudeSdkSessionManager.getSession(effectiveClaudeSessionId);
+      let sdkSession = claudeSdkSessionManager.getSession(effectiveClaudeSessionId);
+
+      // Lazy Resume: mapping exists but no active SDK process (e.g. after bot restart)
+      if (!sdkSession || sdkSession.status === 'ended') {
+        const persisted = channelManager.getPersistedSdkMappings().find(m => m.sessionId === effectiveClaudeSessionId);
+        if (persisted) {
+          // If sdkSessionId was never properly updated (equals internal sessionId),
+          // skip resume and go straight to fresh start
+          const canResume = persisted.sdkSessionId && persisted.sdkSessionId !== persisted.sessionId;
+
+          if (canResume) {
+            log.info({ sessionId: effectiveClaudeSessionId, sdkSessionId: persisted.sdkSessionId, cwd: persisted.cwd }, 'Lazy-resuming SDK session after bot restart');
+            try {
+              const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
+                sessionId: persisted.sessionId,
+                resume: persisted.sdkSessionId,
+              });
+              channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
+              sdkSession = entry;
+            } catch (resumeErr) {
+              log.warn({ err: resumeErr, sessionId: effectiveClaudeSessionId }, 'Lazy resume failed, trying fresh start');
+              try {
+                const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
+                  sessionId: persisted.sessionId,
+                });
+                channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
+                sdkSession = entry;
+              } catch (freshErr) {
+                log.error({ err: freshErr, sessionId: effectiveClaudeSessionId }, 'Fresh start also failed');
+                await message.reply('⚠️ Failed to resume Claude session. Use `/claude start-sdk` to start a new one.');
+                return;
+              }
+            }
+          } else {
+            log.warn({ sessionId: effectiveClaudeSessionId }, 'Skipping resume: sdkSessionId is corrupted (equals sessionId), starting fresh');
+            try {
+              const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
+                sessionId: persisted.sessionId,
+              });
+              channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
+              sdkSession = entry;
+            } catch (freshErr) {
+              log.error({ err: freshErr, sessionId: effectiveClaudeSessionId }, 'Fresh start failed');
+              await message.reply('⚠️ Failed to start Claude session. Use `/claude start-sdk` to start a new one.');
+              return;
+            }
+          }
+        }
+      }
+
       if (sdkSession && sdkSession.status !== 'ended') {
         const claudeInput = `${displayName}: ${inputText}`;
         const sent = claudeSdkSessionManager.sendInput(effectiveClaudeSessionId, claudeInput);

@@ -374,7 +374,7 @@ export class ProcessManager {
    */
   getDeadSessionsNeedingNotification(): ProcessEntry[] {
     return this.registry.entries.filter(
-      e => (e.status === 'stopped' || e.status === 'orphaned') && e.threadId
+      e => e.status === 'orphaned' && e.threadId
     );
   }
 

@@ -560,6 +560,7 @@ export class ChannelManager {
     sessionName: string,
     cwd: string,
     existingThreadId?: string,
+    sdkSessionId?: string,
   ): Promise<ChannelMapping | null> {
     if (!this.initialized) {
       const ready = await this.waitForInit();
@@ -642,7 +643,7 @@ export class ChannelManager {
     this.threadToSdkSession.set(threadId, sessionId);
     this.sdkPersistedMappings.set(sessionId, {
       sessionId,
-      sdkSessionId: sessionId,
+      sdkSessionId: sdkSessionId || sessionId,
       threadId,
       channelId,
       cwd,
@@ -732,10 +733,48 @@ export class ChannelManager {
     try {
       const data = await readFile(SDK_MAPPINGS_FILE, 'utf-8');
       const mappings: PersistedMapping[] = JSON.parse(data);
+      let cleaned = 0;
+
+      // Deduplicate: keep only the latest mapping per thread
+      const latestByThread = new Map<string, PersistedMapping>();
       for (const m of mappings) {
-        this.sdkPersistedMappings.set(m.sessionId, m);
+        if (m.threadId) {
+          latestByThread.set(m.threadId, m); // last one wins (newest)
+        }
       }
-      log.info(`Loaded ${mappings.length} persisted Claude SDK mappings`);
+
+      for (const m of latestByThread.values()) {
+        // Skip broken mappings where sdkSessionId was never updated
+        if (m.sdkSessionId === m.sessionId) {
+          log.warn({ sessionId: m.sessionId, threadId: m.threadId }, 'Skipping broken SDK mapping (sdkSessionId === sessionId)');
+          cleaned++;
+          continue;
+        }
+
+        this.sdkPersistedMappings.set(m.sessionId, m);
+        this.threadToSdkSession.set(m.threadId!, m.sessionId);
+
+        // Restore in-memory session mapping so getClaudeSdkThread() works
+        // after bot restart (lazy resume needs this to route SDK messages to Discord)
+        this.sdkSessions.set(m.sessionId, {
+          sessionId: m.sessionId,
+          channelId: m.channelId,
+          threadId: m.threadId!,
+          channelName: '',
+          threadName: '',
+          sessionName: '',
+          cwd: m.cwd,
+          status: 'idle',
+          createdAt: new Date(),
+        });
+      }
+
+      log.info(`Loaded ${this.sdkPersistedMappings.size} persisted Claude SDK mappings (cleaned ${cleaned} broken, deduped from ${mappings.length})`);
+
+      // Save cleaned mappings back to disk
+      if (cleaned > 0 || mappings.length !== this.sdkPersistedMappings.size) {
+        await this.saveSdkMappings();
+      }
     } catch (err: any) {
       if (err.code !== 'ENOENT') {
         log.error({ err: err.message }, 'Error loading SDK mappings');

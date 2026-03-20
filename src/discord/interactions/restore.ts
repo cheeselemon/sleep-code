@@ -132,12 +132,14 @@ export async function handleRestoreSdkButton(
 
   try {
     // Rebuild ChannelManager in-memory mapping (lost after bot restart)
-    await channelManager.createSdkSession(mapping.sessionId, 'restored', mapping.cwd, mapping.threadId);
+    // Preserve the real sdkSessionId to avoid re-corrupting with internal sessionId
+    await channelManager.createSdkSession(mapping.sessionId, 'restored', mapping.cwd, mapping.threadId, mapping.sdkSessionId);
 
     // Start SDK session with resume to restore conversation history
+    // resume must use sdkSessionId (the actual Claude SDK session ID), not our internal sessionId
     await claudeSdkSessionManager.startSession(mapping.cwd, mapping.threadId, {
       sessionId: mapping.sessionId,
-      resume: mapping.sessionId,
+      resume: mapping.sdkSessionId || mapping.sessionId,
     });
 
     await interaction.editReply({

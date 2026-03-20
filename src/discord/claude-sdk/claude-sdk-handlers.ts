@@ -339,6 +339,11 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       }
     },
 
+    onSdkSessionIdUpdate: (sessionId, sdkSessionId) => {
+      channelManager.setSdkSessionId(sessionId, sdkSessionId);
+      log.info({ sessionId, sdkSessionId }, 'Persisted SDK session ID to channelManager');
+    },
+
     onError: async (sessionId, error) => {
       const isAbort = error.message.includes('aborted') || error.message.includes('abort');
       const isInterrupt = error.message.includes('ede_diagnostic') || isAbort;

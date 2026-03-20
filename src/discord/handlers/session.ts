@@ -62,9 +62,10 @@ export function createSessionEndHandler(context: HandlerContext) {
       state.typingIntervals.delete(sessionId);
     }
 
-    // Update ProcessManager status
+    // Remove from ProcessManager registry (normal termination — not a restore candidate)
     if (processManager) {
       await processManager.updateStatus(sessionId, 'stopped');
+      await processManager.removeEntry(sessionId);
     }
 
     const session = channelManager.getSession(sessionId);
