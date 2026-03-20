@@ -11,10 +11,12 @@ import type {
 } from './claude-sdk-session-manager.js';
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
 } from 'discord.js';
 import type { DiscordState } from '../state.js';
+import { SKIP_RESULT_TOOLS } from '../state.js';
 import { tryRouteToAgent } from '../agent-routing.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
@@ -50,27 +52,6 @@ async function getClaudeSdkThread(
   return null;
 }
 
-function summarizeToolInput(info: ClaudeSdkToolCallInfo): string {
-  const input = info.input as Record<string, unknown> | null;
-  if (!input) {
-    return '';
-  }
-
-  if (typeof input.command === 'string') {
-    return `: \`${input.command.slice(0, 100)}${input.command.length > 100 ? '...' : ''}\``;
-  }
-
-  if (typeof input.file_path === 'string') {
-    return `: \`${input.file_path}\``;
-  }
-
-  const json = JSON.stringify(input);
-  if (!json) {
-    return '';
-  }
-
-  return `: \`${json.slice(0, 100)}${json.length > 100 ? '...' : ''}\``;
-}
 
 export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): ClaudeSdkEvents {
   const {
@@ -196,8 +177,35 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         return;
       }
 
-      const summary = summarizeToolInput(info);
-      await thread.send(`🔧 **${info.toolName}**${summary}`.slice(0, DISCORD_SAFE_CONTENT_LIMIT));
+      const input = info.input as Record<string, unknown> | null;
+      let inputSummary = '';
+      if (input) {
+        if (info.toolName === 'Bash' && typeof input.command === 'string') {
+          inputSummary = `\`${input.command.slice(0, 100)}${input.command.length > 100 ? '...' : ''}\``;
+        } else if ((info.toolName === 'Read' || info.toolName === 'Edit' || info.toolName === 'Write') && typeof input.file_path === 'string') {
+          inputSummary = `\`${input.file_path}\``;
+        } else if ((info.toolName === 'Grep' || info.toolName === 'Glob') && typeof input.pattern === 'string') {
+          inputSummary = `\`${input.pattern}\``;
+        } else if (info.toolName === 'Task' && typeof input.description === 'string') {
+          inputSummary = input.description as string;
+        }
+      }
+
+      const text = inputSummary
+        ? `🔧 **${info.toolName}**: ${inputSummary}`
+        : `🔧 **${info.toolName}**`;
+
+      try {
+        const message = await thread.send(text.slice(0, DISCORD_SAFE_CONTENT_LIMIT));
+        // Store for tool result reply + file upload
+        if (info.toolUseId) {
+          const filePath = (info.toolName === 'Write' || info.toolName === 'Edit') && input?.file_path
+            ? String(input.file_path) : undefined;
+          state.toolCallMessages.set(info.toolUseId, { messageId: message.id, toolName: info.toolName, filePath });
+        }
+      } catch (err) {
+        log.error({ err }, 'Failed to post SDK tool call');
+      }
     },
 
     onToolResult: async (sessionId, info: ClaudeSdkToolResultInfo) => {
@@ -206,8 +214,72 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         return;
       }
 
-      const text = `✅ Tool result: ${info.summary}`.slice(0, DISCORD_SAFE_CONTENT_LIMIT);
-      await thread.send(text);
+      // Process each tool use ID
+      for (const toolUseId of info.toolUseIds) {
+        const toolInfo = state.toolCallMessages.get(toolUseId);
+        state.toolCallMessages.delete(toolUseId);
+
+        // Skip verbose tool results
+        if (toolInfo && SKIP_RESULT_TOOLS.has(toolInfo.toolName)) {
+          continue;
+        }
+
+        // Upload file for Write/Edit tools
+        if (toolInfo?.filePath && (toolInfo.toolName === 'Write' || toolInfo.toolName === 'Edit')) {
+          try {
+            const attachment = new AttachmentBuilder(toolInfo.filePath);
+            await thread.send({
+              content: `📄 **File ${toolInfo.toolName === 'Write' ? 'created' : 'edited'}**`,
+              files: [attachment],
+            });
+          } catch (err) {
+            log.error({ err }, 'Failed to upload file from SDK session');
+          }
+          continue;
+        }
+
+        // Truncate long results
+        const maxLen = 300;
+        const fullContent = info.summary;
+        const isTruncated = fullContent.length > maxLen;
+        let content = fullContent;
+        if (isTruncated) {
+          content = fullContent.slice(0, maxLen) + '\n... (truncated)';
+        }
+
+        const text = `✅ Result:\n\`\`\`\n${content}\n\`\`\``;
+
+        // "View Full" button if truncated
+        let components: ActionRowBuilder<ButtonBuilder>[] = [];
+        if (isTruncated) {
+          const resultId = `${toolUseId}-${Date.now()}`;
+          state.pendingFullResults.set(resultId, {
+            content: fullContent,
+            toolName: toolInfo?.toolName || 'unknown',
+            createdAt: Date.now(),
+          });
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`fullresult:${resultId}`)
+              .setLabel('View Full')
+              .setStyle(ButtonStyle.Secondary)
+          );
+          components = [row];
+        }
+
+        try {
+          if (toolInfo?.messageId) {
+            const parentMessage = await thread.messages.fetch(toolInfo.messageId).catch(() => null);
+            if (parentMessage) {
+              await parentMessage.reply({ content: text.slice(0, DISCORD_SAFE_CONTENT_LIMIT), components });
+              continue;
+            }
+          }
+          await thread.send({ content: text.slice(0, DISCORD_SAFE_CONTENT_LIMIT), components });
+        } catch (err) {
+          log.error({ err }, 'Failed to post SDK tool result');
+        }
+      }
     },
 
     onPermissionRequest: async (sessionId, request) => {
