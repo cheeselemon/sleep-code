@@ -1,6 +1,7 @@
 import { homedir } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { cliLogger as log } from '../utils/logger.js';
 import { ProcessManager } from '../discord/process-manager.js';
 import { SettingsManager } from '../discord/settings-manager.js';
@@ -293,6 +294,8 @@ export async function discordRun(): Promise<void> {
 
     log.info({ count: deadSessions.length }, 'Startup reconciliation: notifying dead sessions');
 
+    const restorableIds: string[] = [];
+
     for (const entry of deadSessions) {
       if (!entry.threadId) continue;
 
@@ -315,7 +318,7 @@ export async function discordRun(): Promise<void> {
           await processManager.updateStatus(entry.sessionId, 'running');
           continue;
         } catch {
-          // Process is dead, proceed with cleanup
+          // Process is dead, proceed with restore offer
         }
       }
 
@@ -327,34 +330,69 @@ export async function discordRun(): Promise<void> {
             await channel.setArchived(false);
           }
 
-          // Send notification
-          const statusEmoji = entry.status === 'orphaned' ? '💀' : '🛑';
-          const reason = entry.status === 'orphaned'
-            ? 'Session crashed or became unresponsive'
-            : 'Session ended';
-          await channel.send(
-            `${statusEmoji} **Session Lost During Bot Downtime**\n` +
-            `Reason: ${reason}\n` +
-            `Session: \`${entry.sessionId.slice(0, 8)}...\`\n` +
-            `Directory: \`${entry.cwd}\``
+          // Post restore/dismiss buttons instead of cleaning up
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`restore:${entry.sessionId}`)
+              .setLabel('Restore Session')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`dismiss_restore:${entry.sessionId}`)
+              .setLabel('Dismiss')
+              .setStyle(ButtonStyle.Secondary),
           );
 
-          // Archive the thread
-          await channel.setArchived(true);
-          log.info({ sessionId: entry.sessionId, threadId: entry.threadId }, 'Notified dead session thread');
+          await channel.send({
+            content:
+              `💀 **Session Lost During Bot Downtime**\n` +
+              `Session: \`${entry.sessionId.slice(0, 8)}...\`\n` +
+              `Directory: \`${entry.cwd}\`\n\n` +
+              `Click **Restore** to resume with conversation history, or **Dismiss** to clean up.\n` +
+              `_Auto-dismissed in 1 hour._`,
+            components: [row],
+          });
+
+          // Mark as needs_restore (keep persisted mapping for thread reuse)
+          await processManager.updateStatus(entry.sessionId, 'needs_restore');
+          restorableIds.push(entry.sessionId);
+
+          log.info({ sessionId: entry.sessionId, threadId: entry.threadId }, 'Posted restore offer');
         }
       } catch (err) {
-        log.error({ err, sessionId: entry.sessionId, threadId: entry.threadId }, 'Failed to notify dead session');
+        log.error({ err, sessionId: entry.sessionId, threadId: entry.threadId }, 'Failed to post restore offer');
+        // Fall back to cleanup
+        await processManager.removeEntry(entry.sessionId);
+        await channelManager.removePersistedMapping(entry.sessionId);
       }
-
-      // Clean up the entry from registry
-      await processManager.removeEntry(entry.sessionId);
-
-      // Clean up channel manager mapping (Issue 2: add await)
-      await channelManager.removePersistedMapping(entry.sessionId);
     }
 
-    log.info('Startup reconciliation complete');
+    // Auto-dismiss unclaimed restore offers after 1 hour
+    if (restorableIds.length > 0) {
+      setTimeout(async () => {
+        for (const sessionId of restorableIds) {
+          const entry = await processManager.getEntry(sessionId);
+          if (entry?.status !== 'needs_restore') continue;
+
+          await processManager.removeEntry(sessionId);
+          await channelManager.removePersistedMapping(sessionId);
+
+          if (entry.threadId) {
+            try {
+              const ch = await client.channels.fetch(entry.threadId);
+              if (ch?.isThread()) {
+                await ch.send('⏰ **Restore expired** — session cleaned up.');
+                await ch.setArchived(true);
+              }
+            } catch {
+              // Thread may be gone
+            }
+          }
+          log.info({ sessionId }, 'Auto-dismissed expired restore offer');
+        }
+      }, 60 * 60 * 1000);
+    }
+
+    log.info({ restored: restorableIds.length }, 'Startup reconciliation complete');
   }
 
   // Graceful shutdown

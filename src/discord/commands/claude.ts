@@ -227,6 +227,62 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
     return;
   }
 
+  // /claude restore - restore a dead session in this thread
+  if (subcommand === 'restore') {
+    if (!processManager || !settingsManager) {
+      await interaction.reply({ content: '⚠️ Process management not enabled.', flags: 64 });
+      return;
+    }
+
+    const threadId = interaction.channelId;
+
+    // Find persisted mapping for this thread
+    const allPersisted = channelManager.getAllPersisted();
+    const mapping = allPersisted.find(m => m.threadId === threadId);
+
+    if (!mapping) {
+      await interaction.reply({
+        content: '❌ No previous session found for this thread.',
+        flags: 64,
+      });
+      return;
+    }
+
+    // Check if there's already a live session in this thread
+    const liveSession = channelManager.getSessionByChannel(threadId);
+    if (liveSession) {
+      await interaction.reply({
+        content: '⚠️ A session is already running in this thread.',
+        flags: 64,
+      });
+      return;
+    }
+
+    await interaction.reply({
+      content:
+        `🔄 **Restoring session...**\n` +
+        `Directory: \`${mapping.cwd}\`\n` +
+        `Session: \`${mapping.sessionId.slice(0, 8)}...\``,
+    });
+
+    try {
+      const terminalApp = settingsManager.getTerminalApp();
+      await processManager.spawn(mapping.cwd, mapping.sessionId, terminalApp, true);
+
+      await interaction.editReply({
+        content:
+          `✅ **Session restoring**\n` +
+          `Directory: \`${mapping.cwd}\`\n` +
+          `Waiting for Claude to connect...`,
+      });
+    } catch (err) {
+      await interaction.editReply({
+        content: `❌ **Failed to restore**: ${(err as Error).message}`,
+      });
+    }
+    return;
+  }
+
   // /claude set-terminal - set terminal app for new sessions
   if (subcommand === 'set-terminal') {
     if (!settingsManager) {

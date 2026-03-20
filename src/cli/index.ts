@@ -70,12 +70,14 @@ async function main() {
         providedSessionId = runOptions[sessionIdIndex + 1];
       }
 
+      const resumeFlag = runOptions.includes('--resume');
+
       const cmd = args.slice(separatorIndex + 1);
       if (cmd.length === 0) {
         console.error('No command specified after --');
         process.exit(1);
       }
-      await run(cmd, providedSessionId);
+      await run(cmd, providedSessionId, resumeFlag);
       break;
     }
 

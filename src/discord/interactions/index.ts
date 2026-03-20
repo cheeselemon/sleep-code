@@ -16,6 +16,7 @@ import {
 } from './ask-question.js';
 import { handleInterruptButton, handleYoloButton } from './panel.js';
 import { handleFullResultButton } from './full-result.js';
+import { handleRestoreButton, handleDismissRestoreButton } from './restore.js';
 import {
   handleStartDirSelect,
   handleStopSessionSelect,
@@ -34,6 +35,18 @@ export async function handleButton(
   context: InteractionContext
 ): Promise<void> {
   const customId = interaction.customId;
+
+  // Restore session button
+  if (customId.startsWith('restore:')) {
+    await handleRestoreButton(interaction, context);
+    return;
+  }
+
+  // Dismiss restore button
+  if (customId.startsWith('dismiss_restore:')) {
+    await handleDismissRestoreButton(interaction, context);
+    return;
+  }
 
   // View Full button for truncated results
   if (customId.startsWith('fullresult:')) {

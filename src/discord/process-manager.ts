@@ -14,7 +14,7 @@ export interface ProcessEntry {
   sessionId: string;
   cwd: string;
   startedAt: string;
-  status: 'starting' | 'running' | 'stopping' | 'stopped' | 'orphaned';
+  status: 'starting' | 'running' | 'stopping' | 'stopped' | 'orphaned' | 'needs_restore';
   threadId?: string;
   command: string[];
   lastVerified?: string;
@@ -75,10 +75,14 @@ export class ProcessManager {
    * @param sessionId Session ID
    * @param terminalApp Terminal app to use (default: background)
    */
-  async spawn(cwd: string, sessionId: string, terminalApp: TerminalApp = 'background'): Promise<ProcessEntry> {
+  async spawn(cwd: string, sessionId: string, terminalApp: TerminalApp = 'background', resume = false): Promise<ProcessEntry> {
     // Get the path to the sleep-code script
     const sleepCodePath = process.argv[1];
-    const command = ['node', sleepCodePath, 'run', '--session-id', sessionId, '--', 'claude'];
+    const command = ['node', sleepCodePath, 'run'];
+    if (resume) {
+      command.push('--resume');
+    }
+    command.push('--session-id', sessionId, '--', 'claude');
 
     log.info({ cwd, sessionId, terminalApp, command: command.join(' ') }, 'Spawning process');
 
@@ -106,6 +110,20 @@ export class ProcessManager {
       const result = await this.spawnInTerminal(cwd, command, terminalApp);
       pid = result.pid;
       terminalWindowId = result.windowId;
+    }
+
+    // If restoring an existing entry (e.g., needs_restore), update it in-place
+    const existing = this.registry.entries.find(e => e.sessionId === sessionId);
+    if (existing) {
+      existing.pid = pid;
+      existing.status = 'starting';
+      existing.startedAt = new Date().toISOString();
+      existing.command = command;
+      existing.terminalApp = terminalApp !== 'background' ? terminalApp : undefined;
+      existing.terminalWindowId = terminalWindowId;
+      await this.saveRegistry();
+      log.info({ pid, sessionId, terminalApp, resume }, 'Process restored');
+      return existing;
     }
 
     const entry: ProcessEntry = {
@@ -361,6 +379,13 @@ export class ProcessManager {
   }
 
   /**
+   * Get sessions awaiting restore
+   */
+  getRestorableSessions(): ProcessEntry[] {
+    return this.registry.entries.filter(e => e.status === 'needs_restore');
+  }
+
+  /**
    * Remove entry from registry (after cleanup is complete)
    */
   async removeEntry(sessionId: string): Promise<void> {
@@ -438,7 +463,7 @@ export class ProcessManager {
       const originalStatus = entry.status;
 
       // Skip already terminal states
-      if (originalStatus === 'stopped' || originalStatus === 'orphaned') {
+      if (originalStatus === 'stopped' || originalStatus === 'orphaned' || originalStatus === 'needs_restore') {
         entry.lastVerified = new Date().toISOString();
         continue;
       }
@@ -519,7 +544,7 @@ export class ProcessManager {
     // Clean up old stopped/orphaned entries (> 24 hours)
     const oldLength = this.registry.entries.length;
     this.registry.entries = this.registry.entries.filter(e => {
-      if (e.status === 'stopped' || e.status === 'orphaned') {
+      if (e.status === 'stopped' || e.status === 'orphaned' || e.status === 'needs_restore') {
         const startTime = new Date(e.startedAt).getTime();
         const entryAge = isNaN(startTime) ? Infinity : now - startTime;
         return entryAge < 24 * 60 * 60 * 1000;

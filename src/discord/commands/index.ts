@@ -84,7 +84,10 @@ export const commands = [
         .setDescription('List all whitelisted directories'))
     .addSubcommand(sub =>
       sub.setName('set-terminal')
-        .setDescription('Set terminal app for new sessions')),
+        .setDescription('Set terminal app for new sessions'))
+    .addSubcommand(sub =>
+      sub.setName('restore')
+        .setDescription('Restore a dead session in this thread')),
   new SlashCommandBuilder()
     .setName('status')
     .setDescription('Show current thread session status'),

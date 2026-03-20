@@ -226,7 +226,7 @@ class TitleExtractor {
 }
 
 
-export async function run(command: string[], providedSessionId?: string): Promise<void> {
+export async function run(command: string[], providedSessionId?: string, resume = false): Promise<void> {
   // Use provided session ID or generate a new one
   const sessionId = providedSessionId || randomUUID();
   const cwd = process.cwd();
@@ -238,8 +238,13 @@ export async function run(command: string[], providedSessionId?: string): Promis
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
 
-  // Inject --session-id flag to control JSONL filename
-  const args = [...command.slice(1), '--session-id', sessionId];
+  // Inject session flag: --resume <id> for restore, --session-id <id> for new
+  const args = [...command.slice(1)];
+  if (resume) {
+    args.push('--resume', sessionId);
+  } else {
+    args.push('--session-id', sessionId);
+  }
 
   const ptyProcess = pty.spawn(command[0], args, {
     name: process.env.TERM || 'xterm-256color',
