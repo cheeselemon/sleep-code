@@ -3,16 +3,25 @@
  */
 
 import type { CommandHandler } from './types.js';
-import { getSessionFromChannel } from './helpers.js';
+import { getTransportFromChannel } from './helpers.js';
+
+function getUnsupportedTransportMessage(commandName: string): string {
+  return `⚠️ \`/${commandName}\` is not supported in SDK sessions.`;
+}
 
 export const handleBackground: CommandHandler = async (interaction, context) => {
-  const result = getSessionFromChannel(interaction.channelId, context);
+  const result = getTransportFromChannel(interaction.channelId, context);
   if ('error' in result) {
     await interaction.reply(`⚠️ ${result.error}`);
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x02', false); // Ctrl+B
+  if (!result.transport.supportsTerminalControls) {
+    await interaction.reply(getUnsupportedTransportMessage('background'));
+    return;
+  }
+
+  const sent = await Promise.resolve(result.transport.sendInput('\x02', { submit: false })); // Ctrl+B
   if (sent) {
     await interaction.reply('⬇️ Sent background command (Ctrl+B)');
   } else {
@@ -21,7 +30,7 @@ export const handleBackground: CommandHandler = async (interaction, context) => 
 };
 
 export const handleInterrupt: CommandHandler = async (interaction, context) => {
-  const result = getSessionFromChannel(interaction.channelId, context);
+  const result = getTransportFromChannel(interaction.channelId, context);
   if ('error' in result) {
     await interaction.reply(`⚠️ ${result.error}`);
     return;
@@ -29,8 +38,7 @@ export const handleInterrupt: CommandHandler = async (interaction, context) => {
 
   const parts: string[] = [];
 
-  // Interrupt Claude (Escape x2)
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b\x1b', false);
+  const sent = await Promise.resolve(result.transport.interrupt());
   parts.push(sent ? '🛑 Claude interrupted' : '⚠️ Claude: session not connected');
 
   // Also interrupt Codex if active in the same thread
@@ -48,13 +56,18 @@ export const handleInterrupt: CommandHandler = async (interaction, context) => {
 };
 
 export const handleMode: CommandHandler = async (interaction, context) => {
-  const result = getSessionFromChannel(interaction.channelId, context);
+  const result = getTransportFromChannel(interaction.channelId, context);
   if ('error' in result) {
     await interaction.reply(`⚠️ ${result.error}`);
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '\x1b[Z', false); // Shift+Tab
+  if (!result.transport.supportsTerminalControls) {
+    await interaction.reply(getUnsupportedTransportMessage('mode'));
+    return;
+  }
+
+  const sent = await Promise.resolve(result.transport.sendInput('\x1b[Z', { submit: false })); // Shift+Tab
   if (sent) {
     await interaction.reply('🔄 Sent mode toggle (Shift+Tab)');
   } else {
@@ -63,13 +76,18 @@ export const handleMode: CommandHandler = async (interaction, context) => {
 };
 
 export const handleCompact: CommandHandler = async (interaction, context) => {
-  const result = getSessionFromChannel(interaction.channelId, context);
+  const result = getTransportFromChannel(interaction.channelId, context);
   if ('error' in result) {
     await interaction.reply(`⚠️ ${result.error}`);
     return;
   }
 
-  const sent = context.sessionManager.sendInput(result.sessionId, '/compact\n');
+  if (!result.transport.supportsTerminalControls) {
+    await interaction.reply(getUnsupportedTransportMessage('compact'));
+    return;
+  }
+
+  const sent = await Promise.resolve(result.transport.sendInput('/compact\n'));
   if (sent) {
     await interaction.reply('🗜️ Sent /compact');
   } else {
@@ -78,16 +96,21 @@ export const handleCompact: CommandHandler = async (interaction, context) => {
 };
 
 export const handleModel: CommandHandler = async (interaction, context) => {
-  const result = getSessionFromChannel(interaction.channelId, context);
+  const result = getTransportFromChannel(interaction.channelId, context);
   if ('error' in result) {
     await interaction.reply(`⚠️ ${result.error}`);
+    return;
+  }
+
+  if (!result.transport.supportsModelSwitch) {
+    await interaction.reply(getUnsupportedTransportMessage('model'));
     return;
   }
 
   const modelArg = interaction.options.getString('name', true);
   const command = `/model ${modelArg}`;
   // Don't add \n - sendInput will add \r after 100ms
-  const sent = context.sessionManager.sendInput(result.sessionId, command);
+  const sent = await Promise.resolve(result.transport.sendInput(command));
   if (sent) {
     await interaction.reply(`🧠 Sent ${command}`);
   } else {

@@ -9,8 +9,16 @@ import { parseRoutingDirective } from './utils.js';
 import { MAX_AGENT_ROUTING } from './state.js';
 import type { DiscordState } from './state.js';
 import { DISCORD_SAFE_CONTENT_LIMIT } from './constants.js';
+import type { ClaudeTransport } from './claude-transport.js';
 
 type AgentType = 'claude' | 'codex';
+
+export interface AgentRouteTarget {
+  agent: AgentType;
+  transportType?: ClaudeTransport['type'];
+  isAvailable: () => boolean;
+  send: (content: string) => Promise<boolean> | boolean;
+}
 
 export interface RouteParams {
   thread: ThreadChannel;
@@ -18,6 +26,7 @@ export interface RouteParams {
   agents: { claude?: string; codex?: string };
   sourceAgent: AgentType;
   state: DiscordState;
+  target?: AgentRouteTarget;
   sendToTarget: (content: string) => Promise<boolean> | boolean;
   isTargetAvailable: () => boolean;
   onBeforeSend?: (content: string) => void;
@@ -32,8 +41,13 @@ export interface RouteResult {
  * Returns { routed: true } if the message was forwarded (caller should skip normal display).
  */
 export async function tryRouteToAgent(params: RouteParams): Promise<RouteResult> {
-  const { thread, content, agents, sourceAgent, state, sendToTarget, isTargetAvailable, onBeforeSend } = params;
+  const { thread, content, agents, sourceAgent, onBeforeSend, state, target } = params;
   const targetAgent: AgentType = sourceAgent === 'claude' ? 'codex' : 'claude';
+  const routeTarget: AgentRouteTarget = target ?? {
+    agent: targetAgent,
+    isAvailable: params.isTargetAvailable,
+    send: params.sendToTarget,
+  };
 
   const directive = parseRoutingDirective(content, {
     hasClaude: !!agents.claude,
@@ -65,7 +79,7 @@ export async function tryRouteToAgent(params: RouteParams): Promise<RouteResult>
     return { routed: false };
   }
 
-  if (!isTargetAvailable()) {
+  if (!routeTarget.isAvailable()) {
     const label = targetAgent === 'codex' ? 'Codex session is not active' : 'Claude session is not available';
     try {
       await thread.send(`⚠️ @${targetAgent} mention detected but ${label}. Displaying normally.`);
@@ -93,7 +107,7 @@ export async function tryRouteToAgent(params: RouteParams): Promise<RouteResult>
     onBeforeSend(messageForTarget);
   }
 
-  const sent = await Promise.resolve(sendToTarget(messageForTarget));
+  const sent = await Promise.resolve(routeTarget.send(messageForTarget));
   if (!sent) {
     try {
       const failMsg = targetAgent === 'codex'

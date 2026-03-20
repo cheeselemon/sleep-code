@@ -3,6 +3,7 @@
  */
 
 import type { CommandHandler } from './types.js';
+import { createPtyTransport, type ClaudeTransport } from '../claude-transport.js';
 
 /**
  * Validate session context from channel/thread ID.
@@ -25,4 +26,31 @@ export function getSessionFromChannel(
   }
 
   return { sessionId };
+}
+
+/**
+ * Resolve the active Claude transport for a channel/thread.
+ * SDK support is optional and falls back to the legacy PTY lookup.
+ */
+export function getTransportFromChannel(
+  channelId: string,
+  context: Parameters<CommandHandler>[1]
+): { transport: ClaudeTransport } | { error: string } {
+  const sdkSession = context.claudeSdkSessionManager?.getSessionByThread(channelId);
+  if (sdkSession) {
+    return { transport: sdkSession.transport };
+  }
+
+  const sessionResult = getSessionFromChannel(channelId, context);
+  if ('error' in sessionResult) {
+    return sessionResult;
+  }
+
+  return {
+    transport: createPtyTransport(
+      sessionResult.sessionId,
+      context.sessionManager,
+      context.processManager,
+    ),
+  };
 }
