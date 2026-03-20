@@ -221,6 +221,7 @@ export class ClaudeSdkSessionManager {
 
       // Timeout: auto-deny after permissionTimeoutMs
       setTimeout(() => {
+        if (resolved) return; // Already handled (button clicked or session stopped)
         wrappedResolve({ behavior: 'deny', message: 'Permission request timed out' });
         this.events.onPermissionTimeout?.(session.id, requestId, toolName);
       }, this.permissionTimeoutMs);
