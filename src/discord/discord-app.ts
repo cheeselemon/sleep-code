@@ -35,6 +35,7 @@ import { createState, cleanupState } from './state.js';
 // Import utils
 import { downloadAttachment, downloadTextAttachment, parseRoutingDirective } from './utils.js';
 import { basename } from 'path';
+import { randomUUID } from 'crypto';
 
 // Import command handlers
 import { commands, handleCommand } from './commands/index.js';
@@ -312,11 +313,41 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       // Route to Claude
       let effectiveClaudeSessionId = claudeSessionId;
 
-      // Auto-create Claude session is not supported via message routing
-      // (Claude needs PTY + process spawning, too complex for auto-create)
+      // Auto-create Claude SDK session if @claude mentioned but no session exists
       if (!effectiveClaudeSessionId) {
-        await message.reply('⚠️ No Claude session in this thread. Use `/claude start` first.');
-        return;
+        // Get CWD from the existing Codex session
+        const codexEntry = codexSessionId
+          ? codexSessionManager?.getSession(codexSessionId)
+          : null;
+        if (!codexEntry) {
+          await message.reply('⚠️ No Claude session in this thread. Use `/claude start` or `/claude start-sdk` first.');
+          return;
+        }
+
+        try {
+          const sdkSessionId = randomUUID();
+          const sessionName = `claude-sdk-auto`;
+          const mapping = await channelManager.createSdkSession(sdkSessionId, sessionName, codexEntry.cwd, threadId);
+          if (!mapping) {
+            await message.reply('⚠️ Failed to create Claude SDK session.');
+            return;
+          }
+
+          const entry = await claudeSdkSessionManager.startSession(codexEntry.cwd, mapping.threadId, {
+            sessionId: sdkSessionId,
+          });
+          channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
+          effectiveClaudeSessionId = entry.id;
+          log.info({ sessionId: entry.id, cwd: codexEntry.cwd }, 'Auto-created Claude SDK session in existing thread');
+
+          try {
+            await message.channel.send('**Claude joined this thread (SDK mode).** Messages are prefixed with agent names.');
+          } catch { /* ignore */ }
+        } catch (err) {
+          log.error({ err }, 'Failed to auto-create Claude SDK session');
+          await message.reply(`⚠️ Failed to start Claude SDK: ${(err as Error).message}`);
+          return;
+        }
       }
 
       const sdkSession = claudeSdkSessionManager.getSession(effectiveClaudeSessionId);

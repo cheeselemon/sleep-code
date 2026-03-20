@@ -28,6 +28,7 @@ export interface ClaudeSdkSessionEntry {
   maxQueueLength: number;
   pendingPermissions: Map<string, { resolve: Function; toolName: string; input: unknown }>;
   activeQuery: Query | null;
+  interrupted: boolean;
   transport: ClaudeTransport;
 }
 
@@ -117,6 +118,7 @@ export class ClaudeSdkSessionManager {
       return false;
     }
 
+    session.interrupted = true;
     session.turnAbortController.abort();
     void session.activeQuery?.interrupt().catch((err) => {
       log.warn({ sessionId, err }, 'Failed to interrupt Claude SDK query');
@@ -242,6 +244,7 @@ export class ClaudeSdkSessionManager {
       maxQueueLength: this.maxQueueLength,
       pendingPermissions: new Map(),
       activeQuery: null,
+      interrupted: false,
       transport: {
         type: 'sdk',
         sessionId: id,
@@ -332,13 +335,22 @@ export class ClaudeSdkSessionManager {
     } catch (err) {
       if (session.status !== 'ended') {
         terminatedUnexpectedly = true;
-        throw err;
+        if (!session.interrupted) {
+          throw err;
+        }
       }
     } finally {
       session.sessionAbortController.signal.removeEventListener('abort', closeQuery);
       session.activeQuery = null;
 
-      if (terminatedUnexpectedly) {
+      if (session.interrupted) {
+        // Interrupt is intentional — recover to idle, ready for next input
+        session.interrupted = false;
+        session.turnAbortController = new AbortController();
+        session.status = 'idle';
+        await this.events.onSessionStatus?.(session.id, 'idle');
+        log.info({ sessionId: session.id }, 'SDK session recovered from interrupt');
+      } else if (terminatedUnexpectedly) {
         await this.events.onError(session.id, new Error('Claude SDK query ended unexpectedly.'));
         await this.finalizeSession(session, true);
       }
