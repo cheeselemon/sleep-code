@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Permission request handling with interactive buttons (Discord/Slack)
 - YOLO mode for auto-approving all permissions
 - Session management from Discord (start/stop/restore sessions remotely)
-- Session restore after terminal close with conversation history (`/claude restore` or auto Restore button)
+- Session restore: PTY via `/claude restore`, SDK via lazy resume (auto-resumes on next message after bot restart)
 - Terminal app support (Terminal.app, iTerm2) on macOS
 - Multi-platform: Telegram, Discord, Slack
 - Semantic memory pipeline (auto-distill conversations → LanceDB)
@@ -88,10 +88,13 @@ src/
 │   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js app, slash commands, button handlers
-│   ├── channel-manager.ts  # Thread/channel management, session mapping
+│   ├── channel-manager.ts  # Thread/channel management, session mapping, SDK lazy resume persistence
 │   ├── process-manager.ts  # Session spawning, lifecycle, terminal window tracking
 │   ├── settings-manager.ts # User settings (allowed directories, terminal app)
 │   ├── agent-routing.ts    # @codex/@claude message routing
+│   ├── claude-sdk/          # Claude Agent SDK integration
+│   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream, prompt generator
+│   │   └── claude-sdk-handlers.ts         # SDK event → Discord message handlers
 │   └── codex/              # Codex CLI agent integration
 │       ├── codex-session-manager.ts
 │       └── codex-handlers.ts
@@ -115,7 +118,9 @@ explorer/                   # Memory Explorer web app (Next.js 16)
 3. SessionManager watches Claude's JSONL files (`~/.claude/projects/*/{sessionId}.jsonl`)
 4. Messages relay bidirectionally: JSONL → Bot → Chat, Chat → Bot → PTY
 5. Permission requests forward to chat for interactive approval (Allow / YOLO / Deny buttons)
-6. On bot restart, waits 35s for CLI sessions to reconnect, then reconciles orphaned sessions
+6. On bot restart:
+   - PTY sessions: waits 35s for CLI reconnection, then reconciles orphaned sessions
+   - SDK sessions: persisted mappings restored to memory on load; lazy resume on next user message (loads JSONL history, reconnects SDK query stream)
 
 ## Key Components
 
@@ -139,7 +144,20 @@ Discord-only. Handles:
 - Creating dedicated text channels per CWD (`sleep-{foldername}`) inside "Sleep Code Sessions" category
 - Creating threads for each session within the channel
 - Session-to-thread mapping with persistence (`~/.sleep-code/session-mappings.json`)
+- SDK session mapping with lazy resume support (`~/.sleep-code/sdk-session-mappings.json`)
+  - Tracks `sessionId` (internal) vs `sdkSessionId` (Claude Agent SDK) separately
+  - Restores in-memory maps on bot startup for message routing
+  - Deduplicates and cleans broken mappings on load
 - Thread archival on session end
+
+### ClaudeSdkSessionManager (`src/discord/claude-sdk/claude-sdk-session-manager.ts`)
+Discord-only. Handles:
+- Claude Agent SDK sessions via `@anthropic-ai/claude-agent-sdk` `query()` API
+- Async generator prompt input + async iterable output stream
+- `canUseTool` callback for permission handling (Allow/YOLO/Deny)
+- Session resume from JSONL history (`resume: sdkSessionId`)
+- Lazy resume: auto-resumes on first message after bot restart
+- Loads CLAUDE.md and user/project settings via `settingSources: ['user', 'project', 'local']`
 
 ### CodexSessionManager (`src/discord/codex/codex-session-manager.ts`)
 Discord-only. Handles:
@@ -227,6 +245,7 @@ Long context (3+ lines) between agents **must be shared via files** due to Disco
 | `~/.sleep-code/process-registry.json` | ProcessManager session registry |
 | `~/.sleep-code/session-mappings.json` | Claude session → Discord thread mappings |
 | `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
+| `~/.sleep-code/sdk-session-mappings.json` | Claude SDK session → Discord thread + sdkSessionId mappings |
 | `~/.sleep-code/memory/lancedb/` | LanceDB vector store |
 
 ## Environment Variables
