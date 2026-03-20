@@ -306,6 +306,7 @@ export class ClaudeSdkSessionManager {
         model: options?.model,
         resume: options?.resume,
         includePartialMessages: false,
+        settingSources: ['user', 'project', 'local'],
         canUseTool: async (toolName, input) => {
           return this.handleCanUseTool(session, toolName, input as Record<string, unknown>);
         },
