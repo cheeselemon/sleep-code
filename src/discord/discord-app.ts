@@ -26,6 +26,8 @@ import type { SettingsManager } from './settings-manager.js';
 import { CodexSessionManager } from './codex/codex-session-manager.js';
 import { createCodexEvents } from './codex/codex-handlers.js';
 import { CODEX_MODEL } from './codex/codex-session-manager.js';
+import { ClaudeSdkSessionManager } from './claude-sdk/claude-sdk-session-manager.js';
+import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
 
 // Import state management
 import { createState, cleanupState } from './state.js';
@@ -78,11 +80,19 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
+  const claudeSdkSessionManagerRef: { current: ClaudeSdkSessionManager | undefined } = { current: undefined };
 
   // Initialize Codex session manager if enabled
   let codexSessionManager: CodexSessionManager | undefined;
   if (enableCodex) {
-    const codexEvents = createCodexEvents({ client, channelManager, state, sessionManagerRef, memoryCollector: options?.memoryCollector });
+    const codexEvents = createCodexEvents({
+      client,
+      channelManager,
+      state,
+      sessionManagerRef,
+      claudeSdkSessionManagerRef,
+      memoryCollector: options?.memoryCollector,
+    });
     codexSessionManager = new CodexSessionManager(codexEvents, {
       onCodexThreadIdSet: (sessionId, codexThreadId) => {
         channelManager.setCodexThreadId(sessionId, codexThreadId);
@@ -91,12 +101,24 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     log.info('Codex session manager initialized');
   }
 
+  const claudeSdkEvents = createClaudeSdkHandlers({
+    client,
+    channelManager,
+    state,
+    codexSessionManager,
+    memoryCollector: options?.memoryCollector,
+  });
+  const claudeSdkSessionManager = new ClaudeSdkSessionManager(claudeSdkEvents);
+  claudeSdkSessionManagerRef.current = claudeSdkSessionManager;
+  log.info('Claude SDK session manager initialized');
+
   // Create handler context
   const handlerContext = {
     client,
     channelManager,
     processManager,
     codexSessionManager,
+    claudeSdkSessionManager,
     state,
     memoryCollector: options?.memoryCollector,
   };
@@ -118,6 +140,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     processManager,
     settingsManager,
     codexSessionManager,
+    claudeSdkSessionManager,
     state,
   };
 
@@ -170,7 +193,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     // Collect user message for memory
     if (handlerContext.memoryCollector && cleanContent.trim()) {
-      const sessionCwd = claudeSessionId ? sessionManager.getSession(claudeSessionId)?.cwd : undefined;
+      const claudeMapping = claudeSessionId
+        ? channelManager.getSession(claudeSessionId) ?? channelManager.getSdkSession(claudeSessionId)
+        : undefined;
+      const sessionCwd = claudeMapping?.cwd;
       handlerContext.memoryCollector.onMessage({
         speaker: 'user',
         displayName: message.member?.displayName ?? message.author.username,
@@ -242,7 +268,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       let effectiveCodexSessionId = codexSessionId;
       if (!effectiveCodexSessionId) {
         // Get CWD from the existing Claude session
-        const claudeMapping = claudeSessionId ? channelManager.getSession(claudeSessionId) : null;
+        const claudeMapping = claudeSessionId
+          ? channelManager.getSession(claudeSessionId) ?? channelManager.getSdkSession(claudeSessionId)
+          : null;
         if (!claudeMapping) {
           await message.reply('⚠️ Cannot determine working directory for Codex.');
           return;
@@ -288,6 +316,19 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       // (Claude needs PTY + process spawning, too complex for auto-create)
       if (!effectiveClaudeSessionId) {
         await message.reply('⚠️ No Claude session in this thread. Use `/claude start` first.');
+        return;
+      }
+
+      const sdkSession = claudeSdkSessionManager.getSession(effectiveClaudeSessionId);
+      if (sdkSession && sdkSession.status !== 'ended') {
+        const claudeInput = `${displayName}: ${inputText}`;
+        const sent = claudeSdkSessionManager.sendInput(effectiveClaudeSessionId, claudeInput);
+        if (!sent) {
+          await message.reply('⚠️ Failed to send input to Claude SDK - session busy or ended.');
+          return;
+        }
+
+        state.lastActiveAgent.set(threadId, 'claude');
         return;
       }
 
@@ -383,5 +424,5 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     cleanupState(state);
   };
 
-  return { client, sessionManager, channelManager, codexSessionManager, cleanup };
+  return { client, sessionManager, channelManager, codexSessionManager, claudeSdkSessionManager, cleanup };
 }

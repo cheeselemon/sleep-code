@@ -9,7 +9,7 @@ import type { SettingsManager } from '../settings-manager.js';
 import type { SessionManager } from '../../slack/session-manager.js';
 import type { DiscordState } from '../state.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
-import type { ClaudeSdkSessionManagerLike } from '../claude-transport.js';
+import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
 
 export interface CommandContext {
   client: Client;
@@ -18,7 +18,7 @@ export interface CommandContext {
   processManager?: ProcessManager;
   settingsManager?: SettingsManager;
   codexSessionManager?: CodexSessionManager;
-  claudeSdkSessionManager?: ClaudeSdkSessionManagerLike;
+  claudeSdkSessionManager?: ClaudeSdkSessionManager;
   state: DiscordState;
 }
 

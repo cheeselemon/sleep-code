@@ -8,6 +8,7 @@ import { discordLogger as log } from '../utils/logger.js';
 const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
 const CODEX_MAPPINGS_FILE = join(MAPPINGS_DIR, 'codex-session-mappings.json');
+const SDK_MAPPINGS_FILE = join(MAPPINGS_DIR, 'sdk-session-mappings.json');
 
 export interface PersistedMapping {
   sessionId: string;
@@ -15,6 +16,7 @@ export interface PersistedMapping {
   channelId: string;
   cwd: string;
   codexThreadId?: string; // Codex SDK thread ID for resumeThread()
+  sdkSessionId?: string; // Claude Agent SDK session ID for resume()
 }
 
 export interface ChannelMapping {
@@ -72,6 +74,11 @@ export class ChannelManager {
   private codexSessions = new Map<string, ChannelMapping>();       // sessionId -> mapping
   private threadToCodexSession = new Map<string, string>();        // threadId -> sessionId
   private codexPersistedMappings = new Map<string, PersistedMapping>();
+
+  // Claude SDK session tracking (parallel to PTY Claude)
+  private sdkSessions = new Map<string, ChannelMapping>();
+  private threadToSdkSession = new Map<string, string>();
+  private sdkPersistedMappings = new Map<string, PersistedMapping>();
   private client: Client;
   private userId: string;
   private guild: Guild | null = null;
@@ -178,6 +185,7 @@ export class ChannelManager {
     // Load persisted session mappings first
     await this.loadMappings();
     await this.loadCodexMappings();
+    await this.loadSdkMappings();
 
     // Find the first guild the bot is in
     const guilds = await this.client.guilds.fetch();
@@ -545,6 +553,186 @@ export class ChannelManager {
     return this.persistedMappings.get(sessionId);
   }
 
+  // ── Claude SDK session methods ──────────────────────────────
+
+  async createSdkSession(
+    sessionId: string,
+    sessionName: string,
+    cwd: string,
+    existingThreadId?: string,
+  ): Promise<ChannelMapping | null> {
+    if (!this.initialized) {
+      const ready = await this.waitForInit();
+      if (!ready) return null;
+    }
+
+    if (this.sdkSessions.has(sessionId)) {
+      return this.sdkSessions.get(sessionId)!;
+    }
+
+    let threadId = existingThreadId;
+    let channelId = '';
+    let threadName = '';
+    let channelName = '';
+
+    if (existingThreadId) {
+      try {
+        const thread = await this.client.channels.fetch(existingThreadId);
+        if (thread?.isThread()) {
+          threadId = thread.id;
+          threadName = thread.name;
+          channelId = thread.parentId || '';
+        }
+      } catch {
+        log.warn({ existingThreadId }, 'Failed to fetch existing thread for Claude SDK');
+        return null;
+      }
+    } else {
+      const channel = await this.getOrCreateChannel(cwd);
+      if (!channel) return null;
+
+      channelId = channel.id;
+      channelName = channel.name;
+
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const name = `claude-sdk-${sessionId.slice(0, 8)} - ${timestamp}`;
+
+      try {
+        const thread = await channel.threads.create({
+          name: name.slice(0, 100),
+          autoArchiveDuration: 10080,
+          reason: `Claude SDK session ${sessionId}`,
+        });
+        threadId = thread.id;
+        threadName = thread.name;
+
+        if (this.userId) {
+          await thread.members.add(this.userId).catch(() => {});
+        }
+
+        await thread.send(
+          `📡 **Claude SDK Session Starting**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+        );
+      } catch (err: any) {
+        log.error({ err: err.message }, 'Failed to create Claude SDK thread');
+        return null;
+      }
+    }
+
+    if (!threadId) return null;
+
+    const mapping: ChannelMapping = {
+      sessionId,
+      channelId,
+      threadId,
+      channelName,
+      threadName,
+      sessionName,
+      cwd,
+      status: 'idle',
+      createdAt: new Date(),
+    };
+
+    this.sdkSessions.set(sessionId, mapping);
+    this.threadToSdkSession.set(threadId, sessionId);
+    this.sdkPersistedMappings.set(sessionId, {
+      sessionId,
+      sdkSessionId: sessionId,
+      threadId,
+      channelId,
+      cwd,
+    });
+    await this.saveSdkMappings();
+
+    log.info({ sessionId, threadId }, 'Claude SDK session mapping stored');
+    return mapping;
+  }
+
+  getSdkSession(sessionId: string): ChannelMapping | undefined {
+    return this.sdkSessions.get(sessionId);
+  }
+
+  getSdkSessionByThread(threadId: string): string | undefined {
+    return this.threadToSdkSession.get(threadId);
+  }
+
+  updateSdkStatus(sessionId: string, status: 'running' | 'idle' | 'ended'): void {
+    const mapping = this.sdkSessions.get(sessionId);
+    if (mapping) {
+      mapping.status = status;
+    }
+  }
+
+  setSdkSessionId(sessionId: string, sdkSessionId: string): void {
+    const persisted = this.sdkPersistedMappings.get(sessionId);
+    if (persisted) {
+      persisted.sdkSessionId = sdkSessionId;
+      void this.saveSdkMappings();
+    }
+  }
+
+  getPersistedSdkMappings(): PersistedMapping[] {
+    return Array.from(this.sdkPersistedMappings.values());
+  }
+
+  async archiveSdkSession(sessionId: string): Promise<boolean> {
+    const mapping = this.sdkSessions.get(sessionId);
+    if (!mapping) return false;
+
+    mapping.status = 'ended';
+
+    const codexSessionId = this.threadToCodexSession.get(mapping.threadId);
+    const codexMapping = codexSessionId ? this.codexSessions.get(codexSessionId) : undefined;
+    const codexActive = codexMapping && codexMapping.status !== 'ended';
+
+    if (!codexActive) {
+      try {
+        const thread = await this.client.channels.fetch(mapping.threadId);
+        if (thread?.isThread()) {
+          await thread.setArchived(true);
+        }
+      } catch (err: any) {
+        log.error({ err: err.message }, 'Failed to archive Claude SDK thread');
+      }
+    }
+
+    this.threadToSdkSession.delete(mapping.threadId);
+    this.sdkSessions.delete(sessionId);
+    this.sdkPersistedMappings.delete(sessionId);
+    await this.saveSdkMappings();
+    return true;
+  }
+
+  private async saveSdkMappings(): Promise<void> {
+    try {
+      await mkdir(MAPPINGS_DIR, { recursive: true });
+      const mappings = Array.from(this.sdkPersistedMappings.values());
+      await writeFile(SDK_MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
+    } catch (err: any) {
+      log.error({ err: err.message }, 'Error saving SDK mappings');
+    }
+  }
+
+  private async loadSdkMappings(): Promise<void> {
+    try {
+      const data = await readFile(SDK_MAPPINGS_FILE, 'utf-8');
+      const mappings: PersistedMapping[] = JSON.parse(data);
+      for (const m of mappings) {
+        this.sdkPersistedMappings.set(m.sessionId, m);
+      }
+      log.info(`Loaded ${mappings.length} persisted Claude SDK mappings`);
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') {
+        log.error({ err: err.message }, 'Error loading SDK mappings');
+      }
+    }
+  }
+
   // ── Codex session methods ───────────────────────────────────
 
   /**
@@ -723,7 +911,7 @@ export class ChannelManager {
    */
   getAgentsInThread(threadId: string): { claude?: string; codex?: string } {
     return {
-      claude: this.threadToSession.get(threadId),
+      claude: this.threadToSession.get(threadId) || this.threadToSdkSession.get(threadId),
       codex: this.threadToCodexSession.get(threadId),
     };
   }
@@ -735,9 +923,13 @@ export class ChannelManager {
     mapping.status = 'ended';
 
     // Only archive thread if no Claude session is active in it
-    const claudeInThread = this.threadToSession.get(mapping.threadId);
-    const claudeMapping = claudeInThread ? this.sessions.get(claudeInThread) : undefined;
-    const claudeActive = claudeMapping && claudeMapping.status !== 'ended';
+    const ptyClaudeInThread = this.threadToSession.get(mapping.threadId);
+    const ptyClaudeMapping = ptyClaudeInThread ? this.sessions.get(ptyClaudeInThread) : undefined;
+    const sdkClaudeInThread = this.threadToSdkSession.get(mapping.threadId);
+    const sdkClaudeMapping = sdkClaudeInThread ? this.sdkSessions.get(sdkClaudeInThread) : undefined;
+    const claudeActive =
+      (ptyClaudeMapping && ptyClaudeMapping.status !== 'ended') ||
+      (sdkClaudeMapping && sdkClaudeMapping.status !== 'ended');
 
     if (!claudeActive) {
       try {

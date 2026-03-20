@@ -13,12 +13,14 @@ import type { SessionManager } from '../../slack/session-manager.js';
 import type { CodexEvents } from './codex-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
 import { basename } from 'path';
+import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
 
 interface CodexHandlerContext {
   client: Client;
   channelManager: ChannelManager;
   state: DiscordState;
   sessionManagerRef: { current: SessionManager | null };
+  claudeSdkSessionManagerRef?: { current: ClaudeSdkSessionManager | undefined };
   memoryCollector?: MemoryCollector;
 }
 
@@ -147,14 +149,28 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       if (multiAgent) {
         const agents = channelManager.getAgentsInThread(thread.id);
         const sessionManager = context.sessionManagerRef.current;
+        const claudeSdkSessionManager = context.claudeSdkSessionManagerRef?.current;
+        const sdkSession = claudeSdkSessionManager?.getSession(agents.claude!);
+        const targetAvailable = sdkSession
+          ? sdkSession.status !== 'ended'
+          : !!sessionManager;
+        const sendToClaude = sdkSession
+          ? (msg: string) => claudeSdkSessionManager!.sendInput(agents.claude!, msg)
+          : (msg: string) => sessionManager!.sendInput(agents.claude!, msg);
         const { routed } = await tryRouteToAgent({
           thread,
           content,
           agents,
           sourceAgent: 'codex',
           state,
-          isTargetAvailable: () => !!sessionManager,
-          sendToTarget: (msg) => sessionManager!.sendInput(agents.claude!, msg),
+          target: {
+            agent: 'claude',
+            transportType: sdkSession ? 'sdk' : 'pty',
+            isAvailable: () => targetAvailable,
+            send: sendToClaude,
+          },
+          isTargetAvailable: () => targetAvailable,
+          sendToTarget: sendToClaude,
           onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
         });
         if (routed) return;

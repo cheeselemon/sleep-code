@@ -64,6 +64,9 @@ export const commands = [
       sub.setName('start')
         .setDescription('Start a new Claude Code session'))
     .addSubcommand(sub =>
+      sub.setName('start-sdk')
+        .setDescription('Start a Claude session via Agent SDK'))
+    .addSubcommand(sub =>
       sub.setName('stop')
         .setDescription('Stop a running Claude Code session'))
     .addSubcommand(sub =>

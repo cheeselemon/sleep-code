@@ -14,7 +14,7 @@ import { getInstalledTerminals } from '../utils.js';
 import type { CommandHandler } from './types.js';
 
 export const handleClaude: CommandHandler = async (interaction, context) => {
-  const { channelManager, processManager, settingsManager } = context;
+  const { channelManager, claudeSdkSessionManager, processManager, settingsManager } = context;
   const subcommand = interaction.options.getSubcommand();
 
   // /claude start - show directory selection
@@ -51,6 +51,48 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
 
     await interaction.reply({
       content: '📁 **Start Claude Session**\nSelect a directory:',
+      components: [row],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // /claude start-sdk - show directory selection
+  if (subcommand === 'start-sdk') {
+    if (!claudeSdkSessionManager || !settingsManager) {
+      await interaction.reply({
+        content: '⚠️ Claude SDK is not enabled.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const dirs = settingsManager.getAllowedDirectories();
+    if (dirs.length === 0) {
+      await interaction.reply({
+        content: '⚠️ No directories configured. Use `/claude add-dir` first.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('claude_sdk_start_dir')
+      .setPlaceholder('Select a directory...');
+
+    for (const dir of dirs.slice(0, 25)) {
+      selectMenu.addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(basename(dir))
+          .setDescription(dir.slice(0, 100))
+          .setValue(dir)
+      );
+    }
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    await interaction.reply({
+      content: '📡 **Start Claude SDK Session**\nSelect a directory:',
       components: [row],
       ephemeral: true,
     });

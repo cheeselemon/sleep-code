@@ -7,6 +7,7 @@
  */
 
 import { basename } from 'path';
+import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
 import type { SelectMenuHandler } from './types.js';
 
@@ -258,6 +259,57 @@ export const handleCodexStopSessionSelect: SelectMenuHandler = async (interactio
     log.error({ err, sessionId }, 'Failed to stop Codex session');
     await interaction.followUp({
       content: `❌ Error: ${(err as Error).message}`,
+      ephemeral: true,
+    });
+  }
+};
+
+/**
+ * Handle directory selection for starting a Claude SDK session
+ */
+export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, context) => {
+  const { claudeSdkSessionManager, channelManager, settingsManager } = context;
+
+  if (!claudeSdkSessionManager || !settingsManager) {
+    await interaction.reply({ content: '⚠️ Claude SDK is not enabled.', ephemeral: true });
+    return;
+  }
+
+  const cwd = interaction.values[0];
+
+  if (!settingsManager.isDirectoryAllowed(cwd)) {
+    await interaction.update({
+      content: `❌ Directory \`${cwd}\` is no longer in the whitelist.`,
+      components: [],
+    });
+    return;
+  }
+
+  try {
+    await interaction.update({
+      content: `📡 Starting Claude SDK session in \`${cwd}\`...`,
+      components: [],
+    });
+
+    const sessionId = randomUUID();
+    const sessionName = `claude-sdk-${basename(cwd)}`;
+    const mapping = await channelManager.createSdkSession(sessionId, sessionName, cwd);
+    if (!mapping) {
+      await interaction.followUp({ content: '❌ Failed to create SDK thread.', ephemeral: true });
+      return;
+    }
+
+    const entry = await claudeSdkSessionManager.startSession(cwd, mapping.threadId, { sessionId });
+    channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
+
+    await interaction.followUp({
+      content: `✅ **Claude SDK session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      ephemeral: true,
+    });
+  } catch (err) {
+    log.error({ err, cwd }, 'Failed to start Claude SDK session');
+    await interaction.followUp({
+      content: `❌ Failed to start Claude SDK session: ${(err as Error).message}`,
       ephemeral: true,
     });
   }

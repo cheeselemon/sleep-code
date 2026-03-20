@@ -24,6 +24,7 @@ import {
   handleSetTerminalSelect,
   handleCodexStartDirSelect,
   handleCodexStopSessionSelect,
+  handleSdkStartDirSelect,
 } from './select-menus.js';
 import type { InteractionContext } from './types.js';
 
@@ -97,6 +98,12 @@ export async function handleSelectMenu(
   // Claude start directory selection
   if (customId === 'claude_start_dir') {
     await handleStartDirSelect(interaction, context);
+    return;
+  }
+
+  // Claude SDK start directory selection
+  if (customId === 'claude_sdk_start_dir') {
+    await handleSdkStartDirSelect(interaction, context);
     return;
   }
 
