@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Permission request handling with interactive buttons (Discord/Slack)
 - YOLO mode for auto-approving all permissions
 - Session management from Discord (start/stop/restore sessions remotely)
-- Session restore after reboot with conversation history (`/claude restore` or auto Restore button)
+- Session restore after terminal close with conversation history (`/claude restore` or auto Restore button)
 - Terminal app support (Terminal.app, iTerm2) on macOS
 - Multi-platform: Telegram, Discord, Slack
 - Semantic memory pipeline (auto-distill conversations → LanceDB)

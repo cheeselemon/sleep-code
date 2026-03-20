@@ -83,9 +83,9 @@ pm2 startup
 pm2 save
 ```
 
-## Session Restore After Reboot
+## Session Restore
 
-When the Mac reboots or iTerm closes, all Claude Code sessions die. Sleep Code can restore them with conversation history intact.
+When a terminal closes (reboot, iTerm quit, window close, process kill), Claude Code sessions die. Sleep Code can restore them with conversation history intact.
 
 ### Automatic (on bot restart)
 
