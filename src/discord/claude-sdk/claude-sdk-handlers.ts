@@ -340,7 +340,14 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
     },
 
     onError: async (sessionId, error) => {
-      log.error({ sessionId, error: error.message }, 'Claude SDK session error');
+      const isAbort = error.message.includes('aborted') || error.message.includes('abort');
+      const isInterrupt = error.message.includes('ede_diagnostic') || isAbort;
+
+      if (isInterrupt) {
+        log.info({ sessionId }, 'Claude SDK session interrupted');
+      } else {
+        log.error({ sessionId, error: error.message }, 'Claude SDK session error');
+      }
 
       const interval = state.typingIntervals.get(`claude-sdk:${sessionId}`);
       if (interval) {
@@ -353,7 +360,11 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         return;
       }
 
-      await thread.send(`❌ **Claude SDK Error:** ${error.message}`);
+      if (isInterrupt) {
+        await thread.send('🛑 **Interrupted** — 작업이 중단되었습니다.');
+      } else {
+        await thread.send(`❌ **Claude SDK Error:** ${error.message}`);
+      }
     },
   };
 }
