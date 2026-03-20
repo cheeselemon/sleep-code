@@ -18,6 +18,7 @@
 - **Permission handling** - Approve or deny tool permissions from chat (Discord/Slack)
 - **YOLO mode** - Auto-approve all permission requests
 - **Session management** - Start, stop, and monitor sessions from Discord
+- **Session restore** - Recover dead sessions after reboot with conversation history (`/claude restore`)
 - **Codex integration** - Run OpenAI Codex sessions alongside Claude in the same thread
 - **Terminal app support** - Open sessions in Terminal.app or iTerm2 (macOS)
 - **Multi-platform** - Works with Telegram, Discord, and Slack

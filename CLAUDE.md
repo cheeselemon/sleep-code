@@ -11,7 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Real-time bidirectional messaging with Claude Code
 - Permission request handling with interactive buttons (Discord/Slack)
 - YOLO mode for auto-approving all permissions
-- Session management from Discord (start/stop sessions remotely)
+- Session management from Discord (start/stop/restore sessions remotely)
+- Session restore after reboot with conversation history (`/claude restore` or auto Restore button)
 - Terminal app support (Terminal.app, iTerm2) on macOS
 - Multi-platform: Telegram, Discord, Slack
 - Semantic memory pipeline (auto-distill conversations → LanceDB)
@@ -162,7 +163,7 @@ Discord-only. Handles:
 ## Discord Slash Commands
 
 - `/help` - Show all commands (embed card)
-- `/claude start|stop|status` - Session management
+- `/claude start|stop|status|restore` - Session management (restore resumes dead session with history)
 - `/claude add-dir|remove-dir|list-dirs|set-terminal` - Settings
 - `/interrupt`, `/background`, `/mode`, `/compact`, `/model` - In-session controls
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)

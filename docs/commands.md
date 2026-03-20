@@ -9,6 +9,7 @@
 | `/claude start` | Start a new Claude session (select directory) |
 | `/claude stop` | Stop a running session |
 | `/claude status` | Show all managed sessions |
+| `/claude restore` | Restore a dead session in the current thread (resumes conversation history) |
 | `/sessions` | List active sessions |
 
 ### In-Session Controls

@@ -83,6 +83,28 @@ pm2 startup
 pm2 save
 ```
 
+## Session Restore After Reboot
+
+When the Mac reboots or iTerm closes, all Claude Code sessions die. Sleep Code can restore them with conversation history intact.
+
+### Automatic (on bot restart)
+
+After PM2 restarts the bot, dead sessions are detected during startup reconciliation. Each dead session's Discord thread gets **Restore / Dismiss** buttons:
+
+- **Restore** — Spawns a new Claude session with `--resume`, reconnects to the existing thread with full conversation history
+- **Dismiss** — Cleans up the session and archives the thread
+- Auto-dismissed after 1 hour if no action taken
+
+### Manual (`/claude restore`)
+
+In any thread with a dead session, run `/claude restore` to immediately restore it. This works even outside of the startup reconciliation window.
+
+### Requirements
+
+- The bot must be running (PM2 auto-restart handles this)
+- The session's JSONL file must exist in `~/.claude/projects/*/` (not manually deleted)
+- The Discord thread must still exist
+
 ## MCP Memory Server
 
 The memory store is exposed as an [MCP](https://modelcontextprotocol.io/) server over HTTP, making memories available to any Claude Code session.
