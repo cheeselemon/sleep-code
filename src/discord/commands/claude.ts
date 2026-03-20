@@ -145,7 +145,9 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       return;
     }
 
-    const currentSessionId = channelManager.getSessionByChannel(interaction.channelId);
+    // Check both PTY and SDK sessions for current thread highlight
+    const currentSessionId = channelManager.getSessionByChannel(interaction.channelId)
+      || channelManager.getSdkSessionByThread(interaction.channelId);
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('claude_stop_session')

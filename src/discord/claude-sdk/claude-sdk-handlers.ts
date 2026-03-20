@@ -6,7 +6,6 @@ import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { ChannelManager } from '../channel-manager.js';
 import type {
   ClaudeSdkEvents,
-  ClaudeSdkToolCallInfo,
   ClaudeSdkToolResultInfo,
 } from './claude-sdk-session-manager.js';
 import {
@@ -84,6 +83,10 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       }
 
       const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+
+      // Archive and clean up ChannelManager mapping + persistence
+      await channelManager.archiveSdkSession(sessionId);
+
       if (!thread) {
         return;
       }

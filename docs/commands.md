@@ -6,23 +6,26 @@
 
 | Command | Description |
 |---------|-------------|
-| `/claude start` | Start a new Claude session (select directory) |
-| `/claude stop` | Stop a running session |
-| `/claude status` | Show all managed sessions |
+| `/claude start` | Start a new Claude session via PTY (select directory) |
+| `/claude start-sdk` | Start a new Claude session via Agent SDK (select directory) |
+| `/claude stop` | Stop a running session (PTY or SDK) |
+| `/claude status` | Show all managed sessions (🔧 PTY / 📡 SDK) |
 | `/claude restore` | Restore a dead session in the current thread (resumes conversation history) |
 | `/sessions` | List active sessions |
 
+> **PTY vs SDK**: PTY는 터미널 제어(`/background`, `/mode`, `/compact`)를 지원하고, SDK는 구조화된 tool call/result을 직접 수신합니다. 자세한 비교는 [SDK Session Guide](sdk-session.md)를 참고하세요.
+
 ### In-Session Controls
 
-| Command | Description |
-|---------|-------------|
-| `/interrupt` | Interrupt Claude (Escape) |
-| `/background` | Send to background mode (Ctrl+B) |
-| `/mode` | Toggle plan/execute mode (Shift+Tab) |
-| `/compact` | Compact the conversation |
-| `/model <name>` | Switch model (opus, sonnet, haiku) |
-| `/panel` | Show control panel with buttons |
-| `/yolo-sleep` | Toggle YOLO mode (auto-approve all) |
+| Command | PTY | SDK | Description |
+|---------|:---:|:---:|-------------|
+| `/interrupt` | ✅ | ✅ | Interrupt Claude (PTY: Escape, SDK: abort current turn) |
+| `/background` | ✅ | ❌ | Send to background mode (Ctrl+B) |
+| `/mode` | ✅ | ❌ | Toggle plan/execute mode (Shift+Tab) |
+| `/compact` | ✅ | ❌ | Compact the conversation |
+| `/model <name>` | ✅ | ⚠️ | Switch model (opus, sonnet, haiku). SDK: applies from next turn |
+| `/panel` | ✅ | ✅ | Show control panel with buttons |
+| `/yolo-sleep` | ✅ | ✅ | Toggle YOLO mode (auto-approve all) |
 
 ### Settings
 

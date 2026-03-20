@@ -16,14 +16,6 @@ export interface ClaudeTransport {
   isActive(): boolean;
 }
 
-export interface ClaudeSdkSessionLike {
-  transport: ClaudeTransport;
-}
-
-export interface ClaudeSdkSessionManagerLike {
-  getSessionByThread(threadId: string): ClaudeSdkSessionLike | undefined;
-}
-
 export function createPtyTransport(
   sessionId: string,
   sessionManager: SessionManager,

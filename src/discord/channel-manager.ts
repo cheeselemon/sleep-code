@@ -682,26 +682,36 @@ export class ChannelManager {
 
   async archiveSdkSession(sessionId: string): Promise<boolean> {
     const mapping = this.sdkSessions.get(sessionId);
-    if (!mapping) return false;
+    const persisted = this.sdkPersistedMappings.get(sessionId);
 
-    mapping.status = 'ended';
+    // Handle both in-memory and persisted-only sessions (e.g. after bot restart)
+    if (!mapping && !persisted) return false;
 
-    const codexSessionId = this.threadToCodexSession.get(mapping.threadId);
-    const codexMapping = codexSessionId ? this.codexSessions.get(codexSessionId) : undefined;
-    const codexActive = codexMapping && codexMapping.status !== 'ended';
+    const threadId = mapping?.threadId || persisted?.threadId;
 
-    if (!codexActive) {
-      try {
-        const thread = await this.client.channels.fetch(mapping.threadId);
-        if (thread?.isThread()) {
-          await thread.setArchived(true);
-        }
-      } catch (err: any) {
-        log.error({ err: err.message }, 'Failed to archive Claude SDK thread');
-      }
+    if (mapping) {
+      mapping.status = 'ended';
     }
 
-    this.threadToSdkSession.delete(mapping.threadId);
+    if (threadId) {
+      const codexSessionId = this.threadToCodexSession.get(threadId);
+      const codexMapping = codexSessionId ? this.codexSessions.get(codexSessionId) : undefined;
+      const codexActive = codexMapping && codexMapping.status !== 'ended';
+
+      if (!codexActive) {
+        try {
+          const thread = await this.client.channels.fetch(threadId);
+          if (thread?.isThread()) {
+            await thread.setArchived(true);
+          }
+        } catch (err: any) {
+          log.error({ err: err.message }, 'Failed to archive Claude SDK thread');
+        }
+      }
+
+      this.threadToSdkSession.delete(threadId);
+    }
+
     this.sdkSessions.delete(sessionId);
     this.sdkPersistedMappings.delete(sessionId);
     await this.saveSdkMappings();

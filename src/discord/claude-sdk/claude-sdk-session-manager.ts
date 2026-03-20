@@ -5,7 +5,6 @@ import {
   type SDKAssistantMessage,
   type SDKMessage,
   type SDKResultMessage,
-  type SDKToolUseSummaryMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { discordLogger as log } from '../../utils/logger.js';
@@ -76,14 +75,14 @@ export class ClaudeSdkSessionManager {
   async startSession(
     cwd: string,
     discordThreadId: string,
-    options?: { model?: string; sessionId?: string },
+    options?: { model?: string; sessionId?: string; resume?: string },
   ): Promise<ClaudeSdkSessionEntry> {
     const id = options?.sessionId ?? randomUUID();
     const entry = this.createEntry(id, cwd, discordThreadId);
     this.sessions.set(id, entry);
 
     await this.events.onSessionStart(id, cwd, discordThreadId);
-    this.processQueryStream(entry, options).catch(async (err) => {
+    this.processQueryStream(entry, { model: options?.model, resume: options?.resume }).catch(async (err) => {
       log.error({ sessionId: id, err }, 'Claude SDK session stream failed');
       await this.events.onError(id, err as Error);
       await this.finalizeSession(entry, true);
@@ -297,7 +296,7 @@ export class ClaudeSdkSessionManager {
 
   private async processQueryStream(
     session: ClaudeSdkSessionEntry,
-    options?: { model?: string },
+    options?: { model?: string; resume?: string },
   ): Promise<void> {
     const queryHandle = query({
       prompt: this.createPromptGenerator(session),
@@ -305,6 +304,7 @@ export class ClaudeSdkSessionManager {
         sessionId: session.id,
         cwd: session.cwd,
         model: options?.model,
+        resume: options?.resume,
         includePartialMessages: false,
         canUseTool: async (toolName, input) => {
           return this.handleCanUseTool(session, toolName, input as Record<string, unknown>);

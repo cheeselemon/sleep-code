@@ -15,10 +15,18 @@ npm run slack           # Start the Slack bot
 In another terminal:
 
 ```bash
-npm run claude          # Start a monitored Claude Code session
+npm run claude          # Start a monitored Claude Code session (PTY)
 ```
 
 A new channel/thread is created for each session. Messages relay bidirectionally.
+
+Alternatively, use the **Agent SDK** method from Discord — no separate terminal needed:
+
+```
+/claude start-sdk       # Start via Agent SDK (in-process)
+```
+
+See [SDK Session Guide](sdk-session.md) for details on the difference between PTY and SDK sessions.
 
 ### Global CLI
 
