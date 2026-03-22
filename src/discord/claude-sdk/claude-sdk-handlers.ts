@@ -355,18 +355,17 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       const thread = await getClaudeSdkThread(client, channelManager, sessionId);
       if (!thread) return;
 
-      const totalTokens = usage.inputTokens + usage.outputTokens;
+      const contextUsed = usage.inputTokens + usage.cacheReadTokens;
       const pct = usage.contextWindow > 0
-        ? Math.round((usage.inputTokens / usage.contextWindow) * 100)
+        ? Math.round((contextUsed / usage.contextWindow) * 100)
         : 0;
 
       const bar = pct >= 90 ? '🔴' : pct >= 70 ? '🟡' : '🟢';
 
       const line = [
         `${bar} **${pct}%** ctx`,
-        `(${formatTokens(totalTokens)} tok`,
-        usage.cacheReadTokens > 0 ? `, ${formatTokens(usage.cacheReadTokens)} cached` : '',
-        `) · $${usage.totalCostUSD.toFixed(4)}`,
+        ` (${formatTokens(contextUsed)}/${formatTokens(usage.contextWindow)})`,
+        ` · $${usage.totalCostUSD.toFixed(4)}`,
         ` · turn ${usage.numTurns}`,
       ].join('');
 

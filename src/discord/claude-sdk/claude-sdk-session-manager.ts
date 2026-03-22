@@ -107,76 +107,23 @@ export class ClaudeSdkSessionManager {
 
     await this.events.onSessionStart(id, cwd, discordThreadId);
 
-    // Wait for stream to become alive (first message) or fail early
-    const { alivePromise, resolveAlive, rejectAlive } = (() => {
-      let resolveAlive!: () => void;
-      let rejectAlive!: (err: Error) => void;
-      const alivePromise = new Promise<void>((res, rej) => {
-        resolveAlive = res;
-        rejectAlive = rej;
-      });
-      return { alivePromise, resolveAlive, rejectAlive };
-    })();
-
+    // Start the query stream in the background.
+    // SDK only produces messages after user input arrives via the prompt generator,
+    // so we don't wait for a "first message" — just let it run.
+    // Stream errors are caught here and forwarded to the error handler.
     this.processQueryStream(entry, {
       model: options?.model,
       resume: options?.resume,
-      onFirstMessage: resolveAlive,
     }).catch(async (err) => {
       log.error({ sessionId: id, err }, 'Claude SDK session stream failed');
-      rejectAlive(err as Error);
       await this.events.onError(id, err as Error);
       await this.finalizeSession(entry, true);
     });
 
-    // Resume sessions don't produce initial messages (SDK waits for user input).
-    // Waiting for alivePromise would deadlock because sendInput() is called
-    // only after startSession() returns. Skip liveness check for resume.
     if (options?.resume) {
-      log.info({ sessionId: id, resume: options.resume }, 'SDK session resumed (skipping liveness check)');
-      return entry;
-    }
-
-    // Wait up to 30s for the stream to become alive or crash
-    const ALIVE_TIMEOUT_MS = 30_000;
-    const TIMED_OUT = Symbol('timeout');
-    const timeoutPromise = new Promise<typeof TIMED_OUT>((resolve) => {
-      setTimeout(() => resolve(TIMED_OUT), ALIVE_TIMEOUT_MS);
-    });
-
-    try {
-      const result = await Promise.race([
-        alivePromise.then(() => 'alive' as const),
-        timeoutPromise,
-      ]);
-
-      if (result === TIMED_OUT) {
-        // Stream didn't crash but never sent a first message — treat as failure
-        log.warn({ sessionId: id }, 'Claude SDK session timed out waiting for first message');
-
-        // CRITICAL: Kill the zombie query BEFORE finalizing.
-        // Without this, the old processQueryStream keeps running and holds SDK resources,
-        // causing subsequent fresh-start attempts to also timeout.
-        entry.status = 'ended';
-        entry.turnAbortController.abort();
-        entry.sessionAbortController.abort();
-        entry.activeQuery?.close();
-        if (entry.pendingInputResolve) {
-          entry.pendingInputResolve(END_SENTINEL);
-          entry.pendingInputResolve = null;
-        }
-
-        await this.finalizeSession(entry, true);
-        throw new Error('Claude SDK session timed out: no response within 30s');
-      }
-    } catch (err) {
-      // Stream crashed before first message — propagate to caller
-      throw err;
-    }
-
-    // If session already ended during the wait, throw
-    if (entry.status === 'ended' || !this.sessions.has(id)) {
-      throw new Error('Claude SDK session ended before becoming alive');
+      log.info({ sessionId: id, resume: options.resume }, 'SDK session resumed');
+    } else {
+      log.info({ sessionId: id, sdkSessionId: entry.sdkSessionId }, 'SDK session started');
     }
 
     return entry;
@@ -389,7 +336,7 @@ export class ClaudeSdkSessionManager {
 
   private async processQueryStream(
     session: ClaudeSdkSessionEntry,
-    options?: { model?: string; resume?: string; onFirstMessage?: () => void },
+    options?: { model?: string; resume?: string },
   ): Promise<void> {
     // SDK constraint: `sessionId` and `resume` are mutually exclusive
     // (unless `forkSession` is set). When resuming, pass only `resume`.
@@ -420,11 +367,10 @@ export class ClaudeSdkSessionManager {
     session.sessionAbortController.signal.addEventListener('abort', closeQuery, { once: true });
 
     let terminatedUnexpectedly = false;
-    let firstMessageReceived = false;
 
     try {
       for await (const message of queryHandle) {
-        // Bug fix #1: Persist sdkSessionId to channelManager when it changes
+        // Persist sdkSessionId to channelManager when it changes
         const newSdkSessionId = message.session_id || session.sdkSessionId;
         if (newSdkSessionId !== session.sdkSessionId) {
           session.sdkSessionId = newSdkSessionId;
@@ -433,12 +379,6 @@ export class ClaudeSdkSessionManager {
         } else if (!session.sdkSessionId && message.session_id) {
           session.sdkSessionId = message.session_id;
           await this.events.onSdkSessionIdUpdate?.(session.id, message.session_id);
-        }
-
-        // Bug fix #2: Signal that the stream is alive on first message
-        if (!firstMessageReceived) {
-          firstMessageReceived = true;
-          options?.onFirstMessage?.();
         }
 
         await this.handleSdkMessage(session, message);
