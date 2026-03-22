@@ -43,6 +43,17 @@ export interface ClaudeSdkToolResultInfo {
   toolUseIds: string[];
 }
 
+export interface ClaudeSdkTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUSD: number;
+  totalCostUSD: number;
+  contextWindow: number;
+  numTurns: number;
+}
+
 export interface ClaudeSdkEvents {
   onSessionStart: (sessionId: string, cwd: string, discordThreadId: string) => void | Promise<void>;
   onSessionEnd: (sessionId: string) => void | Promise<void>;
@@ -55,6 +66,7 @@ export interface ClaudeSdkEvents {
   onYoloApprove?: (sessionId: string, toolName: string) => void | Promise<void>;
   onPermissionTimeout?: (sessionId: string, requestId: string, toolName: string) => void | Promise<void>;
   onSdkSessionIdUpdate?: (sessionId: string, sdkSessionId: string) => void | Promise<void>;
+  onTurnComplete?: (sessionId: string, usage: ClaudeSdkTurnUsage) => void | Promise<void>;
 }
 
 const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
@@ -512,7 +524,7 @@ export class ClaudeSdkSessionManager {
 
   private async completeTurn(
     session: ClaudeSdkSessionEntry,
-    _message: SDKResultMessage,
+    message: SDKResultMessage,
   ): Promise<void> {
     if (session.status === 'ended') {
       return;
@@ -524,6 +536,22 @@ export class ClaudeSdkSessionManager {
 
     session.status = 'idle';
     await this.events.onSessionStatus?.(session.id, 'idle');
+
+    // Extract usage from the first model entry (primary model)
+    const modelEntries = Object.values(message.modelUsage || {});
+    const primary = modelEntries[0];
+    if (primary) {
+      await this.events.onTurnComplete?.(session.id, {
+        inputTokens: primary.inputTokens,
+        outputTokens: primary.outputTokens,
+        cacheReadTokens: primary.cacheReadInputTokens,
+        cacheCreationTokens: primary.cacheCreationInputTokens,
+        costUSD: primary.costUSD,
+        totalCostUSD: message.total_cost_usd,
+        contextWindow: primary.contextWindow,
+        numTurns: message.num_turns,
+      });
+    }
   }
 
   private async finalizeSession(

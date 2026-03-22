@@ -7,6 +7,7 @@ import type { ChannelManager } from '../channel-manager.js';
 import type {
   ClaudeSdkEvents,
   ClaudeSdkToolResultInfo,
+  ClaudeSdkTurnUsage,
 } from './claude-sdk-session-manager.js';
 import {
   ActionRowBuilder,
@@ -51,6 +52,12 @@ async function getClaudeSdkThread(
   return null;
 }
 
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
 
 export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): ClaudeSdkEvents {
   const {
@@ -342,6 +349,30 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
     onSdkSessionIdUpdate: (sessionId, sdkSessionId) => {
       channelManager.setSdkSessionId(sessionId, sdkSessionId);
       log.info({ sessionId, sdkSessionId }, 'Persisted SDK session ID to channelManager');
+    },
+
+    onTurnComplete: async (sessionId, usage: ClaudeSdkTurnUsage) => {
+      const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+      if (!thread) return;
+
+      const totalTokens = usage.inputTokens + usage.outputTokens;
+      const pct = usage.contextWindow > 0
+        ? Math.round((usage.inputTokens / usage.contextWindow) * 100)
+        : 0;
+
+      const bar = pct >= 90 ? '🔴' : pct >= 70 ? '🟡' : '🟢';
+
+      const line = [
+        `${bar} **${pct}%** ctx`,
+        `(${formatTokens(totalTokens)} tok`,
+        usage.cacheReadTokens > 0 ? `, ${formatTokens(usage.cacheReadTokens)} cached` : '',
+        `) · $${usage.totalCostUSD.toFixed(4)}`,
+        ` · turn ${usage.numTurns}`,
+      ].join('');
+
+      try {
+        await thread.send(line);
+      } catch { /* ignore */ }
     },
 
     onError: async (sessionId, error) => {
