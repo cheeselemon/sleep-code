@@ -146,6 +146,28 @@ PASS src/index.test.ts
 ```
 ```
 
+### Context Usage (컨텍스트 사용량)
+
+매 턴 종료 시 컨텍스트 윈도우 사용량이 자동 표시됩니다:
+
+```
+🟢 16% ctx (164.1k/1.0M) · $1.1423 · turn 2
+🟡 72% ctx (720.5k/1.0M) · $3.4521 · turn 15
+🔴 91% ctx (910.2k/1.0M) · $5.1234 · turn 28
+```
+
+| 아이콘 | 의미 |
+|--------|------|
+| 🟢 | 70% 미만 — 여유 |
+| 🟡 | 70~89% — 주의 |
+| 🔴 | 90% 이상 — 곧 compaction 필요 |
+
+- **ctx %**: 컨텍스트 윈도우 사용률 (per-API-call `input_tokens + cache_read + cache_creation` / `contextWindow`)
+- **$**: 세션 누적 비용
+- **turn**: 현재 턴 번호
+
+> **참고**: Claude Opus 4.6은 1M 토큰 컨텍스트 윈도우를 사용합니다. 사용량이 높아지면 SDK가 자동 compaction을 수행할 수 있습니다.
+
 ---
 
 ## Session Management (세션 관리)
