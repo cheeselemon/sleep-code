@@ -30,6 +30,7 @@ export interface ClaudeSdkSessionEntry {
   activeQuery: Query | null;
   interrupted: boolean;
   transport: ClaudeTransport;
+  lastAssistantUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null;
 }
 
 export interface ClaudeSdkToolCallInfo {
@@ -282,6 +283,7 @@ export class ClaudeSdkSessionManager {
       pendingPermissions: new Map(),
       activeQuery: null,
       interrupted: false,
+      lastAssistantUsage: null,
       transport: {
         type: 'sdk',
         sessionId: id,
@@ -460,6 +462,12 @@ export class ClaudeSdkSessionManager {
     if (text) {
       await this.events.onMessage(session.id, text);
     }
+
+    // Store per-API-call usage from the raw BetaMessage for accurate context % calculation
+    const usage = (message.message as any).usage;
+    if (usage) {
+      session.lastAssistantUsage = usage;
+    }
   }
 
   private async completeTurn(
@@ -477,20 +485,37 @@ export class ClaudeSdkSessionManager {
     session.status = 'idle';
     await this.events.onSessionStatus?.(session.id, 'idle');
 
-    // Extract usage from the first model entry (primary model)
+    // Use per-API-call usage from the last assistant message (accurate context %)
+    // modelUsage is cumulative across the session — not suitable for context window %
+    const lastUsage = session.lastAssistantUsage;
     const modelEntries = Object.values(message.modelUsage || {});
     const primary = modelEntries[0];
-    if (primary) {
+
+    if (lastUsage && primary) {
+      const contextUsed = (lastUsage.input_tokens || 0)
+        + (lastUsage.cache_read_input_tokens || 0)
+        + (lastUsage.cache_creation_input_tokens || 0);
+
+      log.info({
+        sessionId: session.id,
+        perCall: { input: lastUsage.input_tokens, cacheRead: lastUsage.cache_read_input_tokens, cacheCreation: lastUsage.cache_creation_input_tokens, contextUsed },
+        contextWindow: primary.contextWindow,
+        totalCost: message.total_cost_usd,
+        numTurns: message.num_turns,
+      }, 'SDK turn usage');
+
       await this.events.onTurnComplete?.(session.id, {
-        inputTokens: primary.inputTokens,
-        outputTokens: primary.outputTokens,
-        cacheReadTokens: primary.cacheReadInputTokens,
-        cacheCreationTokens: primary.cacheCreationInputTokens,
+        inputTokens: contextUsed,
+        outputTokens: lastUsage.output_tokens || 0,
+        cacheReadTokens: lastUsage.cache_read_input_tokens || 0,
+        cacheCreationTokens: lastUsage.cache_creation_input_tokens || 0,
         costUSD: primary.costUSD,
         totalCostUSD: message.total_cost_usd,
         contextWindow: primary.contextWindow,
         numTurns: message.num_turns,
       });
+
+      session.lastAssistantUsage = null;
     }
   }
 
