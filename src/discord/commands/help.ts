@@ -14,22 +14,25 @@ export const handleHelp: CommandHandler = async (interaction) => {
       {
         name: '📁 Session Management',
         value: [
-          '`/claude start` - Start a new Claude session',
+          '`/claude start` - Start a PTY session (terminal)',
+          '`/claude start-sdk` - Start an SDK session (lightweight)',
           '`/claude stop` - Stop a running session',
+          '`/claude restore` - Restore a dead session in this thread',
           '`/claude status` - Show all managed sessions',
           '`/sessions` - List active sessions',
+          '`/status` - Show current thread session status',
         ].join('\n'),
       },
       {
         name: '🎮 In-Session Controls',
         value: [
-          '`/interrupt` - Interrupt Claude (Escape)',
-          '`/background` - Send to background (Ctrl+B)',
-          '`/mode` - Toggle plan/execute mode (Shift+Tab)',
-          '`/compact` - Compact the conversation',
-          '`/model <name>` - Switch model (opus/sonnet/haiku)',
-          '`/panel` - Show control panel with buttons',
+          '`/interrupt` - Interrupt current turn (session stays alive)',
           '`/yolo-sleep` - Toggle auto-approve mode',
+          '`/panel` - Show control panel with buttons',
+          '`/model <name>` - Switch model (opus/sonnet/haiku)',
+          '`/compact` - Compact the conversation (PTY only)',
+          '`/background` - Send to background (PTY only)',
+          '`/mode` - Toggle plan/execute mode (PTY only)',
         ].join('\n'),
       },
       {
@@ -38,8 +41,8 @@ export const handleHelp: CommandHandler = async (interaction) => {
           '`/codex start` - Start a new Codex session',
           '`/codex stop` - Stop a running Codex session',
           '`/codex status` - Show all Codex sessions',
-          'Use `x:` or `codex:` prefix to route messages to Codex',
-          'Use `c:` or `claude:` prefix to route messages to Claude',
+          '`x:` or `codex:` prefix → route to Codex',
+          '`c:` or `claude:` prefix → route to Claude',
         ].join('\n'),
       },
       {
@@ -49,6 +52,15 @@ export const handleHelp: CommandHandler = async (interaction) => {
           '`/claude remove-dir` - Remove directory from whitelist',
           '`/claude list-dirs` - List whitelisted directories',
           '`/claude set-terminal` - Set terminal app',
+          '`/commands` - List all slash commands',
+        ].join('\n'),
+      },
+      {
+        name: '💡 Tips',
+        value: [
+          'SDK sessions auto-resume after bot restart (lazy resume)',
+          'Context usage shown after each SDK turn (🟢🟡🔴)',
+          'Attach `.txt` files to inject content into session',
         ].join('\n'),
       },
     )
