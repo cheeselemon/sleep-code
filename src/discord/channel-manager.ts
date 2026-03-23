@@ -1,35 +1,19 @@
 import type { Client, TextChannel, CategoryChannel, Guild, ThreadChannel } from 'discord.js';
 import { ChannelType } from 'discord.js';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 import { discordLogger as log } from '../utils/logger.js';
+import { SessionStore } from './session-store.js';
+import type { PersistedMapping, ChannelMapping } from './session-store.js';
+
+// Re-export types so existing imports from channel-manager keep working
+export type { PersistedMapping, ChannelMapping } from './session-store.js';
 
 const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
 const CODEX_MAPPINGS_FILE = join(MAPPINGS_DIR, 'codex-session-mappings.json');
 const SDK_MAPPINGS_FILE = join(MAPPINGS_DIR, 'sdk-session-mappings.json');
-
-export interface PersistedMapping {
-  sessionId: string;
-  threadId: string;
-  channelId: string;
-  cwd: string;
-  codexThreadId?: string; // Codex SDK thread ID for resumeThread()
-  sdkSessionId?: string; // Claude Agent SDK session ID for resume()
-}
-
-export interface ChannelMapping {
-  sessionId: string;
-  channelId: string;    // CWD-based channel
-  threadId: string;     // Session-specific thread
-  channelName: string;
-  threadName: string;
-  sessionName: string;
-  cwd: string;
-  status: 'running' | 'idle' | 'ended';
-  createdAt: Date;
-}
 
 /**
  * Sanitize a string for use as a Discord channel name.
@@ -65,20 +49,14 @@ function buildTopic(cwd: string): string {
 }
 
 export class ChannelManager {
-  private sessions = new Map<string, ChannelMapping>();       // sessionId -> mapping
-  private threadToSession = new Map<string, string>();        // threadId -> sessionId
-  private cwdToChannel = new Map<string, string>();           // cwd -> channelId
-  private persistedMappings = new Map<string, PersistedMapping>(); // sessionId -> persisted data
+  // Three session stores replace the 9 Maps + 6 save/load methods
+  private ptyStore = new SessionStore(MAPPINGS_FILE, 'session');
+  private codexStore = new SessionStore(CODEX_MAPPINGS_FILE, 'Codex');
+  private sdkStore = new SessionStore(SDK_MAPPINGS_FILE, 'SDK');
 
-  // Codex session tracking (parallel to Claude)
-  private codexSessions = new Map<string, ChannelMapping>();       // sessionId -> mapping
-  private threadToCodexSession = new Map<string, string>();        // threadId -> sessionId
-  private codexPersistedMappings = new Map<string, PersistedMapping>();
+  // Shared: cwd → channelId (one channel per project, shared across session types)
+  private cwdToChannel = new Map<string, string>();
 
-  // Claude SDK session tracking (parallel to PTY Claude)
-  private sdkSessions = new Map<string, ChannelMapping>();
-  private threadToSdkSession = new Map<string, string>();
-  private sdkPersistedMappings = new Map<string, PersistedMapping>();
   private client: Client;
   private userId: string;
   private guild: Guild | null = null;
@@ -91,62 +69,7 @@ export class ChannelManager {
     this.userId = userId;
   }
 
-  /**
-   * Load persisted session mappings from file
-   */
-  private async loadMappings(): Promise<void> {
-    try {
-      const data = await readFile(MAPPINGS_FILE, 'utf-8');
-      const mappings: PersistedMapping[] = JSON.parse(data);
-      for (const m of mappings) {
-        this.persistedMappings.set(m.sessionId, m);
-      }
-      log.info(`[ChannelManager] Loaded ${mappings.length} persisted session mappings`);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        log.error('[ChannelManager] Error loading mappings:', err.message);
-      }
-    }
-  }
-
-  /**
-   * Save session mappings to file
-   */
-  private async saveMappings(): Promise<void> {
-    try {
-      await mkdir(MAPPINGS_DIR, { recursive: true });
-      const mappings = Array.from(this.persistedMappings.values());
-      await writeFile(MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
-    } catch (err: any) {
-      log.error('[ChannelManager] Error saving mappings:', err.message);
-    }
-  }
-
-  /**
-   * Add or update a persisted mapping
-   */
-  private async persistMapping(sessionId: string, threadId: string, channelId: string, cwd: string): Promise<void> {
-    this.persistedMappings.set(sessionId, { sessionId, threadId, channelId, cwd });
-    await this.saveMappings();
-  }
-
-  /**
-   * Remove a persisted mapping (public for startup reconciliation)
-   * Also cleans up in-memory maps if the session exists there
-   */
-  async removePersistedMapping(sessionId: string): Promise<void> {
-    // Clean up persisted mapping
-    this.persistedMappings.delete(sessionId);
-    await this.saveMappings();
-
-    // Also clean up in-memory maps if session exists (Issue 8)
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      this.threadToSession.delete(session.threadId);
-      this.sessions.delete(sessionId);
-      log.info(`[ChannelManager] Removed in-memory session mapping for ${sessionId}`);
-    }
-  }
+  // ── Initialization ────────────────────────────────────
 
   /**
    * Wait for initialization to complete (with timeout)
@@ -158,7 +81,6 @@ export class ChannelManager {
       return this.initialized;
     }
 
-    // Wait for initialization to start (polling)
     const startTime = Date.now();
     while (!this.initialized && Date.now() - startTime < timeoutMs) {
       if (this.initPromise) {
@@ -182,10 +104,10 @@ export class ChannelManager {
   }
 
   private async doInitialize(): Promise<void> {
-    // Load persisted session mappings first
-    await this.loadMappings();
-    await this.loadCodexMappings();
-    await this.loadSdkMappings();
+    // Load persisted session mappings
+    await this.ptyStore.load();
+    await this.codexStore.load();
+    await this.loadSdkMappings(); // SDK has custom dedup/cleanup logic
 
     // Find the first guild the bot is in
     const guilds = await this.client.guilds.fetch();
@@ -249,6 +171,8 @@ export class ChannelManager {
     }
   }
 
+  // ── Shared channel helpers ────────────────────────────
+
   /**
    * Get or create a channel for a CWD
    */
@@ -279,7 +203,6 @@ export class ChannelManager {
     while (true) {
       const nameToTry = channelName.slice(0, 100);
 
-      // Check if name exists
       const existing = this.guild.channels.cache.find(
         (ch) => ch.name === nameToTry && ch.parentId === this.category!.id
       );
@@ -322,11 +245,9 @@ export class ChannelManager {
    */
   private async findExistingThread(channel: TextChannel, sessionId: string): Promise<ThreadChannel | null> {
     try {
-      // Fetch active and archived threads
       const activeThreads = await channel.threads.fetchActive();
       const archivedThreads = await channel.threads.fetchArchived({ type: 'public' });
 
-      // Look for thread that starts with sessionId
       for (const [, thread] of activeThreads.threads) {
         if (thread.name.startsWith(sessionId)) {
           log.info(`[ChannelManager] Found existing active thread for session ${sessionId}`);
@@ -347,15 +268,16 @@ export class ChannelManager {
     return null;
   }
 
+  // ── PTY Claude session methods ────────────────────────
+
   /**
-   * Create a session (channel + thread)
+   * Create a PTY session (channel + thread)
    */
   async createSession(
     sessionId: string,
     sessionName: string,
     cwd: string
   ): Promise<ChannelMapping | null> {
-    // Wait for initialization if not ready
     if (!this.initialized) {
       log.info(`[ChannelManager] Waiting for initialization before creating session ${sessionId}`);
       const ready = await this.waitForInit();
@@ -365,26 +287,23 @@ export class ChannelManager {
       }
     }
 
-    // Check if session already exists in memory
-    if (this.sessions.has(sessionId)) {
-      return this.sessions.get(sessionId)!;
+    if (this.ptyStore.has(sessionId)) {
+      return this.ptyStore.get(sessionId)!;
     }
 
-    // Get or create the channel for this CWD
     const channel = await this.getOrCreateChannel(cwd);
     if (!channel) return null;
 
-    // Try to find existing thread from persisted mapping (by threadId)
+    // Try to find existing thread from persisted mapping
     let thread: ThreadChannel | null = null;
     let isNewThread = false;
-    const persisted = this.persistedMappings.get(sessionId);
+    const persisted = this.ptyStore.getPersisted(sessionId);
 
     if (persisted) {
       try {
         const existingThread = await this.client.channels.fetch(persisted.threadId);
         if (existingThread?.isThread()) {
           thread = existingThread;
-          // Unarchive if archived
           if (thread.archived) {
             await thread.setArchived(false);
           }
@@ -397,7 +316,6 @@ export class ChannelManager {
     }
 
     if (!thread) {
-      // Create a new standalone thread
       const timestamp = new Date().toLocaleString('ko-KR', {
         month: '2-digit',
         day: '2-digit',
@@ -409,7 +327,7 @@ export class ChannelManager {
       try {
         thread = await channel.threads.create({
           name: threadName.slice(0, 100),
-          autoArchiveDuration: 10080, // 7 days
+          autoArchiveDuration: 10080,
           reason: `Claude Code session ${sessionId}`,
         });
         isNewThread = true;
@@ -425,7 +343,7 @@ export class ChannelManager {
       return null;
     }
 
-    // Add user to thread so it appears in their sidebar
+    // Add user to thread
     if (this.userId) {
       try {
         await thread.members.add(this.userId);
@@ -446,7 +364,6 @@ export class ChannelManager {
         `🚀 **New Session Started**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
       );
     } else {
-      // Notify reconnection
       await thread.send(`🔄 **Session Reconnected**`);
     }
 
@@ -462,22 +379,18 @@ export class ChannelManager {
       createdAt: new Date(),
     };
 
-    this.sessions.set(sessionId, mapping);
-    this.threadToSession.set(thread.id, sessionId);
-
-    // Persist the mapping for future reconnects
-    await this.persistMapping(sessionId, thread.id, channel.id, cwd);
+    this.ptyStore.set(sessionId, mapping);
+    await this.ptyStore.persistAndSave(sessionId, { sessionId, threadId: thread.id, channelId: channel.id, cwd });
 
     log.info(`[ChannelManager] Stored session mapping: ${sessionId} -> thread ${thread.id}`);
-
     return mapping;
   }
 
   /**
-   * Archive a session's thread
+   * Archive a PTY session's thread
    */
   async archiveSession(sessionId: string): Promise<boolean> {
-    const mapping = this.sessions.get(sessionId);
+    const mapping = this.ptyStore.get(sessionId);
     if (!mapping) return false;
 
     try {
@@ -487,7 +400,6 @@ export class ChannelManager {
         log.info(`[ChannelManager] Archived thread for session ${sessionId}`);
       }
 
-      // Update status and remove persisted mapping
       mapping.status = 'ended';
       await this.removePersistedMapping(sessionId);
       return true;
@@ -497,23 +409,35 @@ export class ChannelManager {
     }
   }
 
-  getSession(sessionId: string): ChannelMapping | undefined {
-    return this.sessions.get(sessionId);
+  /**
+   * Remove a persisted PTY mapping (public for startup reconciliation)
+   */
+  async removePersistedMapping(sessionId: string): Promise<void> {
+    this.ptyStore.deletePersisted(sessionId);
+    await this.ptyStore.save();
+
+    // Also clean up in-memory if session exists
+    if (this.ptyStore.has(sessionId)) {
+      this.ptyStore.delete(sessionId);
+      log.info(`[ChannelManager] Removed in-memory session mapping for ${sessionId}`);
+    }
   }
 
+  getSession(sessionId: string): ChannelMapping | undefined {
+    return this.ptyStore.get(sessionId);
+  }
 
   getSessionByThread(threadId: string): string | undefined {
-    return this.threadToSession.get(threadId);
+    return this.ptyStore.getByThread(threadId);
   }
 
-  // Also check parent channel for messages
   getSessionByChannel(channelId: string): string | undefined {
     // First check if it's a thread
-    const sessionFromThread = this.threadToSession.get(channelId);
+    const sessionFromThread = this.ptyStore.getByThread(channelId);
     if (sessionFromThread) return sessionFromThread;
 
     // Check if there's an active session in this channel
-    for (const [sessionId, mapping] of this.sessions) {
+    for (const [sessionId, mapping] of this.ptyStore.entries()) {
       if (mapping.channelId === channelId && mapping.status !== 'ended') {
         return sessionId;
       }
@@ -522,38 +446,29 @@ export class ChannelManager {
   }
 
   updateStatus(sessionId: string, status: 'running' | 'idle' | 'ended'): void {
-    const mapping = this.sessions.get(sessionId);
-    if (mapping) {
-      mapping.status = status;
-    }
+    this.ptyStore.updateStatus(sessionId, status);
   }
 
   updateName(sessionId: string, name: string): void {
-    const mapping = this.sessions.get(sessionId);
+    const mapping = this.ptyStore.get(sessionId);
     if (mapping) {
       mapping.sessionName = name;
     }
   }
 
   getAllActive(): ChannelMapping[] {
-    return Array.from(this.sessions.values()).filter((s) => s.status !== 'ended');
+    return this.ptyStore.getAllActive();
   }
 
-  /**
-   * Get all persisted mappings (for fallback when session not in memory)
-   */
   getAllPersisted(): PersistedMapping[] {
-    return Array.from(this.persistedMappings.values());
+    return this.ptyStore.getAllPersisted();
   }
 
-  /**
-   * Get a specific persisted mapping by sessionId
-   */
   getPersistedMapping(sessionId: string): PersistedMapping | undefined {
-    return this.persistedMappings.get(sessionId);
+    return this.ptyStore.getPersisted(sessionId);
   }
 
-  // ── Claude SDK session methods ──────────────────────────────
+  // ── Claude SDK session methods ────────────────────────
 
   async createSdkSession(
     sessionId: string,
@@ -567,8 +482,8 @@ export class ChannelManager {
       if (!ready) return null;
     }
 
-    if (this.sdkSessions.has(sessionId)) {
-      return this.sdkSessions.get(sessionId)!;
+    if (this.sdkStore.has(sessionId)) {
+      return this.sdkStore.get(sessionId)!;
     }
 
     let threadId = existingThreadId;
@@ -639,51 +554,46 @@ export class ChannelManager {
       createdAt: new Date(),
     };
 
-    this.sdkSessions.set(sessionId, mapping);
-    this.threadToSdkSession.set(threadId, sessionId);
-    this.sdkPersistedMappings.set(sessionId, {
+    this.sdkStore.set(sessionId, mapping);
+    await this.sdkStore.persistAndSave(sessionId, {
       sessionId,
       sdkSessionId: sdkSessionId || sessionId,
       threadId,
       channelId,
       cwd,
     });
-    await this.saveSdkMappings();
 
     log.info({ sessionId, threadId }, 'Claude SDK session mapping stored');
     return mapping;
   }
 
   getSdkSession(sessionId: string): ChannelMapping | undefined {
-    return this.sdkSessions.get(sessionId);
+    return this.sdkStore.get(sessionId);
   }
 
   getSdkSessionByThread(threadId: string): string | undefined {
-    return this.threadToSdkSession.get(threadId);
+    return this.sdkStore.getByThread(threadId);
   }
 
   updateSdkStatus(sessionId: string, status: 'running' | 'idle' | 'ended'): void {
-    const mapping = this.sdkSessions.get(sessionId);
-    if (mapping) {
-      mapping.status = status;
-    }
+    this.sdkStore.updateStatus(sessionId, status);
   }
 
   setSdkSessionId(sessionId: string, sdkSessionId: string): void {
-    const persisted = this.sdkPersistedMappings.get(sessionId);
+    const persisted = this.sdkStore.getPersisted(sessionId);
     if (persisted) {
       persisted.sdkSessionId = sdkSessionId;
-      void this.saveSdkMappings();
+      void this.sdkStore.save();
     }
   }
 
   getPersistedSdkMappings(): PersistedMapping[] {
-    return Array.from(this.sdkPersistedMappings.values());
+    return this.sdkStore.getAllPersisted();
   }
 
   async archiveSdkSession(sessionId: string): Promise<boolean> {
-    const mapping = this.sdkSessions.get(sessionId);
-    const persisted = this.sdkPersistedMappings.get(sessionId);
+    const mapping = this.sdkStore.get(sessionId);
+    const persisted = this.sdkStore.getPersisted(sessionId);
 
     // Handle both in-memory and persisted-only sessions (e.g. after bot restart)
     if (!mapping && !persisted) return false;
@@ -695,8 +605,9 @@ export class ChannelManager {
     }
 
     if (threadId) {
-      const codexSessionId = this.threadToCodexSession.get(threadId);
-      const codexMapping = codexSessionId ? this.codexSessions.get(codexSessionId) : undefined;
+      // Only archive thread if no Codex session is active in it
+      const codexSessionId = this.codexStore.getByThread(threadId);
+      const codexMapping = codexSessionId ? this.codexStore.get(codexSessionId) : undefined;
       const codexActive = codexMapping && codexMapping.status !== 'ended';
 
       if (!codexActive) {
@@ -710,25 +621,17 @@ export class ChannelManager {
         }
       }
 
-      this.threadToSdkSession.delete(threadId);
+      this.sdkStore.deleteThread(threadId);
     }
 
-    this.sdkSessions.delete(sessionId);
-    this.sdkPersistedMappings.delete(sessionId);
-    await this.saveSdkMappings();
+    this.sdkStore.delete(sessionId);
+    await this.sdkStore.deletePersistedAndSave(sessionId);
     return true;
   }
 
-  private async saveSdkMappings(): Promise<void> {
-    try {
-      await mkdir(MAPPINGS_DIR, { recursive: true });
-      const mappings = Array.from(this.sdkPersistedMappings.values());
-      await writeFile(SDK_MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
-    } catch (err: any) {
-      log.error({ err: err.message }, 'Error saving SDK mappings');
-    }
-  }
-
+  /**
+   * SDK has custom load logic: dedup by thread, skip broken mappings, restore in-memory sessions
+   */
   private async loadSdkMappings(): Promise<void> {
     try {
       const data = await readFile(SDK_MAPPINGS_FILE, 'utf-8');
@@ -751,12 +654,12 @@ export class ChannelManager {
           continue;
         }
 
-        this.sdkPersistedMappings.set(m.sessionId, m);
-        this.threadToSdkSession.set(m.threadId!, m.sessionId);
+        this.sdkStore.setPersisted(m.sessionId, m);
+        this.sdkStore.setThread(m.threadId!, m.sessionId);
 
         // Restore in-memory session mapping so getClaudeSdkThread() works
         // after bot restart (lazy resume needs this to route SDK messages to Discord)
-        this.sdkSessions.set(m.sessionId, {
+        this.sdkStore.set(m.sessionId, {
           sessionId: m.sessionId,
           channelId: m.channelId,
           threadId: m.threadId!,
@@ -769,11 +672,11 @@ export class ChannelManager {
         });
       }
 
-      log.info(`Loaded ${this.sdkPersistedMappings.size} persisted Claude SDK mappings (cleaned ${cleaned} broken, deduped from ${mappings.length})`);
+      log.info(`Loaded ${this.sdkStore.persistedSize()} persisted Claude SDK mappings (cleaned ${cleaned} broken, deduped from ${mappings.length})`);
 
       // Save cleaned mappings back to disk
-      if (cleaned > 0 || mappings.length !== this.sdkPersistedMappings.size) {
-        await this.saveSdkMappings();
+      if (cleaned > 0 || mappings.length !== this.sdkStore.persistedSize()) {
+        await this.sdkStore.save();
       }
     } catch (err: any) {
       if (err.code !== 'ENOENT') {
@@ -782,11 +685,8 @@ export class ChannelManager {
     }
   }
 
-  // ── Codex session methods ───────────────────────────────────
+  // ── Codex session methods ─────────────────────────────
 
-  /**
-   * Create a Codex session mapping, optionally reusing an existing thread
-   */
   async createCodexSession(
     sessionId: string,
     sessionName: string,
@@ -798,8 +698,8 @@ export class ChannelManager {
       if (!ready) return null;
     }
 
-    if (this.codexSessions.has(sessionId)) {
-      return this.codexSessions.get(sessionId)!;
+    if (this.codexStore.has(sessionId)) {
+      return this.codexStore.get(sessionId)!;
     }
 
     let threadId = existingThreadId;
@@ -808,7 +708,6 @@ export class ChannelManager {
     let channelName = '';
 
     if (existingThreadId) {
-      // Reuse an existing thread (multi-agent scenario)
       try {
         const thread = await this.client.channels.fetch(existingThreadId);
         if (thread?.isThread()) {
@@ -822,7 +721,6 @@ export class ChannelManager {
         return null;
       }
     } else {
-      // Create new channel + thread (same as Claude flow)
       const channel = await this.getOrCreateChannel(cwd);
       if (!channel) return null;
 
@@ -870,69 +768,50 @@ export class ChannelManager {
       createdAt: new Date(),
     };
 
-    this.codexSessions.set(sessionId, mapping);
-    this.threadToCodexSession.set(threadId, sessionId);
-
-    // Persist
-    this.codexPersistedMappings.set(sessionId, { sessionId, threadId, channelId, cwd });
-    await this.saveCodexMappings();
+    this.codexStore.set(sessionId, mapping);
+    await this.codexStore.persistAndSave(sessionId, { sessionId, threadId, channelId, cwd });
 
     log.info({ sessionId, threadId }, 'Codex session mapping stored');
     return mapping;
   }
 
   getCodexSession(sessionId: string): ChannelMapping | undefined {
-    return this.codexSessions.get(sessionId);
+    return this.codexStore.get(sessionId);
   }
 
-  /**
-   * Update a Codex session's ID (used when 'pending' placeholder is replaced with real ID)
-   */
   updateCodexSessionId(oldId: string, newId: string): void {
-    const mapping = this.codexSessions.get(oldId);
+    const mapping = this.codexStore.get(oldId);
     if (!mapping) return;
 
     mapping.sessionId = newId;
-    this.codexSessions.delete(oldId);
-    this.codexSessions.set(newId, mapping);
-
-    // Update thread mapping
-    this.threadToCodexSession.set(mapping.threadId, newId);
+    this.codexStore.delete(oldId);
+    this.codexStore.set(newId, mapping);
 
     // Update persisted mappings
-    const persisted = this.codexPersistedMappings.get(oldId);
+    const persisted = this.codexStore.getPersisted(oldId);
     if (persisted) {
-      this.codexPersistedMappings.delete(oldId);
+      this.codexStore.deletePersisted(oldId);
       persisted.sessionId = newId;
-      this.codexPersistedMappings.set(newId, persisted);
-      this.saveCodexMappings();
+      this.codexStore.setPersisted(newId, persisted);
+      this.codexStore.save();
     }
 
     log.info({ oldId, newId }, 'Updated Codex session ID');
   }
 
-  /**
-   * Store Codex SDK thread ID for session persistence (needed for resumeThread)
-   */
   setCodexThreadId(sessionId: string, codexThreadId: string): void {
-    const persisted = this.codexPersistedMappings.get(sessionId);
+    const persisted = this.codexStore.getPersisted(sessionId);
     if (persisted) {
       persisted.codexThreadId = codexThreadId;
-      this.saveCodexMappings();
+      this.codexStore.save();
       log.info({ sessionId, codexThreadId }, 'Stored Codex SDK thread ID');
     }
   }
 
-  /**
-   * Get all persisted Codex mappings (for session restoration on startup)
-   */
   getPersistedCodexMappings(): PersistedMapping[] {
-    return Array.from(this.codexPersistedMappings.values());
+    return this.codexStore.getAllPersisted();
   }
 
-  /**
-   * Restore in-memory Codex session mapping from persisted data (after PM2 restart)
-   */
   restoreCodexSessionMapping(persisted: PersistedMapping): void {
     const mapping: ChannelMapping = {
       sessionId: persisted.sessionId,
@@ -946,36 +825,25 @@ export class ChannelManager {
       createdAt: new Date(),
     };
 
-    this.codexSessions.set(persisted.sessionId, mapping);
-    this.threadToCodexSession.set(persisted.threadId, persisted.sessionId);
+    this.codexStore.set(persisted.sessionId, mapping);
     log.info({ sessionId: persisted.sessionId, threadId: persisted.threadId }, 'Restored Codex session mapping');
   }
 
   getCodexSessionByThread(threadId: string): string | undefined {
-    return this.threadToCodexSession.get(threadId);
-  }
-
-  /**
-   * Get which agents are active in a thread
-   */
-  getAgentsInThread(threadId: string): { claude?: string; codex?: string } {
-    return {
-      claude: this.threadToSession.get(threadId) || this.threadToSdkSession.get(threadId),
-      codex: this.threadToCodexSession.get(threadId),
-    };
+    return this.codexStore.getByThread(threadId);
   }
 
   async archiveCodexSession(sessionId: string): Promise<boolean> {
-    const mapping = this.codexSessions.get(sessionId);
+    const mapping = this.codexStore.get(sessionId);
     if (!mapping) return false;
 
     mapping.status = 'ended';
 
-    // Only archive thread if no Claude session is active in it
-    const ptyClaudeInThread = this.threadToSession.get(mapping.threadId);
-    const ptyClaudeMapping = ptyClaudeInThread ? this.sessions.get(ptyClaudeInThread) : undefined;
-    const sdkClaudeInThread = this.threadToSdkSession.get(mapping.threadId);
-    const sdkClaudeMapping = sdkClaudeInThread ? this.sdkSessions.get(sdkClaudeInThread) : undefined;
+    // Only archive thread if no Claude session (PTY or SDK) is active in it
+    const ptyClaudeInThread = this.ptyStore.getByThread(mapping.threadId);
+    const ptyClaudeMapping = ptyClaudeInThread ? this.ptyStore.get(ptyClaudeInThread) : undefined;
+    const sdkClaudeInThread = this.sdkStore.getByThread(mapping.threadId);
+    const sdkClaudeMapping = sdkClaudeInThread ? this.sdkStore.get(sdkClaudeInThread) : undefined;
     const claudeActive =
       (ptyClaudeMapping && ptyClaudeMapping.status !== 'ended') ||
       (sdkClaudeMapping && sdkClaudeMapping.status !== 'ended');
@@ -991,33 +859,20 @@ export class ChannelManager {
       }
     }
 
-    this.threadToCodexSession.delete(mapping.threadId);
-    this.codexSessions.delete(sessionId);
-    this.codexPersistedMappings.delete(sessionId);
-    await this.saveCodexMappings();
+    this.codexStore.delete(sessionId);
+    await this.codexStore.deletePersistedAndSave(sessionId);
     return true;
-  }
-
-  private async saveCodexMappings(): Promise<void> {
-    try {
-      await mkdir(MAPPINGS_DIR, { recursive: true });
-      const mappings = Array.from(this.codexPersistedMappings.values());
-      await writeFile(CODEX_MAPPINGS_FILE, JSON.stringify(mappings, null, 2));
-    } catch (err: any) {
-      log.error({ err: err.message }, 'Error saving Codex mappings');
-    }
   }
 
   /**
    * Validate persisted Codex mappings against actual Discord thread state.
    * Removes stale entries (no codexThreadId, thread deleted, thread archived).
-   * Returns only valid mappings that should be restored.
    */
   async validateAndCleanCodexMappings(): Promise<PersistedMapping[]> {
     const valid: PersistedMapping[] = [];
     const stale: string[] = [];
 
-    for (const [sessionId, mapping] of this.codexPersistedMappings) {
+    for (const [sessionId, mapping] of this.codexStore.persistedEntries()) {
       // Skip mappings without codexThreadId (never completed first turn)
       if (!mapping.codexThreadId) {
         stale.push(sessionId);
@@ -1045,30 +900,26 @@ export class ChannelManager {
       }
     }
 
-    // Clean up stale mappings
     if (stale.length > 0) {
       for (const sessionId of stale) {
-        this.codexPersistedMappings.delete(sessionId);
+        this.codexStore.deletePersisted(sessionId);
       }
-      await this.saveCodexMappings();
+      await this.codexStore.save();
       log.info({ removed: stale.length, remaining: valid.length }, 'Cleaned stale Codex mappings');
     }
 
     return valid;
   }
 
-  private async loadCodexMappings(): Promise<void> {
-    try {
-      const data = await readFile(CODEX_MAPPINGS_FILE, 'utf-8');
-      const mappings: PersistedMapping[] = JSON.parse(data);
-      for (const m of mappings) {
-        this.codexPersistedMappings.set(m.sessionId, m);
-      }
-      log.info(`Loaded ${mappings.length} persisted Codex mappings`);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') {
-        log.error({ err: err.message }, 'Error loading Codex mappings');
-      }
-    }
+  // ── Cross-store helpers ───────────────────────────────
+
+  /**
+   * Get which agents are active in a thread
+   */
+  getAgentsInThread(threadId: string): { claude?: string; codex?: string } {
+    return {
+      claude: this.ptyStore.getByThread(threadId) || this.sdkStore.getByThread(threadId),
+      codex: this.codexStore.getByThread(threadId),
+    };
   }
 }
