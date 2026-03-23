@@ -449,11 +449,15 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
 
       const bar = pct >= 90 ? '🔴' : pct >= 70 ? '🟡' : '🟢';
 
+      // Show model name only on first turn
+      const modelTag = usage.numTurns <= 1 ? ` · 🤖 ${usage.model}` : '';
+
       const line = [
         `${bar} **${pct}%** ctx`,
         ` (${formatTokens(usage.inputTokens)}/${formatTokens(usage.contextWindow)})`,
         ` · $${usage.totalCostUSD.toFixed(4)}`,
         ` · turn ${usage.numTurns}`,
+        modelTag,
       ].join('');
 
       try {

@@ -309,6 +309,97 @@ export class ConsolidationService {
       log.info({ id: record.id, kind: record.kind, ageDays, reason }, 'Lifecycle cleanup');
     }
 
+    // ── Phase 4: Smart task auto-resolution ───────────
+    // If an open task's topicKey has a newer decision/fact containing completion
+    // keywords, mark the task as resolved.
+
+    const COMPLETION_RE = /완료|구현|수정|해결|적용|fixed|done|resolved|implemented|committed|merged|deployed|shipped|finished/i;
+
+    // Build a map of non-task records by topicKey for fast lookup
+    const recentByTopic = new Map<string, typeof allRecords>();
+    for (const record of allRecords) {
+      if (deletedIds.has(record.id)) continue;
+      if (record.kind === 'task') continue;
+      if (!record.topicKey) continue;
+      const group = recentByTopic.get(record.topicKey) ?? [];
+      group.push(record);
+      recentByTopic.set(record.topicKey, group);
+    }
+
+    for (const record of allRecords) {
+      if (deletedIds.has(record.id)) continue;
+      if (record.kind !== 'task' || record.status !== 'open') continue;
+
+      const taskCreated = new Date(record.createdAt).getTime();
+
+      // Strategy 1: TopicKey match (fast, exact)
+      let completionEvidence: { text: string; id: string } | undefined;
+      if (record.topicKey) {
+        const related = recentByTopic.get(record.topicKey);
+        if (related) {
+          completionEvidence = related.find(
+            (r) =>
+              (r.kind === 'decision' || r.kind === 'fact') &&
+              new Date(r.createdAt).getTime() > taskCreated &&
+              COMPLETION_RE.test(r.text),
+          );
+        }
+      }
+
+      // Strategy 2: Vector similarity fallback (semantic match across different topicKeys)
+      if (!completionEvidence && record.vector) {
+        const similar = await this.memory.searchByVector(record.vector, {
+          project,
+          limit: 10,
+          minScore: 0.80,
+        });
+        completionEvidence = similar.find(
+          (s) =>
+            s.id !== record.id &&
+            !deletedIds.has(s.id) &&
+            (s.kind === 'decision' || s.kind === 'fact') &&
+            new Date(s.createdAt).getTime() > taskCreated &&
+            COMPLETION_RE.test(s.text),
+        );
+      }
+
+      // Strategy 3: Date-based expiry for schedule/event tasks
+      if (!completionEvidence) {
+        const dateMatch = record.text.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
+        if (dateMatch) {
+          const month = parseInt(dateMatch[1]);
+          const day = parseInt(dateMatch[2]);
+          const year = dateMatch[3] ? parseInt(dateMatch[3]) : new Date().getFullYear();
+          const fullYear = year < 100 ? 2000 + year : year;
+          const eventDate = new Date(fullYear, month - 1, day);
+          if (eventDate.getTime() < now - 7 * 24 * 60 * 60 * 1000) {
+            completionEvidence = { id: 'date-expired', text: `event date ${month}/${day} passed` };
+          }
+        }
+      }
+
+      if (!completionEvidence) continue;
+
+      cleanDetails.push({
+        id: record.id,
+        text: record.text,
+        kind: record.kind,
+        speaker: record.speaker,
+        priority: record.priority,
+        ageDays: Math.floor((now - taskCreated) / (24 * 60 * 60 * 1000)),
+        reason: `auto-resolved (evidence: "${completionEvidence.text.slice(0, 50)}...")`,
+      });
+
+      if (!dryRun) {
+        await this.memory.updateStatus(record.id, 'resolved');
+      }
+      deletedIds.add(record.id);
+      log.info(
+        { taskId: record.id, evidenceId: completionEvidence.id, taskText: record.text.slice(0, 60) },
+        'Smart task auto-resolution',
+      );
+    }
+
     return {
       project,
       beforeCount,

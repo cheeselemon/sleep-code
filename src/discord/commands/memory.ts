@@ -104,11 +104,23 @@ export async function handleMemory(
       }
       await interaction.deferReply();
       try {
+        // Run pre-consolidation before digest (same as scheduled path)
+        const preConsolidation = await context.dailyDigestRunner.runPreConsolidation();
+        if (preConsolidation && context.memoryReporter) {
+          const lines = [`🔧 Pre-digest consolidation: ${preConsolidation.totalMerged} merged, ${preConsolidation.totalCleaned} cleaned, ${preConsolidation.totalRemaining} remaining`];
+          for (const pr of preConsolidation.projectReports) {
+            if (pr.merged > 0 || pr.cleaned > 0) {
+              lines.push(`  ${pr.project}: ${pr.beforeCount}→${pr.afterCount} (${pr.merged} merged, ${pr.cleaned} cleaned)`);
+            }
+          }
+          await context.memoryReporter.postConsolidationReport(lines.join('\n'));
+        }
         const digest = await context.dailyDigestRunner.generateDigest();
         if (context.memoryReporter) {
           await context.memoryReporter.postDigest(digest);
         }
-        await interaction.editReply(`📬 Digest generated and posted to #sleep-code-memory.\nTasks: ${digest.openTasks} | Decisions: ${digest.recentDecisions} | Topics: ${digest.topTopics.join(', ') || 'none'}`);
+        const consolMsg = preConsolidation ? ` (pre-consolidated: ${preConsolidation.totalCleaned} cleaned, ${preConsolidation.totalMerged} merged)` : '';
+        await interaction.editReply(`📬 Digest generated and posted to #sleep-code-memory.${consolMsg}\nTasks: ${digest.openTasks} | Decisions: ${digest.recentDecisions} | Topics: ${digest.topTopics.join(', ') || 'none'}`);
       } catch (err) {
         await interaction.editReply(`❌ Digest generation failed: ${(err as Error).message}`);
       }

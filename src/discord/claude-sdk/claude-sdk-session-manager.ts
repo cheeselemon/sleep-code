@@ -45,6 +45,7 @@ export interface ClaudeSdkToolResultInfo {
 }
 
 export interface ClaudeSdkTurnUsage {
+  model: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -548,16 +549,20 @@ export class ClaudeSdkSessionManager {
       const contextUsed = (lastUsage.input_tokens || 0)
         + (lastUsage.cache_read_input_tokens || 0)
         + (lastUsage.cache_creation_input_tokens || 0);
+      const modelNames = Object.keys(message.modelUsage || {});
 
       log.info({
         sessionId: session.id,
+        model: modelNames[0] || 'unknown',
         perCall: { input: lastUsage.input_tokens, cacheRead: lastUsage.cache_read_input_tokens, cacheCreation: lastUsage.cache_creation_input_tokens, contextUsed },
         contextWindow: primary.contextWindow,
         totalCost: message.total_cost_usd,
         numTurns: message.num_turns,
       }, 'SDK turn usage');
 
+      const modelName = modelNames[0] || 'unknown';
       await this.events.onTurnComplete?.(session.id, {
+        model: modelName,
         inputTokens: contextUsed,
         outputTokens: lastUsage.output_tokens || 0,
         cacheReadTokens: lastUsage.cache_read_input_tokens || 0,
