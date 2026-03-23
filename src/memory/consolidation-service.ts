@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import type { MemoryService } from './memory-service.js';
+import { isCompletionReport } from './task-rules.js';
 
 const log = logger.child({ component: 'consolidation' });
 
@@ -310,9 +311,32 @@ export class ConsolidationService {
     }
 
     // ── Phase 4: Smart task auto-resolution ───────────
-    // If an open task's topicKey has a newer decision/fact containing completion
-    // keywords, mark the task as resolved.
 
+    // Strategy 0: Self-resolution — task's OWN text is a completion report
+    for (const record of allRecords) {
+      if (deletedIds.has(record.id)) continue;
+      if (record.kind !== 'task' || record.status !== 'open') continue;
+
+      if (isCompletionReport(record.text)) {
+        cleanDetails.push({
+          id: record.id,
+          text: record.text,
+          kind: record.kind,
+          speaker: record.speaker,
+          priority: record.priority,
+          ageDays: Math.floor((now - new Date(record.createdAt).getTime()) / (24 * 60 * 60 * 1000)),
+          reason: 'self-resolved (completion report misclassified as task)',
+        });
+
+        if (!dryRun) {
+          await this.memory.updateStatus(record.id, 'resolved');
+        }
+        deletedIds.add(record.id);
+        log.info({ id: record.id, text: record.text.slice(0, 60) }, 'Self-resolution: task text is completion report');
+      }
+    }
+
+    // Cross-memory evidence resolution
     const COMPLETION_RE = /완료|구현|수정|해결|적용|fixed|done|resolved|implemented|committed|merged|deployed|shipped|finished/i;
 
     // Build a map of non-task records by topicKey for fast lookup

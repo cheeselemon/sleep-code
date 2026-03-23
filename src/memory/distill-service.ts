@@ -197,9 +197,13 @@ export class DistillService {
 
     try {
       const raw = await this.chat.chat(messages);
-      const results = this.parseBatchResponse(raw, items);
+      let results = this.parseBatchResponse(raw, items);
       if (results) {
         log.info({ count: items.length, stored: results.filter(r => r.result.shouldStore).length }, 'Batch distill complete');
+
+        // 2nd pass: review task classifications against originals
+        results = await this.reviewTaskClassifications(results, items, messages);
+
         return results;
       }
       log.warn({ rawLen: raw.length }, 'Failed to parse batch response, falling back to individual');
@@ -209,6 +213,93 @@ export class DistillService {
 
     // Fallback: distill individually
     return this.distillIndividually(items);
+  }
+
+  /**
+   * 2nd-pass review: verify that items classified as "task" are truly
+   * unfinished future work, not completion reports or ephemeral instructions.
+   * Uses the same SDK session (cache-warm) for a cheap follow-up turn.
+   */
+  private async reviewTaskClassifications(
+    results: BatchDistillResult[],
+    items: BatchDistillItem[],
+    priorMessages: ChatMessage[],
+  ): Promise<BatchDistillResult[]> {
+    // Find task candidates to review
+    const taskResults = results.filter(
+      (r) => r.result.shouldStore && r.result.kind === 'task',
+    );
+    if (taskResults.length === 0) return results;
+
+    // Build review prompt with original messages + classifications
+    const reviewItems = taskResults.map((tr) => {
+      const original = items.find((i) => i.id === tr.id);
+      return {
+        id: tr.id,
+        original: original ? `${original.message.speaker}: ${original.message.content}` : '(not found)',
+        distilled: tr.result.distilled,
+        kind: tr.result.kind,
+        priority: tr.result.priority,
+      };
+    });
+
+    const reviewPrompt = `Review your task classifications. For each item below, check if it's TRULY an unfinished future task, or actually a completion report / status update / ephemeral instruction that was misclassified.
+
+Items to review:
+${JSON.stringify(reviewItems, null, 2)}
+
+Rules:
+- A "task" must be UNFINISHED FUTURE WORK that someone still needs to do
+- "리태깅 완료 412건" → NOT a task, it's a fact (completion report)
+- "서버 재시작해줘" → NOT a task, it's an ephemeral instruction (skip)
+- "interruptSession 수정 필요" → YES, this is a real task
+- "커밋 완료" → NOT a task (skip)
+
+For each item, respond with ONE of:
+- "keep" = correct, it's a real unfinished task
+- "fact" = misclassified, should be kind=fact (completion report / result)
+- "skip" = should not be stored (ephemeral / noise)
+
+Respond ONLY with a JSON array: [{"id": 0, "verdict": "keep|fact|skip"}, ...]`;
+
+    try {
+      const reviewMessages: ChatMessage[] = [
+        ...priorMessages,
+        { role: 'user', content: reviewPrompt },
+      ];
+      const reviewRaw = await this.chat.chat(reviewMessages);
+
+      // Parse review response
+      let jsonStr = reviewRaw.trim();
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
+
+      const verdicts: Array<{ id: number; verdict: string }> = JSON.parse(jsonStr);
+      let corrected = 0;
+
+      for (const v of verdicts) {
+        const target = results.find((r) => r.id === v.id);
+        if (!target) continue;
+
+        if (v.verdict === 'fact') {
+          target.result.kind = 'fact';
+          corrected++;
+          log.info({ id: v.id, text: target.result.distilled.slice(0, 60) }, 'Review: task → fact');
+        } else if (v.verdict === 'skip') {
+          target.result.shouldStore = false;
+          corrected++;
+          log.info({ id: v.id, text: target.result.distilled.slice(0, 60) }, 'Review: task → skip');
+        }
+      }
+
+      if (corrected > 0) {
+        log.info({ reviewed: taskResults.length, corrected }, 'Task review pass complete');
+      }
+    } catch (err) {
+      log.warn({ err }, 'Task review pass failed, keeping original classifications');
+    }
+
+    return results;
   }
 
   private buildBatchPrompt(items: BatchDistillItem[]): string {
