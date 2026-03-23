@@ -258,6 +258,47 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       log.info({ count: textContents.length }, 'Added text files to message');
     }
 
+    // Quick interrupt: short text commands to interrupt active agent
+    const INTERRUPT_COMMANDS = new Set(['!중지', '!halt', '!잠깐']);
+    if (INTERRUPT_COMMANDS.has(inputText.trim().toLowerCase())) {
+      let interrupted = false;
+      const activeAgent = state.lastActiveAgent.get(threadId);
+
+      // Try Claude SDK first
+      if (claudeSessionId && (!activeAgent || activeAgent === 'claude')) {
+        const sdkSession = claudeSdkSessionManager.getSession(claudeSessionId);
+        if (sdkSession && sdkSession.status === 'running') {
+          claudeSdkSessionManager.interruptSession(claudeSessionId);
+          interrupted = true;
+        }
+      }
+
+      // Try Codex
+      if (!interrupted && codexSessionId && codexSessionManager && (!activeAgent || activeAgent === 'codex')) {
+        const codexSession = codexSessionManager.getSession(codexSessionId);
+        if (codexSession && codexSession.status === 'running') {
+          codexSessionManager.interruptSession(codexSessionId);
+          interrupted = true;
+        }
+      }
+
+      // Try PTY (send Escape x2)
+      if (!interrupted && claudeSessionId) {
+        const channel = channelManager.getSession(claudeSessionId);
+        if (channel && channel.status === 'running') {
+          sessionManager.sendInput(claudeSessionId, '\x1b\x1b', false);
+          interrupted = true;
+        }
+      }
+
+      if (interrupted) {
+        await message.react('🛑');
+      } else {
+        await message.reply('⚠️ No active session to interrupt.');
+      }
+      return;
+    }
+
     // Route to the correct agent
     if (target === 'codex') {
       if (!codexSessionManager) {
