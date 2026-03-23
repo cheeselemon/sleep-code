@@ -14,6 +14,8 @@ import {
   AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
 } from 'discord.js';
 import type { DiscordState } from '../state.js';
 import { SKIP_RESULT_TOOLS } from '../state.js';
@@ -343,6 +345,88 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       const thread = await getClaudeSdkThread(client, channelManager, sessionId);
       if (thread) {
         thread.send(`⏰ **Permission timed out**: \`${toolName}\` — auto-denied`).catch(() => {});
+      }
+    },
+
+    onAskUserQuestion: async (sessionId, requestId, questions) => {
+      const thread = await getClaudeSdkThread(client, channelManager, sessionId);
+      if (!thread) return;
+
+      // Store pending question state (reuse PTY's pendingQuestions for button handlers)
+      state.pendingQuestions.set(requestId, {
+        sessionId,
+        toolUseId: requestId,
+        questions,
+      });
+
+      try {
+        for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+          const q = questions[qIdx];
+          const questionText = `❓ **${q.header}**\n${q.question}`;
+
+          if (q.multiSelect) {
+            const selectMenu = new StringSelectMenuBuilder()
+              .setCustomId(`sdk_askq_select:${requestId}:${qIdx}`)
+              .setPlaceholder('Select options...')
+              .setMinValues(1)
+              .setMaxValues(q.options.length);
+
+            for (let oIdx = 0; oIdx < q.options.length; oIdx++) {
+              const opt = q.options[oIdx];
+              selectMenu.addOptions(
+                new StringSelectMenuOptionBuilder()
+                  .setLabel(opt.label.slice(0, 100))
+                  .setDescription((opt.description || '').slice(0, 100) || opt.label.slice(0, 100))
+                  .setValue(`${oIdx}`)
+              );
+            }
+
+            const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+            const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`sdk_askq_submit:${requestId}:${qIdx}`)
+                .setLabel('Submit')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`sdk_askq:${requestId}:${qIdx}:other`)
+                .setLabel('Other...')
+                .setStyle(ButtonStyle.Secondary)
+            );
+
+            await thread.send({ content: questionText, components: [selectRow, buttonRow] });
+          } else {
+            const optionsList = q.options
+              .map((opt: { label: string; description: string }, idx: number) =>
+                `${idx + 1}. **${opt.label}** - ${opt.description}`)
+              .join('\n');
+            const questionTextWithOptions = `${questionText}\n\n${optionsList}`;
+
+            const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+            const currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+            for (let oIdx = 0; oIdx < q.options.length && oIdx < 4; oIdx++) {
+              const opt = q.options[oIdx];
+              currentRow.addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`sdk_askq:${requestId}:${qIdx}:${oIdx}`)
+                  .setLabel(opt.label.slice(0, 80))
+                  .setStyle(ButtonStyle.Primary)
+              );
+            }
+
+            currentRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`sdk_askq:${requestId}:${qIdx}:other`)
+                .setLabel('Other...')
+                .setStyle(ButtonStyle.Secondary)
+            );
+
+            rows.push(currentRow);
+            await thread.send({ content: questionTextWithOptions, components: rows });
+          }
+        }
+      } catch (err) {
+        log.error({ err }, 'Failed to post SDK AskUserQuestion');
       }
     },
 

@@ -14,6 +14,12 @@ import {
   handleAskQuestionSelect,
   handleAskQuestionModal,
 } from './ask-question.js';
+import {
+  handleSdkAskQuestionButton,
+  handleSdkAskQuestionSubmit,
+  handleSdkAskQuestionSelect,
+  handleSdkAskQuestionModal,
+} from './sdk-ask-question.js';
 import { handleInterruptButton, handleYoloButton } from './panel.js';
 import { handleFullResultButton } from './full-result.js';
 import { handleRestoreButton, handleDismissRestoreButton, handleRestoreSdkButton, handleDismissSdkButton } from './restore.js';
@@ -85,6 +91,18 @@ export async function handleButton(
     return;
   }
 
+  // SDK AskUserQuestion submit button
+  if (customId.startsWith('sdk_askq_submit:')) {
+    await handleSdkAskQuestionSubmit(interaction, context);
+    return;
+  }
+
+  // SDK AskUserQuestion buttons
+  if (customId.startsWith('sdk_askq:')) {
+    await handleSdkAskQuestionButton(interaction, context);
+    return;
+  }
+
   // MultiSelect Submit button
   if (customId.startsWith('askq_submit:')) {
     await handleAskQuestionSubmit(interaction, context);
@@ -149,6 +167,12 @@ export async function handleSelectMenu(
     return;
   }
 
+  // SDK AskUserQuestion multi-select
+  if (customId.startsWith('sdk_askq_select:')) {
+    await handleSdkAskQuestionSelect(interaction, context);
+    return;
+  }
+
   // AskUserQuestion multi-select
   if (customId.startsWith('askq_select:')) {
     await handleAskQuestionSelect(interaction, context);
@@ -164,6 +188,12 @@ export async function handleModal(
   context: InteractionContext
 ): Promise<void> {
   const customId = interaction.customId;
+
+  // SDK AskUserQuestion "Other" modal
+  if (customId.startsWith('sdk_askq_modal:')) {
+    await handleSdkAskQuestionModal(interaction, context);
+    return;
+  }
 
   // AskUserQuestion "Other" modal
   if (customId.startsWith('askq_modal:')) {

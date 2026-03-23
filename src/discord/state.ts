@@ -88,6 +88,9 @@ export interface DiscordState {
 
   // Track consecutive agent-to-agent routing count (reset on user message)
   agentRoutingCount: Map<string, number>; // threadId -> count
+
+  // SDK AskUserQuestion resolvers (requestId -> resolve with answers)
+  sdkAskQuestionResolvers: Map<string, (answers: Record<string, string>) => void>;
 }
 
 /**
@@ -108,6 +111,7 @@ export function createState(): DiscordState {
     fullResultsCleanupInterval: null,
     lastActiveAgent: new Map(),
     agentRoutingCount: new Map(),
+    sdkAskQuestionResolvers: new Map(),
   };
 
   // Start periodic cleanup of expired pendingFullResults

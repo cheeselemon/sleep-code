@@ -68,6 +68,7 @@ export interface ClaudeSdkEvents {
   onPermissionTimeout?: (sessionId: string, requestId: string, toolName: string) => void | Promise<void>;
   onSdkSessionIdUpdate?: (sessionId: string, sdkSessionId: string) => void | Promise<void>;
   onTurnComplete?: (sessionId: string, usage: ClaudeSdkTurnUsage) => void | Promise<void>;
+  onAskUserQuestion?: (sessionId: string, requestId: string, questions: any[]) => void | Promise<void>;
 }
 
 const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
@@ -216,6 +217,27 @@ export class ClaudeSdkSessionManager {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<{ behavior: 'allow'; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message: string }> {
+    // AskUserQuestion: show interactive UI and wait for user answer
+    if (toolName === 'AskUserQuestion' && input.questions) {
+      return new Promise((resolve) => {
+        const requestId = randomUUID();
+
+        // Store resolve so button/select handlers can call it with answers
+        this.state.sdkAskQuestionResolvers.set(requestId, (answers: Record<string, string>) => {
+          this.state.sdkAskQuestionResolvers.delete(requestId);
+          // Merge answers into the original input
+          const updatedQuestions = (input.questions as any[]).map((q: any, idx: number) => ({
+            ...q,
+            answer: answers[String(idx)] || '',
+          }));
+          resolve({ behavior: 'allow', updatedInput: { ...input, questions: updatedQuestions } });
+        });
+
+        // Send question UI to Discord
+        this.events.onAskUserQuestion?.(session.id, requestId, input.questions as any[]);
+      });
+    }
+
     // YOLO mode: auto-approve (except excluded tools)
     if (this.state.yoloSessions.has(session.id) && !YOLO_EXCLUDED_TOOLS.has(toolName)) {
       log.info({ sessionId: session.id, tool: toolName }, 'SDK YOLO: auto-approving');
