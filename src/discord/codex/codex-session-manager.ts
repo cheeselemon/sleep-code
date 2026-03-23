@@ -24,6 +24,7 @@ export interface CodexSessionEntry {
   discordThreadId: string;
   startedAt: Date;
   activeTurn: AbortController | null;
+  turnCount: number;
 }
 
 export interface CodexEvents {
@@ -43,6 +44,7 @@ export interface CodexEvents {
     status: string;
   }) => void | Promise<void>;
   onError: (sessionId: string, error: Error) => void;
+  onTurnComplete?: (sessionId: string, usage: { inputTokens: number; outputTokens: number }, turnNumber: number) => void | Promise<void>;
 }
 
 export class CodexSessionManager {
@@ -87,6 +89,7 @@ export class CodexSessionManager {
       discordThreadId,
       startedAt: new Date(),
       activeTurn: null,
+      turnCount: 0,
     };
 
     this.sessions.set(id, entry);
@@ -321,11 +324,19 @@ export class CodexSessionManager {
 
           case 'turn.completed': {
             const usage = (event as any).usage;
+            session.turnCount++;
             log.info({
               sessionId: session.id,
               inputTokens: usage?.input_tokens,
               outputTokens: usage?.output_tokens,
+              turn: session.turnCount,
             }, 'Codex turn completed');
+            if (usage) {
+              await this.events.onTurnComplete?.(session.id, {
+                inputTokens: usage.input_tokens || 0,
+                outputTokens: usage.output_tokens || 0,
+              }, session.turnCount);
+            }
             break;
           }
 

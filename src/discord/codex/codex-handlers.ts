@@ -258,6 +258,22 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       }
     },
 
+    onTurnComplete: async (sessionId, usage, turnNumber) => {
+      const thread = await getCodexThread(client, channelManager, sessionId);
+      if (!thread) return;
+
+      const formatTokens = (n: number): string => {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+        return String(n);
+      };
+
+      const line = `📊 Codex: ${formatTokens(usage.inputTokens)} in / ${formatTokens(usage.outputTokens)} out · turn ${turnNumber}`;
+      try {
+        await thread.send(line);
+      } catch { /* ignore */ }
+    },
+
     onError: (sessionId, error) => {
       log.error({ sessionId, error: error.message }, 'Codex session error');
       getCodexThread(client, channelManager, sessionId).then(thread => {
