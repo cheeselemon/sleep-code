@@ -4,9 +4,9 @@
 
 - **Node.js** 18+
 - **npm** or compatible package manager
-- [Ollama](https://ollama.com/) (optional, for semantic memory)
-  - `qwen2.5:7b` — distill model
-  - `qwen3-embedding` — embedding model (auto-pulled on first use)
+- [Ollama](https://ollama.com/) (optional, for semantic memory embeddings)
+  - `qwen3-embedding:4b` — embedding model (auto-pulled on first use)
+  - Distill classification uses Claude Agent SDK (haiku), not Ollama
 
 ## Install
 
@@ -123,4 +123,7 @@ See [codex-integration-en.md](codex-integration-en.md) for full details.
 | `~/.sleep-code/process-registry.json` | ProcessManager session registry |
 | `~/.sleep-code/session-mappings.json` | Claude session → Discord thread mappings |
 | `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
+| `~/.sleep-code/sdk-session-mappings.json` | Claude SDK session → Discord thread mappings |
+| `~/.sleep-code/memory-config.json` | Memory system config (distill, consolidation, digest) |
+| `~/.sleep-code/digest-prompt.txt` | Custom daily digest prompt template (optional) |
 | `~/.sleep-code/memory/lancedb/` | LanceDB vector store |

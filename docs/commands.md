@@ -44,12 +44,24 @@
 | `/codex stop` | Stop a running Codex session |
 | `/codex status` | Show all Codex sessions |
 
+### Memory
+
+| Command | Description |
+|---------|-------------|
+| `/memory opt-out` | Disable memory collection for this session |
+| `/memory opt-out --global` | Pause entire memory system |
+| `/memory opt-in` | Re-enable memory for this session |
+| `/memory opt-in --global` | Resume entire memory system |
+| `/memory status` | Show memory system status (global state, queue, model, config) |
+
 ### Other
 
 | Command | Description |
 |---------|-------------|
 | `/help` | Show all available commands |
 | `/status` | Show current thread session status |
+| `/commands` | List all registered slash commands |
+| `/settings` | Show current bot and memory configuration |
 
 ## All Platform Commands
 

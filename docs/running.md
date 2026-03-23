@@ -167,9 +167,48 @@ npm run explorer          # Opens at http://localhost:3333
 cd explorer && npm run dev
 ```
 
+## Memory System (Discord)
+
+When the Discord bot starts with memory enabled, it automatically:
+
+- Creates a `#sleep-code-memory` channel
+- Starts the **batch distill** pipeline (Claude SDK haiku, processes messages in batches)
+- Starts the **consolidation scheduler** (merges duplicates every 24h)
+- Starts the **daily digest** (briefings at scheduled times, default 10:00 + 16:00)
+
+### Configuration
+
+All memory settings live in `~/.sleep-code/memory-config.json` (hot-reloaded on file change):
+
+```json
+{
+  "distill": { "enabled": true, "model": "haiku", "batchMaxMessages": 20, "batchIntervalMs": 1800000 },
+  "consolidation": { "enabled": true, "intervalMs": 86400000 },
+  "digest": { "enabled": true, "schedule": ["10:00", "16:00"], "timezone": "Asia/Seoul", "model": "sonnet" }
+}
+```
+
+### Custom Digest Prompt
+
+Place a template at `~/.sleep-code/digest-prompt.txt` to customize digest output.
+Variables: `{{OPEN_TASKS}}`, `{{RECENT_DECISIONS}}`, `{{ACTIVE_TOPICS}}`, `{{TASK_COUNT}}`, `{{DECISION_COUNT}}`
+
+### Discord Commands
+
+| Command | Effect |
+|---------|--------|
+| `/memory opt-out` | Disable memory for this session |
+| `/memory opt-out --global` | Pause entire memory system |
+| `/memory opt-in` | Re-enable for this session |
+| `/memory opt-in --global` | Resume entire memory system |
+| `/memory status` | Show memory system status |
+| `/settings` | Show current bot and memory configuration |
+
+Full details: [Memory System](memory.md)
+
 ## Disabling Memory
 
 ```bash
 DISABLE_MEMORY=1 npm run discord          # Environment variable
-# Or simply don't run Ollama — memory auto-disables gracefully
+# Or don't run Ollama — embedding fails, memory auto-disables
 ```

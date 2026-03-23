@@ -43,13 +43,17 @@ pm2 logs sleep-discord
 
 ## Memory System
 
-Semantic memory pipeline powered by local LLMs:
+Semantic memory pipeline:
 - **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
-- **Distill**: Ollama qwen2.5:7b (classifies messages → store/skip)
+- **Distill**: Claude Agent SDK haiku via `BatchDistillRunner` (batch classification → store/skip)
+- **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00 KST)
+- **Consolidation**: Auto-runs every 24h (merge duplicates + clean noise)
+- **Config**: `~/.sleep-code/memory-config.json` (hot-reloaded)
 - **Storage**: LanceDB at `~/.sleep-code/memory/lancedb`
 - **MCP Server**: HTTP transport on port 24242 (PM2: sleep-memory-mcp, env: `MCP_PORT`)
 - **MCP Tools**: `sc_memory_search`, `sc_memory_list`, `sc_memory_store`, `sc_memory_update`, `sc_memory_supersede`, `sc_memory_delete`
 - **Explorer**: Next.js 16 web UI at `explorer/` (port 3333)
+- **Discord**: `#sleep-code-memory` channel with daily distill threads + weekly consolidation threads
 
 ### Memory CLI
 
@@ -78,29 +82,37 @@ src/
 │   └── {telegram,discord,slack}.ts  # Platform-specific setup/run
 ├── memory/                 # Semantic memory pipeline
 │   ├── memory-service.ts       # LanceDB store, search, dedup, supersede
-│   ├── memory-collector.ts     # Message ingestion with sliding window + supersede routing
-│   ├── distill-service.ts      # LLM classifier (store/skip/update detection)
+│   ├── memory-collector.ts     # Message ingestion with sliding window, batch delegation
+│   ├── distill-service.ts      # LLM classifier (store/skip/update detection, batch support)
+│   ├── batch-distill-runner.ts # Queue + timer + SDK session + consolidation scheduler
+│   ├── daily-digest.ts         # Scheduled digest briefings (Claude SDK sonnet)
+│   ├── memory-config.ts        # JSON config loader with hot-reload (fs.watch)
 │   ├── consolidation-service.ts # Periodic merge and cleanup
 │   ├── embedding-provider.ts   # Ollama embedding abstraction
-│   ├── chat-provider.ts        # LLM chat abstraction (Ollama/Claude)
-│   └── background-claude-runner.ts # Headless Claude PTY for distill (alt to Ollama)
+│   ├── chat-provider.ts        # LLM chat abstraction (Ollama/Claude CLI/Claude SDK)
 ├── mcp/
 │   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
-│   ├── discord-app.ts      # Discord.js app, slash commands, button handlers
-│   ├── channel-manager.ts  # Thread/channel management, session mapping, SDK lazy resume persistence
+│   ├── discord-app.ts      # Discord.js app, event routing, memory system init
+│   ├── channel-manager.ts  # Thread/channel management, session mapping, SDK lazy resume
 │   ├── process-manager.ts  # Session spawning, lifecycle, terminal window tracking
 │   ├── settings-manager.ts # User settings (allowed directories, terminal app)
-│   ├── agent-routing.ts    # @codex/@claude message routing
-│   ├── claude-sdk/          # Claude Agent SDK integration
-│   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream, prompt generator
+│   ├── memory-reporter.ts  # #sleep-code-memory channel, daily/weekly threads
+│   ├── state.ts            # Shared state (permissions, YOLO, routing)
+│   ├── utils.ts            # Message routing, attachment handling
+│   ├── commands/           # Slash command handlers (claude, codex, memory, settings, etc.)
+│   ├── handlers/           # SessionManager callback handlers
+│   ├── interactions/       # Button, select menu, modal handlers
+│   ├── claude-sdk/         # Claude Agent SDK integration
+│   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream
 │   │   └── claude-sdk-handlers.ts         # SDK event → Discord message handlers
 │   └── codex/              # Codex CLI agent integration
 │       ├── codex-session-manager.ts
 │       └── codex-handlers.ts
-├── slack/
-│   ├── slack-app.ts        # Slack Bolt app and event handlers
+├── shared/
 │   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
+├── slack/
+│   └── slack-app.ts        # Slack Bolt app and event handlers
 └── telegram/
     └── telegram-app.ts     # grammY app and event handlers
 
@@ -124,7 +136,7 @@ explorer/                   # Memory Explorer web app (Next.js 16)
 
 ## Key Components
 
-### SessionManager (`src/slack/session-manager.ts`)
+### SessionManager (`src/shared/session-manager.ts`)
 Shared across all platforms. Handles:
 - JSONL file watching with chokidar
 - Message deduplication
@@ -181,14 +193,17 @@ Discord-only. Handles:
 ## Discord Slash Commands
 
 - `/help` - Show all commands (embed card)
-- `/claude start|stop|status|restore` - Session management (restore resumes dead session with history)
+- `/claude start|start-sdk|stop|status|restore` - Session management
 - `/claude add-dir|remove-dir|list-dirs|set-terminal` - Settings
 - `/interrupt`, `/background`, `/mode`, `/compact`, `/model` - In-session controls
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
 - `/codex start|stop|status` - Codex CLI session management
+- `/memory opt-out|opt-in|status` - Memory collection control (per-session or global)
 - `/sessions` - Show all active Claude + Codex sessions
 - `/status` - Show current thread session status
+- `/commands` - List all registered slash commands
+- `/settings` - Show current bot and memory configuration
 
 ## Multi-Agent Communication Protocol
 
@@ -246,6 +261,8 @@ Long context (3+ lines) between agents **must be shared via files** due to Disco
 | `~/.sleep-code/session-mappings.json` | Claude session → Discord thread mappings |
 | `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
 | `~/.sleep-code/sdk-session-mappings.json` | Claude SDK session → Discord thread + sdkSessionId mappings |
+| `~/.sleep-code/memory-config.json` | Memory system config (distill, consolidation, digest) — hot-reloaded |
+| `~/.sleep-code/digest-prompt.txt` | Custom daily digest prompt template (optional) |
 | `~/.sleep-code/memory/lancedb/` | LanceDB vector store |
 
 ## Environment Variables
