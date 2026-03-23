@@ -539,7 +539,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         await loadMemoryConfig();
 
         // Create reporter
-        memoryReporter = new MemoryReporter(client);
+        memoryReporter = new MemoryReporter(client, config.userId);
         await memoryReporter.initialize();
 
         // Create batch distill runner with reporter events

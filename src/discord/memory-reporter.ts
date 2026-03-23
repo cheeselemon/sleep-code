@@ -24,12 +24,14 @@ const CATEGORY_NAME = 'Sleep Code Sessions';
 
 export class MemoryReporter {
   private client: Client;
+  private userId: string;
   private channel: TextChannel | null = null;
   private dailyThread: ThreadChannel | null = null;
   private dailyThreadDate: string | null = null; // YYYY-MM-DD
 
-  constructor(client: Client) {
+  constructor(client: Client, userId: string) {
     this.client = client;
+    this.userId = userId;
   }
 
   /**
@@ -208,6 +210,10 @@ export class MemoryReporter {
         reason: `Daily distill thread for ${today}`,
       });
 
+      if (this.userId) {
+        await thread.members.add(this.userId).catch(() => {});
+      }
+
       this.dailyThread = thread;
       this.dailyThreadDate = today;
       return thread;
@@ -230,11 +236,15 @@ export class MemoryReporter {
       if (found) return found;
 
       // Create new
-      return await this.channel.threads.create({
+      const thread = await this.channel.threads.create({
         name: threadName,
         autoArchiveDuration: 10080, // 7 days
         reason: `Weekly consolidation thread for ${weekStr}`,
       });
+      if (this.userId) {
+        await thread.members.add(this.userId).catch(() => {});
+      }
+      return thread;
     } catch (err) {
       log.error({ err }, 'Failed to create consolidation thread');
       return null;
