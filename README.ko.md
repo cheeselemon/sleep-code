@@ -2,463 +2,106 @@
 
 [English](README.md) | [한국어](README.ko.md)
 
-**누워서 코딩하세요.** Slack, Discord, Telegram에서 Claude Code 세션을 모니터링하고 제어하세요.
-
 <p align="center">
-  <img width="512" height="512" alt="Sleep Code Logo" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
+  <img width="256" height="256" alt="Sleep Code" src="https://github.com/user-attachments/assets/2e82e717-c957-4be3-827c-f03e22cfaa07" />
 </p>
 
-## 참고
+<p align="center">
+  <strong>누워서 코딩하세요.</strong> Discord, Slack, Telegram에서 Claude Code 세션을 모니터링하고 제어하세요.
+</p>
 
-**Claude Code 대신 OpenCode를 사용하시나요?** [Disunday](https://github.com/code-xhyun/disunday)를 확인해보세요 - Discord에서 OpenCode 코딩 세션을 제어할 수 있는 Discord 봇입니다. 같은 컨셉, 다른 AI 백엔드.
+<p align="center">
+  <a href="https://www.npmjs.com/package/sleep-code"><img src="https://img.shields.io/npm/v/sleep-code" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node 18+">
+</p>
+
+## Sleep Code란?
+
+Sleep Code는 Claude Code(와 Codex)를 채팅 플랫폼과 연결합니다. 코딩 세션을 시작하고 자리를 비운 뒤에도 폰에서 계속 작업 — 권한 승인, 지시 전달, 결과 확인을 실시간으로 할 수 있습니다.
 
 ## 주요 기능
 
-- **실시간 메시징** - Claude Code와 메시지 송수신
-- **권한 처리** - 채팅에서 도구 권한 승인/거부 (Discord)
-- **YOLO 모드** - 모든 권한 요청 자동 승인
-- **세션 관리** - Discord에서 세션 시작, 중지, 모니터링
-- **Codex 연동** - 같은 스레드에서 Claude와 OpenAI Codex를 함께 실행
-- **터미널 앱 지원** - Terminal.app 또는 iTerm2에서 세션 열기 (macOS)
-- **멀티 플랫폼** - Telegram, Discord, Slack 지원
-- **시맨틱 메모리** - 대화를 자동 정제하여 로컬 벡터 DB(LanceDB + Ollama)에 저장, MCP로 검색 가능
+- **양방향 메시징** — 채팅 ↔ Claude Code 실시간 연동
+- **권한 처리** — Discord/Slack 버튼으로 도구 호출 승인/거부
+- **YOLO 모드** — 모든 권한 자동 승인 (주의해서 사용)
+- **세션 관리** — Discord에서 세션 시작, 중지, 복구
+- **Claude Agent SDK** — 터미널 없이 SDK `query()`로 세션 실행
+- **Codex 연동** — 같은 스레드에서 Claude와 OpenAI Codex를 함께 실행
+- **시맨틱 메모리** — 대화를 자동 정제 → 로컬 벡터 DB, 일일 다이제스트 브리핑
+- **멀티 플랫폼** — Discord (전체 기능), Slack, Telegram
 
-## 플랫폼 비교
-
-| | Telegram | Discord | Slack |
-|---|---|---|---|
-| Siri 연동 | 수신 & 발신 | 수신만 | 수신만 |
-| 멀티 세션 지원 | 하나씩 (전환 가능) | 예 | 예 |
-| 권한 처리 | - | 예 (버튼) | 예 (버튼) |
-| 세션 관리 | - | 예 (채팅에서 시작/중지) | - |
-| 필요 권한 | 개인 | 개인 | 관리자 |
-
-**추천:** 전체 기능은 Discord, Siri 연동은 Telegram
-
-## 빠른 시작 (Discord)
+## 빠른 시작
 
 ```bash
-# 1. https://discord.com/developers/applications 에서 Discord 앱 생성
-#    - Bot → Reset Token → 복사
-#    - "Message Content Intent" 활성화
-#    - OAuth2 → URL Generator → "bot" 스코프 선택
-#    - 권한 선택: Send Messages, Manage Channels, Read Message History
-#    - 생성된 URL로 봇 초대
-
-# 2. 사용자 ID 가져오기 (개발자 모드 활성화, 이름 우클릭 → Copy User ID)
-
-# 3. 클론 및 설정
 git clone https://github.com/cheeselemon/sleep-code.git
 cd sleep-code && npm install && npm run build
 
-# 4. 설정 및 실행
-npm run discord:setup   # 인증 정보 입력
+# Discord (추천)
+npm run discord:setup   # 봇 토큰 + 사용자 ID 입력
 npm run discord         # 봇 시작
 
-# 5. 권한 훅 설정
+# 권한 훅 (원격 승인/거부 활성화)
 npm run hook:setup
 
-# 6. 다른 터미널에서 모니터링되는 Claude 세션 시작
+# 모니터링되는 Claude 세션 시작
 npm run claude
 ```
 
-## 빠른 시작 (Telegram)
-
-```bash
-# 1. Telegram에서 @BotFather로 봇 생성
-#    - /newbot 전송 후 안내에 따라 진행
-#    - 봇 토큰 복사
-
-# 2. Chat ID 가져오기
-#    - 봇에 메시지 전송 후 방문:
-#    - https://api.telegram.org/bot<TOKEN>/getUpdates
-#    - "chat":{"id":YOUR_CHAT_ID} 찾기
-
-# 3. 설정 및 실행
-npm run telegram:setup   # 인증 정보 입력
-npm run telegram         # 봇 시작
-
-# 4. 다른 터미널에서 모니터링되는 Claude 세션 시작
-npm run claude
-```
-
-## 빠른 시작 (Slack)
-
-```bash
-# 1. https://api.slack.com/apps 에서 Slack 앱 생성
-#    "Create New App" → "From manifest" → slack-manifest.json 붙여넣기
-
-# 2. 워크스페이스에 설치하고 인증 정보 가져오기:
-#    - Bot Token (xoxb-...) - OAuth & Permissions에서
-#    - App Token (xapp-...) - Basic Information → App-Level Tokens (connections:write 필요)
-#    - User ID - Slack 프로필 → "..." → Copy member ID
-
-# 3. 설정 및 실행
-npm run slack:setup   # 인증 정보 입력
-npm run slack         # 봇 시작
-
-# 4. 다른 터미널에서 모니터링되는 Claude 세션 시작
-npm run claude
-```
-
-각 세션마다 새 채널/스레드가 생성됩니다. 메시지는 양방향으로 전달됩니다.
-
-## Discord 명령어
-
-### 세션 관리
-| 명령어 | 설명 |
-|---------|-------------|
-| `/claude start` | 새 Claude 세션 시작 (디렉토리 선택) |
-| `/claude stop` | 실행 중인 세션 중지 |
-| `/claude status` | 관리 중인 모든 세션 표시 |
-| `/sessions` | 활성 세션 목록 |
-
-### 세션 내 컨트롤
-| 명령어 | 설명 |
-|---------|-------------|
-| `/interrupt` | Claude 중단 (Escape) |
-| `/background` | 백그라운드 모드로 전환 (Ctrl+B) |
-| `/mode` | 계획/실행 모드 전환 (Shift+Tab) |
-| `/compact` | 대화 압축 |
-| `/model <name>` | 모델 전환 (opus, sonnet, haiku) |
-| `/panel` | 버튼이 있는 컨트롤 패널 표시 |
-| `/yolo-sleep` | YOLO 모드 토글 (모든 권한 자동 승인) |
-
-### 설정
-| 명령어 | 설명 |
-|---------|-------------|
-| `/claude add-dir <path>` | 화이트리스트에 디렉토리 추가 |
-| `/claude remove-dir` | 화이트리스트에서 디렉토리 제거 |
-| `/claude list-dirs` | 화이트리스트 디렉토리 목록 |
-| `/claude set-terminal` | 터미널 앱 설정 (Terminal.app, iTerm2, 백그라운드) |
-
-### Codex (OpenAI)
-| 명령어 | 설명 |
-|---------|-------------|
-| `/codex start` | 새 Codex 세션 시작 (디렉토리 선택) |
-| `/codex stop` | 실행 중인 Codex 세션 중지 |
-| `/codex status` | 모든 Codex 세션 표시 |
-
-### 기타
-| 명령어 | 설명 |
-|---------|-------------|
-| `/help` | 사용 가능한 모든 명령어 표시 |
-
-## 전체 플랫폼 명령어
-
-| 명령어 | Slack | Discord | Telegram | 설명 |
-|---------|:-----:|:-------:|:--------:|-------------|
-| `/sessions` | ✓ | ✓ | ✓ | 활성 세션 목록 |
-| `/switch <name>` | - | - | ✓ | 세션 전환 (Telegram 전용) |
-| `/model <name>` | ✓ | ✓ | ✓ | 모델 전환 |
-| `/compact` | ✓ | ✓ | ✓ | 대화 압축 |
-| `/background` | ✓ | ✓ | ✓ | 백그라운드 모드 (Ctrl+B) |
-| `/interrupt` | ✓ | ✓ | ✓ | 중단 (Escape) |
-| `/mode` | ✓ | ✓ | ✓ | 모드 전환 (Shift+Tab) |
-
-## 전역 설치
-
-`sleep-code` 명령어를 어디서든 사용하려면 전역 설치하세요:
-
-```bash
-cd sleep-code
-npm link
-```
-
-이제 어디서든 사용 가능:
-
-```bash
-sleep-code telegram setup   # Telegram 설정
-sleep-code telegram         # Telegram 봇 실행
-sleep-code discord setup    # Discord 설정
-sleep-code discord          # Discord 봇 실행
-sleep-code slack setup      # Slack 설정
-sleep-code slack            # Slack 봇 실행
-sleep-code hook setup       # 권한 훅 설정
-sleep-code claude           # Claude 세션 시작
-sleep-code help             # 도움말
-```
-
-## PM2 백그라운드 실행
-
-PM2를 사용하면 봇을 백그라운드에서 실행하고 부팅 시 자동 시작할 수 있습니다.
-
-### PM2 설치
-
-```bash
-npm install -g pm2
-```
-
-### 봇 시작
-
-```bash
-cd /path/to/sleep-code
-
-# 특정 봇 시작
-pm2 start ecosystem.config.cjs --only sleep-telegram
-pm2 start ecosystem.config.cjs --only sleep-discord
-pm2 start ecosystem.config.cjs --only sleep-slack
-
-# 모든 봇 시작
-pm2 start ecosystem.config.cjs
-```
-
-### 모니터링 및 관리
-
-```bash
-pm2 status                # 실행 중인 프로세스 목록
-pm2 logs                  # 모든 로그 보기
-pm2 logs sleep-discord    # 특정 봇 로그 보기
-pm2 monit                 # 실시간 모니터링 대시보드
-```
-
-### 프로세스 제어
-
-```bash
-pm2 restart sleep-discord   # 특정 봇 재시작
-pm2 restart all             # 모든 봇 재시작
-pm2 stop sleep-discord      # 특정 봇 중지
-pm2 stop all                # 모든 봇 중지
-```
-
-### 부팅 시 자동 시작
-
-```bash
-# 시작 스크립트 생성 (한 번만 실행)
-pm2 startup
-
-# 현재 프로세스 목록 저장
-pm2 save
-```
-
-## 권한 훅 설정
-
-권한 훅은 Claude Code의 권한 요청(파일 쓰기, 쉘 명령어 실행 등)을 채팅 플랫폼으로 전달하여 원격으로 승인/거부할 수 있게 합니다.
-
-```bash
-npm run hook:setup
-# 또는
-sleep-code hook setup
-```
-
-이 명령은 `~/.claude/settings.json`에 `PermissionRequest` 훅을 추가하여 Claude Code와 Sleep Code 봇을 연결합니다. 이 설정이 없으면 권한 요청이 로컬 터미널에만 표시되며 봇이 채팅으로 전달할 수 없습니다.
-
-훅 타임아웃은 24시간으로 설정되어 있어, 한참 뒤에 돌아와서 응답해도 정상적으로 처리됩니다.
+Telegram, Slack, 상세 설정 → [설치 가이드](docs/setup.md)
 
 ## 작동 방식
 
-1. `npm run discord/telegram/slack`으로 세션을 대기하는 봇 시작
-2. `npm run claude`로 PTY에서 Claude를 생성하고 Unix 소켓으로 봇에 연결
-3. 봇이 Claude의 JSONL 파일을 감시하고 메시지를 채팅으로 전달
-4. 채팅에서 보낸 메시지를 터미널로 전달
-5. 훅을 통해 권한 요청을 채팅으로 전달하여 승인 (Discord/Slack)
+```
+사용자 (Discord/Slack/Telegram)
+  ↕ 메시지 + 권한 버튼
+Sleep Code 봇 (Unix 소켓 데몬)
+  ↕ PTY 또는 Claude Agent SDK
+Claude Code / Codex
+```
+
+1. `npm run discord`로 Unix 소켓에서 대기하는 봇 시작
+2. `npm run claude`로 PTY에서 Claude를 생성하고 봇에 연결
+3. 메시지가 양방향 전달: Claude ↔ 봇 ↔ 채팅
+4. 권한 요청이 채팅으로 전달되어 버튼으로 승인
+
+## 문서
+
+| 문서 | 내용 |
+|------|------|
+| **[설치 가이드](docs/setup.md)** | 설치, 플랫폼 인증, 환경 변수 |
+| **[실행 가이드](docs/running.md)** | PM2 백그라운드, MCP 서버, Memory Explorer |
+| **[명령어 레퍼런스](docs/commands.md)** | 슬래시 명령어, Memory CLI, 플랫폼 비교 |
+| **[메모리 시스템](docs/memory.md)** | Distill 파이프라인, 통합 정리, 일일 다이제스트, 커스텀 프롬프트 |
+| **[아키텍처](docs/architecture.md)** | 컴포넌트 상세, 데이터 플로우, 설정 파일 |
+| **[SDK 세션](docs/sdk-session.md)** | Claude Agent SDK 세션 생명주기 및 복구 |
+| **[Codex 연동](docs/codex-integration.md)** | 멀티 에이전트 설정 및 메시지 라우팅 |
+| **[문제 해결](docs/troubleshooting.md)** | 알려진 문제 및 디버깅 |
 
 ## 시맨틱 메모리 (선택사항)
 
-Sleep Code는 중요한 대화 — 결정, 선호사항, 작업 지시 등 — 을 로컬 벡터 데이터베이스에 자동으로 기억할 수 있습니다. 메모리 수집은 **선택사항**이며 [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다. Ollama가 없으면 메모리 기능 없이 정상 작동합니다.
+대화를 Claude SDK + Ollama 임베딩으로 자동 정제하여 로컬 벡터 DB에 저장합니다. 결정, 사실, 선호사항은 기억하고, 일상 대화는 필터링합니다.
 
-### 파이프라인 개요
+- **배치 정제** — Claude SDK(haiku)가 메시지를 배치로 분류
+- **일일 다이제스트** — 할 일과 최근 결정 사항을 정기 브리핑
+- **통합 정리** — 중복 자동 병합 및 노이즈 제거 (24시간 주기)
+- **커스텀 프롬프트** — `~/.sleep-code/digest-prompt.txt`로 다이제스트 출력 커스터마이징
 
-```
-메시지 → 수집 → 정제 → 중복제거 → 저장 → 검색
-                  ↓
-          대체(Supersede) 감지
-```
+임베딩에 [Ollama](https://ollama.com/) 필요. Ollama 없이도 메모리 기능만 빠지고 봇은 정상 작동.
 
-1. **수집(Collect)** — 채널별 슬라이딩 컨텍스트 윈도우(기본 15개)로 실시간 수집
-2. **정제(Distill)** — 로컬 LLM(`qwen2.5:7b`)이 각 메시지를 분류: 저장 또는 스킵. 결정, 사실, 선호, 작업, 피드백만 저장 — 일상 대화와 에이전트 상태 보고는 필터링
-3. **검증(Validate)** — 구체적 내용 없는 모호한 텍스트(예: "SnoopDuck 요청함") 거부. 날짜, 숫자, 파일명, 코드 토큰이 있어야 통과
-4. **중복제거(Dedup)** — 2단계 중복 방지:
-   - 완전 동일 텍스트 매칭 (임베딩 전, 비용 절약)
-   - 벡터 유사도 ≥ 0.90 (의역 감지)
-5. **대체(Supersede)** — 정제 단계에서 수정/변경을 감지하면(시간 변경, 이름 정정, 가격 수정), 기존 기억을 찾아 `superseded` 상태로 전환. 다중 신호 스코어링 사용: 벡터 유사도, 토픽 일치, 핵심 용어 겹침, 종류 호환성
-6. **임베딩(Embed)** — Ollama(`qwen3-embedding`)로 1024차원 벡터화
-7. **저장(Store)** — 벡터 + 메타데이터를 LanceDB(`~/.sleep-code/memory/lancedb`)에 저장
-8. **검색(Recall)** — 벡터 유사도 + 키워드 매칭을 혼합한 하이브리드 검색. 짧은 쿼리는 키워드 비중 높고, 긴 쿼리는 의미 유사도 비중 높음
+→ 전체 내용: **[메모리 시스템](docs/memory.md)**
 
-### 품질 관리
+## 기여
 
-| 기능 | 설명 |
-|------|------|
-| **내용 검증** | 모호한 메타 설명 거부, 구체적 신호(날짜, 숫자, 이름) 필요 |
-| **화자 귀속** | 결정을 _보고한_ 사람이 아닌 _내린_ 사람을 추적 |
-| **토픽키 주입** | 기존 토픽 태그를 정제 프롬프트에 주입해 파편화 방지 |
-| **CJK 언어 가드** | 중국어/일본어 출력 감지 시 한국어/영어로 재시도 |
-| **에이전트 노이즈 필터** | 에이전트 상태 업데이트 메시지(결정이 아닌 것) 스킵 |
+기여를 환영합니다! 변경하려는 내용을 먼저 이슈로 논의해 주세요.
 
-### 메모리 생명주기
-
-```
-open → in_progress → resolved
-  ↓         ↓
-snoozed   expired
-  ↓
-superseded (소프트 삭제: 새 정보로 대체된 이전 기억)
-```
-
-**대체된 기억(superseded)** 은 기본 검색에서 숨겨지지만 이력용으로 보존됩니다. `--include-superseded`로 조회하고 `unsupersede`로 복원할 수 있습니다.
-
-### 통합 정리(Consolidation)
-
-주기적으로 유사 기억을 병합하고 노이즈를 제거합니다:
-
-1. **토픽키 병합** — 같은 토픽+종류, 7일 이내, 코사인 ≥ 0.85 → 병합
-2. **벡터 병합** — 토픽 무관, 코사인 ≥ 0.93 → 병합
-3. **정리** — 우선순위 0인 관찰(observation) 삭제
-
-`--dry-run`으로 미리보기, 제거 후 적용.
-
-### CLI 명령어
-
-```bash
-sleep-code memory search <쿼리> [--project <이름>]            # 하이브리드 검색 (벡터 + 키워드)
-sleep-code memory store <텍스트> [--project <이름>] [--kind <종류>]  # 수동 저장
-sleep-code memory delete <id>                                  # ID로 삭제
-sleep-code memory supersede <이전id> <새id>                    # 수동으로 대체 처리
-sleep-code memory unsupersede <id>                             # 대체 취소, open으로 복원
-sleep-code memory stats <프로젝트>                             # 메모리 수 확인
-sleep-code memory consolidate [--project <이름>] [--dry-run]   # 중복 병합, 노이즈 정리
-sleep-code memory retag [--project <이름>] [--dry-run]         # LLM으로 토픽키 재분류
-sleep-code memory graph [--project <이름>] [--threshold 0.7]   # 브라우저에서 메모리 그래프 열기
-sleep-code memory distill-test                                 # 샘플 메시지로 정제 테스트
-```
-
-### MCP 메모리 서버
-
-메모리 저장소는 [MCP](https://modelcontextprotocol.io/) 서버(HTTP)로 제공되어, 모든 Claude Code 세션에서 사용 가능합니다.
-
-**전송 방식:** HTTP (Streamable HTTP), `http://127.0.0.1:24242/mcp`
-
-```bash
-npm run memory-server                                    # 직접 실행
-pm2 start ecosystem.config.cjs --only sleep-memory-mcp   # 백그라운드
-```
-
-**Claude Code 자동 연결** — 프로젝트 루트의 `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "sleep-code-memory": {
-      "type": "http",
-      "url": "http://127.0.0.1:24242/mcp"
-    }
-  }
-}
-```
-
-다른 프로젝트에서 사용하려면 이 `.mcp.json`을 복사하세요.
-
-**MCP 도구:**
-
-| 도구 | 설명 |
-|------|------|
-| `sc_memory_search` | 시맨틱 검색. `query`, `project`, `limit`, `includeSuperseded` 지원. |
-| `sc_memory_list` | 프로젝트별 메모리 목록. `includeSuperseded` 지원. |
-| `sc_memory_store` | 수동 저장 (텍스트, 프로젝트, 종류, 화자, 우선순위, 토픽키). |
-
-### 메모리 탐색기
-
-메모리 그래프를 시각화하는 웹 UI:
-
-```bash
-cd explorer && npm run dev   # http://localhost:3000 에서 열림
-```
-
-### 메모리 비활성화
-
-```bash
-DISABLE_MEMORY=1 npm run discord          # 환경변수
-# 또는 Ollama를 실행하지 않으면 자동으로 비활성화
-```
-
-### 요구사항
-
-- [Ollama](https://ollama.com/)가 로컬에서 실행 중이어야 합니다:
-  - `qwen2.5:7b` — 정제 모델 (메시지 분류 및 업데이트 감지)
-  - `qwen3-embedding` — 임베딩 모델 (첫 사용 시 자동 다운로드)
-- 메모리 데이터: `~/.sleep-code/memory/lancedb`
-
-## 아키텍처
-
-```
-src/
-├── cli/           # CLI 진입점 및 명령어
-│   ├── index.ts   # 메인 CLI 진입점
-│   ├── run.ts     # 세션 러너 (PTY + JSONL 감시)
-│   ├── memory.ts  # 메모리 CLI (search, store, consolidate, retag, supersede, graph)
-│   └── {telegram,discord,slack}.ts  # 플랫폼별 설정/실행
-├── memory/        # 시맨틱 메모리 파이프라인
-│   ├── memory-service.ts       # LanceDB 저장소, 검색, 중복제거, 대체(supersede)
-│   ├── memory-collector.ts     # 슬라이딩 윈도우 수집 + 대체 라우팅
-│   ├── distill-service.ts      # LLM 분류기 (저장/스킵/업데이트 감지)
-│   ├── consolidation-service.ts # 주기적 병합 및 정리
-│   ├── embedding-provider.ts   # Ollama 임베딩 추상화
-│   └── chat-provider.ts        # LLM 채팅 추상화 (Ollama/Claude)
-├── mcp/
-│   └── memory-server.ts  # MCP 서버 (HTTP 전송, 메모리 도구)
-├── discord/
-│   ├── discord-app.ts      # Discord.js 앱 및 이벤트 핸들러
-│   ├── channel-manager.ts  # 스레드/채널 관리
-│   ├── process-manager.ts  # 세션 생성 및 생명주기
-│   ├── settings-manager.ts # 사용자 설정 (디렉토리, 터미널 앱)
-│   └── codex/              # OpenAI Codex 연동
-│       ├── codex-session-manager.ts  # SDK 세션 생명주기
-│       └── codex-handlers.ts         # Codex 이벤트 → Discord 메시지
-├── slack/
-│   ├── slack-app.ts        # Slack Bolt 앱
-│   └── session-manager.ts  # JSONL 감시, 플랫폼 간 공유
-└── telegram/
-    └── telegram-app.ts     # grammY 앱 및 이벤트 핸들러
-```
-
-## Codex 연동 (Discord)
-
-같은 Discord 스레드에서 Claude와 OpenAI Codex를 함께 실행하여 멀티 에이전트 워크플로우를 구성할 수 있습니다.
-
-### 설정
-
-`.env` 파일에 `OPENAI_API_KEY`를 설정하거나, `codex login`으로 OAuth 인증(`~/.codex/auth.json`)하세요. 봇 시작 시 자동 감지됩니다.
-
-### 멀티 에이전트 스레드
-
-같은 스레드에 Claude와 Codex가 모두 있을 때, 접두어로 메시지 대상을 지정합니다:
-
-| 접두어 | 대상 | 예시 |
-|--------|------|------|
-| `c:` 또는 `claude:` | Claude | `c: 이 코드 설명해줘` |
-| `x:` 또는 `codex:` | Codex | `x: 테스트 실행해줘` |
-| (없음) | 마지막 활성 에이전트 | `버그 수정해줘` |
-
-Claude 전용 스레드에서 `x:`를 사용하면 같은 디렉토리에 Codex 세션이 자동 생성됩니다.
-
-자세한 내용은 [docs/codex-integration.md](docs/codex-integration.md)를 참고하세요.
-
-## 경고: YOLO 모드
-
-> **YOLO 모드 사용에 따른 책임은 본인에게 있습니다.**
-
-YOLO 모드(`/yolo-sleep` 또는 YOLO 버튼)는 **모든** 권한 요청을 확인 없이 자동 승인합니다. 이는 Claude가 다음을 수행할 수 있음을 의미합니다:
-
-- 모든 쉘 명령어 실행
-- 파일 읽기, 쓰기, 삭제
-- 네트워크 요청
-- 패키지 설치
-
-작업을 완전히 신뢰하고 위험을 이해하는 경우에만 YOLO 모드를 활성화하세요. **YOLO 모드가 활성화된 동안 수행된 모든 작업에 대한 책임은 사용자에게 있습니다.**
-
-## 알려진 문제
-
-- **Assistant 메시지 누락**: Claude Code가 간헐적으로 assistant 메시지를 JSONL 로그 파일에 기록하지 않는 경우가 있습니다. 이 경우 일부 응답이 채팅에 표시되지 않을 수 있습니다. 이는 Claude Code의 버그이며, Sleep Code의 문제가 아닙니다.
-
-## 면책 조항
-
-이 프로젝트는 Anthropic과 관련이 없습니다. 사용에 따른 책임은 본인에게 있습니다.
+개발 환경 설정과 가이드라인은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
 
 ## 감사의 말
 
-이 프로젝트는 @clharman의 [afk-code](https://github.com/clharman/afk-code)에서 영감을 받아 초기 설정을 기반으로 시작되었습니다. 좋은 기반을 만들어주셔서 감사합니다!
+- @clharman의 [afk-code](https://github.com/clharman/afk-code)에서 영감을 받아 시작되었습니다
+- **OpenCode 사용자?** [Disunday](https://github.com/code-xhyun/disunday)를 확인하세요 — 같은 컨셉, 다른 AI 백엔드
 
 ## 라이선스
 
-MIT
+[MIT](LICENSE)
