@@ -13,7 +13,7 @@
 | `/claude restore` | Restore a dead session in the current thread (resumes conversation history) |
 | `/sessions` | List active sessions |
 
-> **PTY vs SDK**: PTY는 터미널 제어(`/background`, `/mode`, `/compact`)를 지원하고, SDK는 구조화된 tool call/result을 직접 수신합니다. 자세한 비교는 [SDK Session Guide](sdk-session.md)를 참고하세요.
+> **PTY vs SDK**: PTY supports terminal controls (`/background`, `/mode`, `/compact`), while SDK receives structured tool call/result directly. See [SDK Session Guide](sdk-session.md) for a detailed comparison.
 
 ### In-Session Controls
 
