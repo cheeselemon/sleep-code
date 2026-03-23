@@ -139,7 +139,8 @@ export class MemoryReporter {
 
       const header = `📬 **Daily Digest** (${time})`;
       const stats = `Tasks: ${digest.openTasks} | Recent decisions: ${digest.recentDecisions} | Topics: ${digest.topTopics.join(', ') || 'none'}`;
-      const text = `${header}\n${stats}\n\n${digest.summary}`.slice(0, 2000);
+      const hint = `-# Customize this digest: edit \`~/.sleep-code/digest-prompt.txt\``;
+      const text = `${header}\n${stats}\n\n${digest.summary}\n\n${hint}`.slice(0, 2000);
 
       await this.channel.send(text);
     } catch (err) {

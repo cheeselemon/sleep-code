@@ -4,14 +4,49 @@
  * Generates periodic memory digests at scheduled times (e.g., 10:00, 16:00 KST).
  * Queries MemoryService for open tasks and recent high-priority memories,
  * then uses Claude SDK to generate a brief summary.
+ *
+ * Custom prompt: place a template file at ~/.sleep-code/digest-prompt.txt
+ * Available variables: {{OPEN_TASKS}}, {{RECENT_DECISIONS}}, {{ACTIVE_TOPICS}},
+ *                      {{TASK_COUNT}}, {{DECISION_COUNT}}
  */
 
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { logger } from '../utils/logger.js';
 import { type MemoryService } from './memory-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
 
 const log = logger.child({ component: 'daily-digest' });
+
+// ── Prompt Template ─────────────────────────────────────────
+
+const CUSTOM_PROMPT_PATH = join(homedir(), '.sleep-code', 'digest-prompt.txt');
+
+const DEFAULT_DIGEST_PROMPT = `You are a personal assistant generating a daily briefing for a developer.
+
+Open tasks ({{TASK_COUNT}} total):
+{{OPEN_TASKS}}
+
+Recent decisions (last 24h, {{DECISION_COUNT}} total):
+{{RECENT_DECISIONS}}
+
+Active topics: {{ACTIVE_TOPICS}}
+
+Generate a concise daily briefing. Format:
+
+📋 **To Do** (top priority tasks)
+📌 **Key Decisions** (recent decisions, only if any)
+🔥 **Active Topics** (active topics)
+
+Rules:
+- Max 500 chars total
+- Prioritize actionable items
+- Skip sections if empty
+- Be concise, not chatty
+- Write in the user's language if detectable from the data, otherwise English`;
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -131,40 +166,27 @@ export class DailyDigestRunner {
       .slice(0, 5)
       .map(([topic]) => topic);
 
-    // Build LLM prompt
+    // Build template variables
     const taskList = allTasks.slice(0, 15).map(
       (t) => `- [${t.project}] (p:${t.priority}) ${t.text}`
-    ).join('\n') || '(없음)';
+    ).join('\n') || '(none)';
 
     const decisionList = recentDecisions.slice(0, 10).map(
       (d) => `- [${d.project}] (p:${d.priority}) ${d.text}`
-    ).join('\n') || '(없음)';
+    ).join('\n') || '(none)';
 
     const topicList = topTopics.length > 0
       ? topTopics.join(', ')
-      : '(없음)';
+      : '(none)';
 
-    const prompt = `You are a personal assistant generating a daily briefing.
-
-Open tasks (${allTasks.length} total, showing top ${Math.min(15, allTasks.length)}):
-${taskList}
-
-Recent decisions (last 24h, ${recentDecisions.length} total):
-${decisionList}
-
-Active topics: ${topicList}
-
-Generate a brief Korean daily briefing. Format:
-
-📋 **할 일** (top priority tasks)
-📌 **주요 결정/변경** (recent decisions, only if any)
-🔥 **활발한 주제** (active topics)
-
-Rules:
-- Max 500 chars total
-- Prioritize actionable items
-- Skip sections if empty
-- Be concise, not chatty`;
+    // Load and fill prompt template
+    const template = await this.loadPromptTemplate();
+    const prompt = template
+      .replace(/\{\{OPEN_TASKS\}\}/g, taskList)
+      .replace(/\{\{RECENT_DECISIONS\}\}/g, decisionList)
+      .replace(/\{\{ACTIVE_TOPICS\}\}/g, topicList)
+      .replace(/\{\{TASK_COUNT\}\}/g, String(allTasks.length))
+      .replace(/\{\{DECISION_COUNT\}\}/g, String(recentDecisions.length));
 
     let summary: string;
     try {
@@ -176,13 +198,13 @@ Rules:
       await chatProvider.closeSession();
     } catch (err) {
       log.error({ err }, 'Failed to generate digest with LLM');
-      // Fallback: simple list
-      summary = `📋 **할 일** (${allTasks.length}건)\n`;
+      // Fallback: simple list without LLM
+      summary = `📋 **To Do** (${allTasks.length})\n`;
       for (const t of allTasks.slice(0, 5)) {
         summary += `- ${t.text}\n`;
       }
       if (recentDecisions.length > 0) {
-        summary += `\n📌 **최근 결정** (${recentDecisions.length}건)\n`;
+        summary += `\n📌 **Key Decisions** (${recentDecisions.length})\n`;
         for (const d of recentDecisions.slice(0, 3)) {
           summary += `- ${d.text}\n`;
         }
@@ -199,6 +221,22 @@ Rules:
   }
 
   // ── Internal ────────────────────────────────────────────────
+
+  /** Load custom prompt template from file, or use default */
+  private async loadPromptTemplate(): Promise<string> {
+    try {
+      if (existsSync(CUSTOM_PROMPT_PATH)) {
+        const custom = await readFile(CUSTOM_PROMPT_PATH, 'utf-8');
+        if (custom.trim()) {
+          log.info('Using custom digest prompt from digest-prompt.txt');
+          return custom;
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, 'Failed to load custom digest prompt, using default');
+    }
+    return DEFAULT_DIGEST_PROMPT;
+  }
 
   private startTimer(): void {
     this.stopTimer();
