@@ -15,17 +15,25 @@ export function getSessionFromChannel(
 ): { sessionId: string } | { error: string } {
   const { channelManager } = context;
 
+  // Check PTY session first
   const sessionId = channelManager.getSessionByChannel(channelId);
-  if (!sessionId) {
-    return { error: 'This channel is not associated with an active session.' };
+  if (sessionId) {
+    const channel = channelManager.getSession(sessionId);
+    if (channel && channel.status !== 'ended') {
+      return { sessionId };
+    }
   }
 
-  const channel = channelManager.getSession(sessionId);
-  if (!channel || channel.status === 'ended') {
-    return { error: 'This session has ended.' };
+  // Check SDK session
+  const sdkSessionId = channelManager.getSdkSessionByThread(channelId);
+  if (sdkSessionId) {
+    const sdkMapping = channelManager.getSdkSession(sdkSessionId);
+    if (sdkMapping && sdkMapping.status !== 'ended') {
+      return { sessionId: sdkSessionId };
+    }
   }
 
-  return { sessionId };
+  return { error: 'This channel is not associated with an active session.' };
 }
 
 /**
