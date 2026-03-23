@@ -259,7 +259,7 @@ export async function discordRun(): Promise<void> {
     }
   }
 
-  const { client, sessionManager, channelManager, cleanup } = createDiscordApp(discordConfig, {
+  const { client, sessionManager, channelManager, claudeSdkSessionManager, codexSessionManager, cleanup } = createDiscordApp(discordConfig, {
     processManager,
     settingsManager,
     enableCodex,
@@ -423,10 +423,39 @@ export async function discordRun(): Promise<void> {
     }
   }
 
-  // Graceful shutdown
-  const shutdown = () => {
+  // Graceful shutdown — interrupt running sessions before exit
+  const shutdown = async () => {
     log.info('Shutting down...');
-    cleanup(); // Clean up intervals (Issue 6)
+
+    // 1. Interrupt all running SDK sessions
+    let interrupted = 0;
+    if (claudeSdkSessionManager) {
+      for (const session of claudeSdkSessionManager.getAllSessions()) {
+        if (session.status === 'running') {
+          claudeSdkSessionManager.interruptSession(session.id);
+          interrupted++;
+        }
+      }
+    }
+
+    // 2. Interrupt all running Codex sessions
+    if (codexSessionManager) {
+      for (const session of codexSessionManager.getAllSessions()) {
+        if (session.status === 'running') {
+          codexSessionManager.interruptSession(session.id);
+          interrupted++;
+        }
+      }
+    }
+
+    if (interrupted > 0) {
+      log.info({ interrupted }, 'Interrupted running sessions, waiting for streams to settle...');
+      // Give streams time to process the interrupt and return to idle
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    // 3. Clean up everything else
+    await cleanup();
     processManager.shutdown();
     sessionManager.stop();
     client.destroy();
