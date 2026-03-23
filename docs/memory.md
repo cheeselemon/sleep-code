@@ -84,6 +84,8 @@ On bot startup, a `#sleep-code-memory` channel is auto-created with:
 | `/memory opt-in` | Resume collection for this session |
 | `/memory opt-in --global` | Resume entire memory system |
 | `/memory status` | Show current memory collection status |
+| `/memory digest` | Generate a daily digest now and post to #sleep-code-memory |
+| `/memory consolidate` | Run memory consolidation now (merge duplicates + clean noise) |
 
 ## Memory CLI
 

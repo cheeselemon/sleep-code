@@ -199,7 +199,7 @@ Discord-only. Handles:
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
 - `/codex start|stop|status` - Codex CLI session management
-- `/memory opt-out|opt-in|status` - Memory collection control (per-session or global)
+- `/memory opt-out|opt-in|status|digest|consolidate` - Memory collection control, manual triggers
 - `/sessions` - Show all active Claude + Codex sessions
 - `/status` - Show current thread session status
 - `/commands` - List all registered slash commands

@@ -10,11 +10,13 @@
 import type { ChatInputCommandInteraction } from 'discord.js';
 import type { CommandContext } from './types.js';
 import type { BatchDistillRunner } from '../../memory/batch-distill-runner.js';
+import type { DailyDigestRunner } from '../../memory/daily-digest.js';
 import type { MemoryReporter } from '../memory-reporter.js';
 import { updateMemoryConfig, getMemoryConfig } from '../../memory/memory-config.js';
 
 export interface MemoryCommandContext extends CommandContext {
   batchDistillRunner?: BatchDistillRunner;
+  dailyDigestRunner?: DailyDigestRunner;
   memoryReporter?: MemoryReporter;
 }
 
@@ -92,6 +94,43 @@ export async function handleMemory(
       }
 
       await interaction.reply(lines.join('\n'));
+      break;
+    }
+
+    case 'digest': {
+      if (!context.dailyDigestRunner) {
+        await interaction.reply('⚠️ Daily digest is not initialized.');
+        return;
+      }
+      await interaction.deferReply();
+      try {
+        const digest = await context.dailyDigestRunner.generateDigest();
+        if (context.memoryReporter) {
+          await context.memoryReporter.postDigest(digest);
+        }
+        await interaction.editReply(`📬 Digest generated and posted to #sleep-code-memory.\nTasks: ${digest.openTasks} | Decisions: ${digest.recentDecisions} | Topics: ${digest.topTopics.join(', ') || 'none'}`);
+      } catch (err) {
+        await interaction.editReply(`❌ Digest generation failed: ${(err as Error).message}`);
+      }
+      break;
+    }
+
+    case 'consolidate': {
+      if (!runner) {
+        await interaction.reply('⚠️ Batch distill runner is not initialized.');
+        return;
+      }
+      await interaction.deferReply();
+      try {
+        const report = await runner.runConsolidation();
+        if (report) {
+          await interaction.editReply(`🔄 Consolidation complete. Merged: ${report.totalMerged} | Cleaned: ${report.totalCleaned} | Remaining: ${report.totalRemaining}`);
+        } else {
+          await interaction.editReply('❌ Consolidation returned no results.');
+        }
+      } catch (err) {
+        await interaction.editReply(`❌ Consolidation failed: ${(err as Error).message}`);
+      }
       break;
     }
 

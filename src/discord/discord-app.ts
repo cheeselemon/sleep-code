@@ -144,7 +144,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   sessionManagerRef.current = sessionManager;
 
   // Create command/interaction context (use getter for lazy references)
-  const commandContext: CommandContext & { batchDistillRunner?: BatchDistillRunner; memoryReporter?: MemoryReporter } = {
+  const commandContext: CommandContext & { batchDistillRunner?: BatchDistillRunner; dailyDigestRunner?: import('../memory/daily-digest.js').DailyDigestRunner; memoryReporter?: MemoryReporter } = {
     client,
     channelManager,
     sessionManager,
@@ -154,6 +154,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     claudeSdkSessionManager,
     state,
     get batchDistillRunner() { return batchDistillRunner; },
+    get dailyDigestRunner() { return dailyDigestRunner; },
     get memoryReporter() { return memoryReporter; },
   };
 

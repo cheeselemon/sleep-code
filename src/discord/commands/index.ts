@@ -133,7 +133,13 @@ export const commands = [
             .setRequired(false)))
     .addSubcommand(sub =>
       sub.setName('status')
-        .setDescription('Show memory system status')),
+        .setDescription('Show memory system status'))
+    .addSubcommand(sub =>
+      sub.setName('digest')
+        .setDescription('Generate a daily digest now'))
+    .addSubcommand(sub =>
+      sub.setName('consolidate')
+        .setDescription('Run memory consolidation now')),
 ];
 
 /**

@@ -53,6 +53,8 @@
 | `/memory opt-in` | Re-enable memory for this session |
 | `/memory opt-in --global` | Resume entire memory system |
 | `/memory status` | Show memory system status (global state, queue, model, config) |
+| `/memory digest` | Generate a daily digest now and post to #sleep-code-memory |
+| `/memory consolidate` | Run memory consolidation now (merge duplicates + clean noise) |
 
 ### Other
 
