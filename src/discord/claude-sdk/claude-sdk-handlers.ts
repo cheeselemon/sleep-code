@@ -96,18 +96,16 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
 
       const thread = await getClaudeSdkThread(client, channelManager, sessionId);
 
-      // Archive and clean up ChannelManager mapping + persistence
+      if (thread) {
+        try {
+          await thread.send('🛑 **Claude SDK session ended**');
+        } catch {
+          // Ignore end notification failures.
+        }
+      }
+
+      // Archive AFTER sending message (archiving then sending causes auto-unarchive)
       await channelManager.archiveSdkSession(sessionId);
-
-      if (!thread) {
-        return;
-      }
-
-      try {
-        await thread.send('🛑 **Claude SDK session ended**');
-      } catch {
-        // Ignore end notification failures.
-      }
     },
 
     onSessionStatus: (sessionId, status) => {
