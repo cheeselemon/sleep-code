@@ -72,6 +72,9 @@ export interface ClaudeSdkEvents {
 }
 
 const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
+
+// When true, processQueryStream treats stream end as expected (no error, no archive)
+let shuttingDown = false;
 const DEFAULT_PERMISSION_TIMEOUT_MS = 0; // 0 = no timeout (wait indefinitely)
 
 export class ClaudeSdkSessionManager {
@@ -206,6 +209,29 @@ export class ClaudeSdkSessionManager {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Graceful shutdown: close all sessions without archiving persisted mappings.
+   * This preserves sdk-session-mappings.json so lazy resume works after restart.
+   */
+  async shutdown(): Promise<void> {
+    shuttingDown = true;
+
+    for (const session of this.sessions.values()) {
+      session.status = 'ended';
+      if (session.pendingInputResolve) {
+        session.pendingInputResolve(END_SENTINEL);
+        session.pendingInputResolve = null;
+      }
+      session.turnAbortController.abort();
+      session.sessionAbortController.abort();
+      session.activeQuery?.close();
+    }
+
+    // Give streams a moment to settle
+    await new Promise(r => setTimeout(r, 500));
+    this.sessions.clear();
   }
 
   getAllSessions(): ClaudeSdkSessionEntry[] {
@@ -422,7 +448,10 @@ export class ClaudeSdkSessionManager {
       session.sessionAbortController.signal.removeEventListener('abort', closeQuery);
       session.activeQuery = null;
 
-      if (session.interrupted) {
+      if (shuttingDown) {
+        // Graceful shutdown — don't archive, don't post errors
+        log.info({ sessionId: session.id }, 'SDK session closed during shutdown (persisted mapping kept)');
+      } else if (session.interrupted) {
         // Interrupt is intentional — recover to idle, ready for next input
         session.interrupted = false;
         session.turnAbortController = new AbortController();

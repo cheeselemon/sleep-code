@@ -427,18 +427,17 @@ export async function discordRun(): Promise<void> {
   const shutdown = async () => {
     log.info('Shutting down...');
 
-    // 1. Interrupt all running SDK sessions
-    let interrupted = 0;
+    // 1. Graceful shutdown SDK sessions (preserves persisted mappings for lazy resume)
     if (claudeSdkSessionManager) {
-      for (const session of claudeSdkSessionManager.getAllSessions()) {
-        if (session.status === 'running') {
-          claudeSdkSessionManager.interruptSession(session.id);
-          interrupted++;
-        }
+      const count = claudeSdkSessionManager.getAllSessions().length;
+      if (count > 0) {
+        log.info({ count }, 'Shutting down SDK sessions (preserving mappings for lazy resume)...');
+        await claudeSdkSessionManager.shutdown();
       }
     }
 
     // 2. Interrupt all running Codex sessions
+    let interrupted = 0;
     if (codexSessionManager) {
       for (const session of codexSessionManager.getAllSessions()) {
         if (session.status === 'running') {
@@ -449,8 +448,7 @@ export async function discordRun(): Promise<void> {
     }
 
     if (interrupted > 0) {
-      log.info({ interrupted }, 'Interrupted running sessions, waiting for streams to settle...');
-      // Give streams time to process the interrupt and return to idle
+      log.info({ interrupted }, 'Interrupted Codex sessions, waiting for streams to settle...');
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
