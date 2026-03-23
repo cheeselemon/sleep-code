@@ -582,6 +582,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             onDigestReady: async (digest) => {
               await memoryReporter?.postDigest(digest);
             },
+            onPreConsolidation: async (report) => {
+              if (report.totalMerged > 0 || report.totalCleaned > 0) {
+                await memoryReporter?.postConsolidationResult(report);
+              }
+            },
             onError: async (error) => {
               log.error({ err: error }, 'Daily digest error');
             },

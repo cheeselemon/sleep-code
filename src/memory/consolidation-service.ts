@@ -255,6 +255,60 @@ export class ConsolidationService {
       log.info({ id: record.id, kind: record.kind, ageDays }, 'Cleaned low-value memory');
     }
 
+    // ── Phase 3: Task lifecycle management ──────────────
+    // Close stale/ephemeral tasks, decay old observations & dialog_summaries
+
+    for (const record of allRecords) {
+      if (deletedIds.has(record.id)) continue;
+      if (record.status !== 'open') continue;
+
+      const age = now - new Date(record.createdAt).getTime();
+      const ageDays = Math.floor(age / (24 * 60 * 60 * 1000));
+
+      let reason: string | null = null;
+
+      if (record.kind === 'task') {
+        // Stale tasks: open for 30+ days → expire
+        if (ageDays >= 30) {
+          reason = 'stale-task-30d';
+        }
+        // Low-priority ephemeral tasks: priority ≤ 4 and 7+ days old → expire
+        else if (record.priority <= 4 && ageDays >= 7) {
+          reason = 'ephemeral-task-7d';
+        }
+      } else if (record.kind === 'observation' && ageDays >= 30) {
+        // Old observations: decay after 30 days
+        reason = 'observation-decay-30d';
+      } else if (record.kind === 'dialog_summary' && ageDays >= 14) {
+        // Old dialog summaries: decay after 14 days
+        reason = 'dialog-summary-decay-14d';
+      }
+
+      if (!reason) continue;
+
+      cleanDetails.push({
+        id: record.id,
+        text: record.text,
+        kind: record.kind,
+        speaker: record.speaker,
+        priority: record.priority,
+        ageDays,
+        reason,
+      });
+
+      if (!dryRun) {
+        if (reason.startsWith('stale-task') || reason.startsWith('ephemeral-task')) {
+          // Tasks: mark as expired (soft transition, not delete)
+          await this.memory.updateStatus(record.id, 'expired');
+        } else {
+          // Observations/summaries: delete
+          await this.memory.remove(record.id);
+        }
+      }
+      deletedIds.add(record.id);
+      log.info({ id: record.id, kind: record.kind, ageDays, reason }, 'Lifecycle cleanup');
+    }
+
     return {
       project,
       beforeCount,

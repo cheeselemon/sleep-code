@@ -18,6 +18,7 @@ import { logger } from '../utils/logger.js';
 import { type MemoryService } from './memory-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
+import type { ConsolidationReport } from './consolidation-service.js';
 
 const log = logger.child({ component: 'daily-digest' });
 
@@ -61,6 +62,7 @@ export interface DigestResult {
 export interface DigestEvents {
   onDigestReady: (digest: DigestResult) => void | Promise<void>;
   onError?: (error: Error) => void | Promise<void>;
+  onPreConsolidation?: (report: ConsolidationReport) => void | Promise<void>;
 }
 
 // ── Runner ───────────────────────────────────────────────────
@@ -68,6 +70,7 @@ export interface DigestEvents {
 export class DailyDigestRunner {
   private memory: MemoryService;
   private events: DigestEvents;
+  private consolidation: import('./consolidation-service.js').ConsolidationService | null = null;
   private checkTimer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -88,6 +91,13 @@ export class DailyDigestRunner {
 
     const config = getMemoryConfig();
     this.applyConfig(config);
+
+    // Lazy-load ConsolidationService to avoid circular deps
+    import('./consolidation-service.js').then(({ ConsolidationService }) => {
+      this.consolidation = new ConsolidationService(memory);
+    }).catch(() => {
+      log.warn('Failed to load ConsolidationService — digest will skip pre-consolidation');
+    });
   }
 
   async start(): Promise<void> {
@@ -125,13 +135,18 @@ export class DailyDigestRunner {
     const topicCounts = new Map<string, number>();
 
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
     for (const project of projects) {
       const items = await this.memory.getByProject(project, { limit: 500 });
 
       for (const item of items) {
-        // Open tasks
-        if (item.kind === 'task' && item.status === 'open') {
+        // Open tasks — only recent (created within 7 days) to avoid noise from stale tasks
+        if (
+          item.kind === 'task' &&
+          item.status === 'open' &&
+          item.createdAt && item.createdAt >= sevenDaysAgo
+        ) {
           allTasks.push({
             text: item.text,
             project,
@@ -140,10 +155,10 @@ export class DailyDigestRunner {
           });
         }
 
-        // Recent high-priority decisions (last 24h, priority >= 5)
+        // Recent high-priority decisions (last 24h, priority >= 7)
         if (
           item.kind === 'decision' &&
-          item.priority >= 5 &&
+          item.priority >= 7 &&
           item.createdAt && item.createdAt >= oneDayAgo
         ) {
           recentDecisions.push({ text: item.text, project, priority: item.priority });
@@ -279,6 +294,17 @@ export class DailyDigestRunner {
       log.info({ time: scheduled }, 'Generating scheduled digest');
 
       try {
+        // Pre-consolidation: clean up before generating digest
+        if (this.consolidation) {
+          log.info('Running pre-digest consolidation');
+          const report = await this.consolidation.consolidate({ dryRun: false });
+          log.info(
+            { merged: report.totalMerged, cleaned: report.totalCleaned },
+            'Pre-digest consolidation complete',
+          );
+          await this.events.onPreConsolidation?.(report);
+        }
+
         const digest = await this.generateDigest();
         await this.events.onDigestReady(digest);
         log.info({ time: scheduled, tasks: digest.openTasks, decisions: digest.recentDecisions }, 'Digest delivered');
