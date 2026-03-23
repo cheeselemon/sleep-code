@@ -20,6 +20,9 @@ import type { CommandContext } from './types.js';
  */
 export const commands = [
   new SlashCommandBuilder()
+    .setName('commands')
+    .setDescription('List all available slash commands'),
+  new SlashCommandBuilder()
     .setName('help')
     .setDescription('Show all available commands'),
   new SlashCommandBuilder()
@@ -109,6 +112,32 @@ export const commands = [
 ];
 
 /**
+ * /commands — auto-generated list from registered commands
+ */
+async function handleCommands(interaction: ChatInputCommandInteraction): Promise<void> {
+  const lines: string[] = [];
+
+  for (const cmd of commands) {
+    const data = cmd.toJSON();
+    if (data.name === 'commands') continue; // skip self
+
+    const subs = (data.options || []).filter((o: any) => o.type === 1); // type 1 = SUB_COMMAND
+    if (subs.length > 0) {
+      for (const sub of subs) {
+        lines.push(`\`/${data.name} ${sub.name}\` — ${sub.description}`);
+      }
+    } else {
+      lines.push(`\`/${data.name}\` — ${data.description}`);
+    }
+  }
+
+  await interaction.reply({
+    content: `**Available Commands (${lines.length})**\n${lines.join('\n')}`,
+    ephemeral: true,
+  });
+}
+
+/**
  * Handle slash command interactions
  */
 export async function handleCommand(
@@ -118,6 +147,9 @@ export async function handleCommand(
   const { commandName } = interaction;
 
   switch (commandName) {
+    case 'commands':
+      await handleCommands(interaction);
+      break;
     case 'help':
       await handleHelp(interaction, context);
       break;
