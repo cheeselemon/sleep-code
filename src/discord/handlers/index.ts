@@ -13,7 +13,7 @@ import { createMessageHandler, createTodosHandler } from './message.js';
 import { createToolCallHandler, createToolResultHandler, createPlanModeChangeHandler } from './tool.js';
 import { createPermissionRequestHandler } from './permission.js';
 import type { HandlerContext } from './types.js';
-import type { SessionManager, SessionEvents } from '../../slack/session-manager.js';
+import type { SessionManager, SessionEvents } from '../../shared/session-manager.js';
 
 /**
  * Lazy reference to SessionManager (set after construction)

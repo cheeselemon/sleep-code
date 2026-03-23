@@ -18,7 +18,7 @@ import {
   Routes,
 } from 'discord.js';
 import type { DiscordConfig } from './types.js';
-import { SessionManager } from '../slack/session-manager.js';
+import { SessionManager } from '../shared/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
 import { discordLogger as log } from '../utils/logger.js';
 import type { ProcessManager } from './process-manager.js';

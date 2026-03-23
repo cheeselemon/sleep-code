@@ -1,7 +1,7 @@
 import { App, LogLevel } from '@slack/bolt';
 import { createReadStream } from 'fs';
 import type { SlackConfig } from './types.js';
-import { SessionManager, type SessionInfo, type ToolCallInfo, type ToolResultInfo } from './session-manager.js';
+import { SessionManager, type SessionInfo, type ToolCallInfo, type ToolResultInfo } from '../shared/session-manager.js';
 import { ChannelManager } from './channel-manager.js';
 import {
   markdownToSlack,

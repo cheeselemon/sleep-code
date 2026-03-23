@@ -1,6 +1,6 @@
 import { Bot, Context } from 'grammy';
 import type { TelegramConfig } from './types.js';
-import { SessionManager, type SessionInfo } from '../slack/session-manager.js';
+import { SessionManager, type SessionInfo } from '../shared/session-manager.js';
 import { chunkMessage, formatTodos } from '../slack/message-formatter.js';
 import { telegramLogger as log } from '../utils/logger.js';
 

@@ -1,5 +1,5 @@
 import type { ProcessManager } from './process-manager.js';
-import type { SessionManager } from '../slack/session-manager.js';
+import type { SessionManager } from '../shared/session-manager.js';
 
 export interface ClaudeTransportInputOptions {
   submit?: boolean;

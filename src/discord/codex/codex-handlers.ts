@@ -9,7 +9,7 @@ import { tryRouteToAgent } from '../agent-routing.js';
 import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { ChannelManager } from '../channel-manager.js';
 import type { DiscordState } from '../state.js';
-import type { SessionManager } from '../../slack/session-manager.js';
+import type { SessionManager } from '../../shared/session-manager.js';
 import type { CodexEvents } from './codex-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
 import { basename } from 'path';

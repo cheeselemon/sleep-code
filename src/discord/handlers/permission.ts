@@ -11,7 +11,7 @@ import {
 import { discordLogger as log } from '../../utils/logger.js';
 import { getThread } from '../utils.js';
 import type { HandlerContext } from './types.js';
-import type { PermissionRequestInfo } from '../../slack/session-manager.js';
+import type { PermissionRequestInfo } from '../../shared/session-manager.js';
 
 export function createPermissionRequestHandler(context: HandlerContext) {
   const { client, channelManager, state } = context;

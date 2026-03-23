@@ -10,7 +10,7 @@
 import { formatSessionStatus } from '../../slack/message-formatter.js';
 import { getThread } from '../utils.js';
 import type { HandlerContext } from './types.js';
-import type { SessionInfo } from '../../slack/session-manager.js';
+import type { SessionInfo } from '../../shared/session-manager.js';
 
 export function createSessionStartHandler(context: HandlerContext) {
   const { client, channelManager, processManager, state } = context;
