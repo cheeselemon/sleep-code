@@ -13,6 +13,7 @@ import { handleYoloSleep, handlePanel } from './yolo.js';
 import { handleClaude } from './claude.js';
 import { handleCodex } from './codex.js';
 import { handleStatus } from './status.js';
+import { handleMemory, type MemoryCommandContext } from './memory.js';
 import type { CommandContext } from './types.js';
 
 /**
@@ -109,6 +110,26 @@ export const commands = [
     .addSubcommand(sub =>
       sub.setName('status')
         .setDescription('Show all Codex sessions')),
+  new SlashCommandBuilder()
+    .setName('memory')
+    .setDescription('Manage memory collection')
+    .addSubcommand(sub =>
+      sub.setName('opt-out')
+        .setDescription('Disable memory collection')
+        .addBooleanOption(opt =>
+          opt.setName('global')
+            .setDescription('Disable globally (all sessions)')
+            .setRequired(false)))
+    .addSubcommand(sub =>
+      sub.setName('opt-in')
+        .setDescription('Enable memory collection')
+        .addBooleanOption(opt =>
+          opt.setName('global')
+            .setDescription('Enable globally (all sessions)')
+            .setRequired(false)))
+    .addSubcommand(sub =>
+      sub.setName('status')
+        .setDescription('Show memory system status')),
 ];
 
 /**
@@ -185,6 +206,9 @@ export async function handleCommand(
       break;
     case 'codex':
       await handleCodex(interaction, context);
+      break;
+    case 'memory':
+      await handleMemory(interaction, context as MemoryCommandContext);
       break;
   }
 }

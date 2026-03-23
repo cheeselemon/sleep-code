@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger.js';
 import { MemoryService, type MemoryKind, type MemorySpeaker } from './memory-service.js';
 import { DistillService, type SlidingMessage } from './distill-service.js';
+import type { BatchDistillRunner, QueuedMessage } from './batch-distill-runner.js';
 
 const log = logger.child({ component: 'memory-collector' });
 
@@ -19,6 +20,8 @@ export interface CollectorMessage {
 export interface MemoryCollectorOptions {
   windowSize?: number;    // Sliding window size (default: 15)
   project?: string;       // Default project name
+  /** If set, delegates distill to the batch runner instead of processing immediately */
+  batchRunner?: BatchDistillRunner;
 }
 
 // ── Collector ────────────────────────────────────────────────
@@ -29,11 +32,12 @@ export class MemoryCollector {
   private defaultProject: string;
   private windowSize: number;
   private processing = false;
+  private batchRunner: BatchDistillRunner | null;
 
   // Sliding window per channel (channelId → recent messages)
   private windows: Map<string, SlidingMessage[]> = new Map();
 
-  // Queue for messages that arrive while processing
+  // Queue for messages that arrive while processing (legacy immediate mode)
   private queue: CollectorMessage[] = [];
 
   // Cached topicKeys per project (refreshed periodically)
@@ -49,10 +53,19 @@ export class MemoryCollector {
     this.distill = distill;
     this.windowSize = options?.windowSize ?? 15;
     this.defaultProject = options?.project ?? 'default';
+    this.batchRunner = options?.batchRunner ?? null;
+  }
+
+  /** Attach a batch runner (can be set after construction) */
+  setBatchRunner(runner: BatchDistillRunner): void {
+    this.batchRunner = runner;
+    log.info('Batch runner attached to collector');
   }
 
   /**
-   * Process a message: add to sliding window, distill, and store if worthy.
+   * Process a message: add to sliding window, then either:
+   * - Batch mode: enqueue to BatchDistillRunner with context snapshot
+   * - Legacy mode: distill immediately and store
    */
   async onMessage(msg: CollectorMessage): Promise<void> {
     const ts = msg.timestamp ?? new Date().toISOString();
@@ -70,7 +83,24 @@ export class MemoryCollector {
     }
     this.windows.set(channelKey, window);
 
-    // Queue for processing
+    // Batch mode: delegate to runner with context snapshot
+    if (this.batchRunner) {
+      const context = window.slice(0, -1); // everything except current message
+      const queued: QueuedMessage = {
+        speaker: msg.speaker,
+        displayName: msg.displayName,
+        content: msg.content,
+        channelId: msg.channelId,
+        threadId: msg.threadId,
+        project: msg.project ?? this.defaultProject,
+        timestamp: ts,
+        context: [...context], // snapshot
+      };
+      this.batchRunner.enqueue(queued);
+      return;
+    }
+
+    // Legacy immediate mode
     this.queue.push({ ...msg, timestamp: ts });
     this.processQueue();
   }
@@ -199,6 +229,6 @@ export class MemoryCollector {
   }
 
   get queueLength(): number {
-    return this.queue.length;
+    return this.batchRunner ? this.batchRunner.queueLength : this.queue.length;
   }
 }

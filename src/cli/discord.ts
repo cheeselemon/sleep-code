@@ -220,6 +220,7 @@ export async function discordRun(): Promise<void> {
 
   // Initialize memory collector (optional — disable with DISABLE_MEMORY=1)
   let memoryCollector: MemoryCollector | undefined;
+  let memoryService: MemoryService | undefined;
   if (process.env.DISABLE_MEMORY === '1') {
     log.info('Memory collector disabled via DISABLE_MEMORY=1');
   } else {
@@ -227,7 +228,7 @@ export async function discordRun(): Promise<void> {
       const embeddingProvider = new OllamaEmbeddingProvider();
       const embeddingService = new EmbeddingService(embeddingProvider);
       await embeddingService.initialize();
-      const memoryService = new MemoryService(embeddingService);
+      memoryService = new MemoryService(embeddingService);
       await memoryService.initialize();
       const chatProvider = new OllamaChatProvider();
       const chatService = new ChatService(chatProvider);
@@ -237,6 +238,24 @@ export async function discordRun(): Promise<void> {
       log.info('Memory collector initialized');
     } catch (err) {
       log.warn({ err }, 'Memory collector disabled (Ollama not available?)');
+      // Even if Ollama fails, try to initialize memory service for batch distill (uses SDK)
+      if (!memoryService) {
+        try {
+          const embeddingProvider = new OllamaEmbeddingProvider();
+          const embeddingService = new EmbeddingService(embeddingProvider);
+          await embeddingService.initialize();
+          memoryService = new MemoryService(embeddingService);
+          await memoryService.initialize();
+          // Create collector without legacy distill (batch runner will be attached later)
+          const dummyChatProvider = new OllamaChatProvider();
+          const dummyChatService = new ChatService(dummyChatProvider);
+          const dummyDistill = new DistillService(dummyChatService);
+          memoryCollector = new MemoryCollector(memoryService, dummyDistill);
+          log.info('Memory collector initialized (batch mode only — Ollama unavailable for legacy distill)');
+        } catch (err2) {
+          log.warn({ err: err2 }, 'Memory service initialization also failed');
+        }
+      }
     }
   }
 
@@ -245,6 +264,7 @@ export async function discordRun(): Promise<void> {
     settingsManager,
     enableCodex,
     memoryCollector,
+    memoryService,
   });
 
   // Start session manager (Unix socket server for CLI connections)

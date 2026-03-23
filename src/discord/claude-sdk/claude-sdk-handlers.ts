@@ -78,7 +78,10 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       }
 
       try {
-        await thread.send(`📡 **Claude SDK ready**\nDirectory: \`${cwd}\``);
+        await thread.send(
+          `📡 **Claude SDK ready**\nDirectory: \`${cwd}\`\n` +
+          `🧠 Memory collection active.  \`/memory opt-out\` to disable for this session.`,
+        );
       } catch (err) {
         log.error({ err, sessionId }, 'Failed to post Claude SDK start message');
       }

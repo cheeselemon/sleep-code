@@ -118,11 +118,141 @@ interface ParseResult {
   cjkRejected: boolean;
 }
 
+// ── Batch Types ─────────────────────────────────────────────
+
+export interface BatchDistillItem {
+  id: number;
+  message: { speaker: string; content: string; timestamp: string };
+  context: SlidingMessage[];
+  existingTopicKeys?: string[];
+}
+
+export interface BatchDistillResult {
+  id: number;
+  result: DistillResult;
+}
+
 export class DistillService {
   private chat: ChatService;
 
   constructor(chat: ChatService) {
     this.chat = chat;
+  }
+
+  /**
+   * Distill a batch of messages in a single LLM turn.
+   * Each item gets an id for correlation with the response array.
+   */
+  async distillBatch(items: BatchDistillItem[]): Promise<BatchDistillResult[]> {
+    if (items.length === 0) return [];
+    if (items.length === 1) {
+      const single = await this.distill({
+        message: items[0].message,
+        context: items[0].context,
+        existingTopicKeys: items[0].existingTopicKeys,
+      });
+      return [{ id: items[0].id, result: single }];
+    }
+
+    const batchPrompt = this.buildBatchPrompt(items);
+    const messages: ChatMessage[] = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: batchPrompt },
+    ];
+
+    try {
+      const raw = await this.chat.chat(messages);
+      const results = this.parseBatchResponse(raw, items);
+      if (results) {
+        log.info({ count: items.length, stored: results.filter(r => r.result.shouldStore).length }, 'Batch distill complete');
+        return results;
+      }
+      log.warn({ rawLen: raw.length }, 'Failed to parse batch response, falling back to individual');
+    } catch (err) {
+      log.warn({ err }, 'Batch distill call failed, falling back to individual');
+    }
+
+    // Fallback: distill individually
+    return this.distillIndividually(items);
+  }
+
+  private buildBatchPrompt(items: BatchDistillItem[]): string {
+    // Collect all unique topicKeys across items
+    const allTopicKeys = new Set<string>();
+    for (const item of items) {
+      if (item.existingTopicKeys) {
+        for (const k of item.existingTopicKeys) allTopicKeys.add(k);
+      }
+    }
+
+    const batch = items.map((item) => {
+      const contextLines = item.context.map((m) => `${m.speaker}: ${m.content}`);
+      return {
+        id: item.id,
+        speaker: item.message.speaker,
+        content: item.message.content,
+        timestamp: item.message.timestamp,
+        context: contextLines,
+      };
+    });
+
+    let prompt = `Evaluate each message below independently. Return a JSON array with one object per message.\n\n`;
+    prompt += `Messages:\n${JSON.stringify(batch, null, 2)}\n`;
+
+    if (allTopicKeys.size > 0) {
+      prompt += `\nExisting topicKeys: ${Array.from(allTopicKeys).join(', ')}`;
+      prompt += `\nReuse existing topicKeys when the topic matches.\n`;
+    }
+
+    prompt += `\nRespond with a JSON array: [{"id": 0, "shouldStore": ..., "distilled": ..., "kind": ..., "priority": ..., "topicKey": ..., "speaker": ..., "memoryAction": ..., "updateConfidence": ..., "anchorTerms": [...]}, ...]`;
+    prompt += `\nIMPORTANT: Return ONLY the JSON array. One object per message, in the same order.`;
+
+    return prompt;
+  }
+
+  private parseBatchResponse(raw: string, items: BatchDistillItem[]): BatchDistillResult[] | null {
+    try {
+      // Try to extract JSON array from the response
+      let jsonStr = raw.trim();
+
+      // Handle markdown code blocks
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim();
+      }
+
+      const parsed = JSON.parse(jsonStr);
+      if (!Array.isArray(parsed)) return null;
+
+      const results: BatchDistillResult[] = [];
+      for (const item of items) {
+        const match = parsed.find((p: any) => p.id === item.id) ?? parsed[items.indexOf(item)];
+        if (!match) {
+          results.push({ id: item.id, result: { ...DEFAULT_SKIP } });
+          continue;
+        }
+
+        const { result } = this.parseResponse(JSON.stringify(match));
+        results.push({ id: item.id, result: result ?? { ...DEFAULT_SKIP } });
+      }
+
+      return results;
+    } catch {
+      return null;
+    }
+  }
+
+  private async distillIndividually(items: BatchDistillItem[]): Promise<BatchDistillResult[]> {
+    const results: BatchDistillResult[] = [];
+    for (const item of items) {
+      const result = await this.distill({
+        message: item.message,
+        context: item.context,
+        existingTopicKeys: item.existingTopicKeys,
+      });
+      results.push({ id: item.id, result });
+    }
+    return results;
   }
 
   async distill(input: DistillInput): Promise<DistillResult> {

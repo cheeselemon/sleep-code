@@ -54,6 +54,9 @@ process.on('unhandledRejection', (reason) => {
 });
 
 import type { MemoryCollector } from '../memory/memory-collector.js';
+import { BatchDistillRunner } from '../memory/batch-distill-runner.js';
+import { MemoryReporter } from './memory-reporter.js';
+import { loadMemoryConfig, ensureConfigFile, getMemoryConfig, stopConfigWatcher } from '../memory/memory-config.js';
 
 export interface DiscordAppOptions {
   config: DiscordConfig;
@@ -61,6 +64,7 @@ export interface DiscordAppOptions {
   settingsManager?: SettingsManager;
   enableCodex?: boolean;
   memoryCollector?: MemoryCollector;
+  memoryService?: import('../memory/memory-service.js').MemoryService;
 }
 
 export function createDiscordApp(config: DiscordConfig, options?: Partial<DiscordAppOptions>) {
@@ -78,6 +82,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
   const channelManager = new ChannelManager(client, config.userId);
   const state = createState();
+
+  // Memory system references (initialized after bot is ready)
+  let memoryReporter: MemoryReporter | undefined;
+  let batchDistillRunner: BatchDistillRunner | undefined;
 
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
@@ -133,8 +141,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Set the ref so handlers can access sessionManager
   sessionManagerRef.current = sessionManager;
 
-  // Create command/interaction context
-  const commandContext: CommandContext = {
+  // Create command/interaction context (use getter for lazy references)
+  const commandContext: CommandContext & { batchDistillRunner?: BatchDistillRunner; memoryReporter?: MemoryReporter } = {
     client,
     channelManager,
     sessionManager,
@@ -143,6 +151,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     codexSessionManager,
     claudeSdkSessionManager,
     state,
+    get batchDistillRunner() { return batchDistillRunner; },
+    get memoryReporter() { return memoryReporter; },
   };
 
   const interactionContext: InteractionContext = commandContext;
@@ -521,6 +531,55 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     } catch (err) {
       log.error({ err }, 'Failed to register slash commands');
     }
+
+    // Initialize memory system (batch distill + reporter)
+    if (options?.memoryService && process.env.DISABLE_MEMORY !== '1') {
+      try {
+        await ensureConfigFile();
+        await loadMemoryConfig();
+
+        // Create reporter
+        memoryReporter = new MemoryReporter(client);
+        await memoryReporter.initialize();
+
+        // Create batch distill runner with reporter events
+        batchDistillRunner = new BatchDistillRunner(
+          options.memoryService,
+          {
+            onBatchComplete: async (result) => {
+              await memoryReporter?.postBatchResult(result);
+            },
+            onSessionRefresh: async () => {
+              log.info('Distill SDK session refreshed');
+            },
+            onError: async (error) => {
+              log.error({ err: error }, 'Batch distill error');
+            },
+            onConfigChange: async (summary) => {
+              await memoryReporter?.postNotification(summary);
+            },
+          },
+        );
+
+        // Attach batch runner to memory collector
+        if (options.memoryCollector) {
+          options.memoryCollector.setBatchRunner(batchDistillRunner);
+        }
+
+        await batchDistillRunner.start();
+        log.info('Memory batch distill system initialized');
+
+        // Post startup notification
+        const config2 = getMemoryConfig();
+        if (config2.distill.enabled) {
+          await memoryReporter.postNotification(
+            `▶️ **Memory system started** (model: \`${config2.distill.model}\`, batch: ${config2.distill.batchMaxMessages}/${Math.round(config2.distill.batchIntervalMs / 1000)}s)`,
+          );
+        }
+      } catch (err) {
+        log.error({ err }, 'Failed to initialize memory batch distill system');
+      }
+    }
   });
 
   // Handle slash commands
@@ -541,8 +600,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   });
 
   // Cleanup function for intervals
-  const cleanup = () => {
+  const cleanup = async () => {
     cleanupState(state);
+    if (batchDistillRunner) {
+      await batchDistillRunner.stop();
+    }
+    stopConfigWatcher();
   };
 
   return { client, sessionManager, channelManager, codexSessionManager, claudeSdkSessionManager, cleanup };

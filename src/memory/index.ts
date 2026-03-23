@@ -23,8 +23,10 @@ export {
   type ChatProvider,
   type OllamaChatProviderOptions,
   type ClaudeChatProviderOptions,
+  type ClaudeSdkChatProviderOptions,
   OllamaChatProvider,
   ClaudeChatProvider,
+  ClaudeSdkChatProvider,
   ChatService,
 } from './chat-provider.js';
 
@@ -47,3 +49,25 @@ export {
   type ProjectReport,
   ConsolidationService,
 } from './consolidation-service.js';
+
+export {
+  type QueuedMessage,
+  type BatchResult,
+  type BatchResultItem,
+  type BatchDistillEvents,
+  BatchDistillRunner,
+} from './batch-distill-runner.js';
+
+export {
+  type MemoryConfig,
+  type DistillConfig,
+  type ConsolidationConfig,
+  type DigestConfig,
+  loadMemoryConfig,
+  getMemoryConfig,
+  saveMemoryConfig,
+  updateMemoryConfig,
+  ensureConfigFile,
+  onConfigChange,
+  stopConfigWatcher,
+} from './memory-config.js';
