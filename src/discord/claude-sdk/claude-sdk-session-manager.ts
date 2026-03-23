@@ -71,7 +71,7 @@ export interface ClaudeSdkEvents {
 }
 
 const YOLO_EXCLUDED_TOOLS = new Set(['ExitPlanMode']);
-const DEFAULT_PERMISSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_PERMISSION_TIMEOUT_MS = 0; // 0 = no timeout (wait indefinitely)
 
 export class ClaudeSdkSessionManager {
   private sessions = new Map<string, ClaudeSdkSessionEntry>();
@@ -258,12 +258,14 @@ export class ClaudeSdkSessionManager {
         toolInput: input,
       });
 
-      // Timeout: auto-deny after permissionTimeoutMs
-      setTimeout(() => {
-        if (resolved) return; // Already handled (button clicked or session stopped)
-        wrappedResolve({ behavior: 'deny', message: 'Permission request timed out' });
-        this.events.onPermissionTimeout?.(session.id, requestId, toolName);
-      }, this.permissionTimeoutMs);
+      // Timeout: auto-deny after permissionTimeoutMs (0 = no timeout)
+      if (this.permissionTimeoutMs > 0) {
+        setTimeout(() => {
+          if (resolved) return;
+          wrappedResolve({ behavior: 'deny', message: 'Permission request timed out' });
+          this.events.onPermissionTimeout?.(session.id, requestId, toolName);
+        }, this.permissionTimeoutMs);
+      }
     });
   }
 
