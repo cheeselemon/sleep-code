@@ -13,6 +13,8 @@ import {
 } from 'discord.js';
 import { discordLogger as log } from '../utils/logger.js';
 import type { BatchResult } from '../memory/batch-distill-runner.js';
+import type { ConsolidationReport } from '../memory/consolidation-service.js';
+import type { DigestResult } from '../memory/daily-digest.js';
 import { getMemoryConfig } from '../memory/memory-config.js';
 
 // ── Constants ────────────────────────────────────────────────
@@ -91,6 +93,57 @@ export class MemoryReporter {
       await thread.send(report);
     } catch (err) {
       log.error({ err }, 'Failed to post consolidation report');
+    }
+  }
+
+  /**
+   * Post a formatted consolidation report to a weekly thread.
+   */
+  async postConsolidationResult(report: ConsolidationReport): Promise<void> {
+    if (!this.channel) return;
+
+    const lines: string[] = [];
+    lines.push(`🔄 **Consolidation Report**`);
+    lines.push(`Merged: ${report.totalMerged} | Cleaned: ${report.totalCleaned} | Remaining: ${report.totalRemaining}`);
+
+    for (const pr of report.projectReports) {
+      if (pr.merged === 0 && pr.cleaned === 0) continue;
+      lines.push(`\n**${pr.project}** (${pr.beforeCount} → ${pr.afterCount})`);
+      if (pr.mergeDetails) {
+        for (const d of pr.mergeDetails.slice(0, 10)) {
+          lines.push(`  🔗 MERGE: "${d.keptText.slice(0, 50)}" ← "${d.deletedText.slice(0, 50)}" (${d.similarity.toFixed(2)})`);
+        }
+      }
+      if (pr.cleanDetails) {
+        for (const d of pr.cleanDetails.slice(0, 10)) {
+          lines.push(`  🧹 CLEAN: "${d.text.slice(0, 50)}" (${d.reason})`);
+        }
+      }
+    }
+
+    const text = lines.join('\n').slice(0, 2000);
+    await this.postConsolidationReport(text);
+  }
+
+  /**
+   * Post a daily digest to the channel.
+   */
+  async postDigest(digest: DigestResult): Promise<void> {
+    if (!this.channel) return;
+    try {
+      const time = new Date(digest.generatedAt).toLocaleTimeString('ko-KR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Seoul',
+      });
+
+      const header = `📬 **Daily Digest** (${time})`;
+      const stats = `Tasks: ${digest.openTasks} | Recent decisions: ${digest.recentDecisions} | Topics: ${digest.topTopics.join(', ') || 'none'}`;
+      const text = `${header}\n${stats}\n\n${digest.summary}`.slice(0, 2000);
+
+      await this.channel.send(text);
+    } catch (err) {
+      log.error({ err }, 'Failed to post digest');
     }
   }
 

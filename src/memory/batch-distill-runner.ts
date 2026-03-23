@@ -11,6 +11,7 @@ import { MemoryService, type MemoryKind, type MemorySpeaker } from './memory-ser
 import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage } from './distill-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
+import { ConsolidationService, type ConsolidationReport } from './consolidation-service.js';
 
 const log = logger.child({ component: 'batch-distill' });
 
@@ -54,6 +55,7 @@ export interface BatchDistillEvents {
   onSessionRefresh?: () => void | Promise<void>;
   onError?: (error: Error) => void | Promise<void>;
   onConfigChange?: (summary: string) => void | Promise<void>;
+  onConsolidationComplete?: (report: ConsolidationReport) => void | Promise<void>;
 }
 
 // ── Runner ───────────────────────────────────────────────────
@@ -67,9 +69,13 @@ export class BatchDistillRunner {
   private queue: QueuedMessage[] = [];
   private batchTimer: NodeJS.Timeout | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
+  private consolidationTimer: NodeJS.Timeout | null = null;
+  private consolidation: ConsolidationService;
   private processing = false;
   private running = false;
   private batchCounter = 0;
+  private consolidationIntervalMs: number;
+  private consolidationEnabled: boolean;
 
   // Opt-out tracking
   private optedOutThreads = new Set<string>();
@@ -99,6 +105,9 @@ export class BatchDistillRunner {
     this.batchIntervalMs = config.distill.batchIntervalMs;
     this.sessionRefreshMs = config.distill.sessionRefreshMs;
     this.globalEnabled = config.distill.enabled;
+    this.consolidationIntervalMs = config.consolidation.intervalMs;
+    this.consolidationEnabled = config.consolidation.enabled;
+    this.consolidation = new ConsolidationService(memory);
 
     // Create SDK chat provider
     this.chatProvider = new ClaudeSdkChatProvider({
@@ -236,6 +245,16 @@ export class BatchDistillRunner {
         log.error({ err }, 'Failed to refresh SDK session');
       }
     }, this.sessionRefreshMs);
+
+    // Consolidation timer
+    if (this.consolidationEnabled) {
+      this.consolidationTimer = setInterval(() => {
+        this.runConsolidation().catch((err) => {
+          log.error({ err }, 'Consolidation failed');
+        });
+      }, this.consolidationIntervalMs);
+      log.info({ intervalMs: this.consolidationIntervalMs }, 'Consolidation scheduler started');
+    }
   }
 
   private stopTimers(): void {
@@ -246,6 +265,28 @@ export class BatchDistillRunner {
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
+    }
+    if (this.consolidationTimer) {
+      clearInterval(this.consolidationTimer);
+      this.consolidationTimer = null;
+    }
+  }
+
+  /** Run consolidation manually or from timer */
+  async runConsolidation(): Promise<ConsolidationReport | null> {
+    try {
+      log.info('Running scheduled consolidation');
+      const report = await this.consolidation.consolidate({ dryRun: false });
+      log.info(
+        { merged: report.totalMerged, cleaned: report.totalCleaned, remaining: report.totalRemaining },
+        'Consolidation complete',
+      );
+      await this.events.onConsolidationComplete?.(report);
+      return report;
+    } catch (err) {
+      log.error({ err }, 'Consolidation failed');
+      await this.events.onError?.(err as Error);
+      return null;
     }
   }
 
@@ -460,6 +501,8 @@ export class BatchDistillRunner {
     this.batchMaxMessages = d.batchMaxMessages;
     this.batchIntervalMs = d.batchIntervalMs;
     this.sessionRefreshMs = d.sessionRefreshMs;
+    this.consolidationIntervalMs = config.consolidation.intervalMs;
+    this.consolidationEnabled = config.consolidation.enabled;
 
     if (d.enabled !== this.globalEnabled) {
       this.setGlobalEnabled(d.enabled).catch((err) => {

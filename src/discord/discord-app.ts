@@ -55,6 +55,7 @@ process.on('unhandledRejection', (reason) => {
 
 import type { MemoryCollector } from '../memory/memory-collector.js';
 import { BatchDistillRunner } from '../memory/batch-distill-runner.js';
+import { DailyDigestRunner } from '../memory/daily-digest.js';
 import { MemoryReporter } from './memory-reporter.js';
 import { loadMemoryConfig, ensureConfigFile, getMemoryConfig, stopConfigWatcher } from '../memory/memory-config.js';
 
@@ -86,6 +87,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Memory system references (initialized after bot is ready)
   let memoryReporter: MemoryReporter | undefined;
   let batchDistillRunner: BatchDistillRunner | undefined;
+  let dailyDigestRunner: DailyDigestRunner | undefined;
 
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
@@ -558,6 +560,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             onConfigChange: async (summary) => {
               await memoryReporter?.postNotification(summary);
             },
+            onConsolidationComplete: async (report) => {
+              await memoryReporter?.postConsolidationResult(report);
+            },
           },
         );
 
@@ -569,11 +574,29 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         await batchDistillRunner.start();
         log.info('Memory batch distill system initialized');
 
+        // Initialize daily digest
+        dailyDigestRunner = new DailyDigestRunner(
+          options.memoryService,
+          {
+            onDigestReady: async (digest) => {
+              await memoryReporter?.postDigest(digest);
+            },
+            onError: async (error) => {
+              log.error({ err: error }, 'Daily digest error');
+            },
+          },
+        );
+        await dailyDigestRunner.start();
+        log.info('Daily digest system initialized');
+
         // Post startup notification
         const config2 = getMemoryConfig();
         if (config2.distill.enabled) {
+          const digestInfo = config2.digest.enabled
+            ? `, digest: ${config2.digest.schedule.join('/')} ${config2.digest.timezone}`
+            : '';
           await memoryReporter.postNotification(
-            `▶️ **Memory system started** (model: \`${config2.distill.model}\`, batch: ${config2.distill.batchMaxMessages}/${Math.round(config2.distill.batchIntervalMs / 1000)}s)`,
+            `▶️ **Memory system started** (model: \`${config2.distill.model}\`, batch: ${config2.distill.batchMaxMessages}/${Math.round(config2.distill.batchIntervalMs / 1000)}s${digestInfo})`,
           );
         }
       } catch (err) {
@@ -604,6 +627,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     cleanupState(state);
     if (batchDistillRunner) {
       await batchDistillRunner.stop();
+    }
+    if (dailyDigestRunner) {
+      await dailyDigestRunner.stop();
     }
     stopConfigWatcher();
   };

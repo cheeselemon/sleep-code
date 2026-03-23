@@ -35,55 +35,90 @@ export interface DistillResult {
 
 // ── Prompt ───────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a memory classifier for an AI butler system.
-Your job is to decide whether a message in a conversation is worth remembering long-term.
+const SYSTEM_PROMPT = `You are a long-term memory filter. Your job: decide if a message contains knowledge worth remembering MONTHS from now.
 
-Rules:
-- Decisions, preferences, facts, feedback, task assignments = REMEMBER (shouldStore: true)
-- Casual chat, greetings, simple acknowledgments = JUDGE BY CONTEXT
-  - "ㅇㅇ" after "이거 LanceDB로 할까?" = decision confirmation → REMEMBER
-  - "ㅇㅇ" after "밥 먹었어?" = casual → SKIP
-- Agent (Claude/Codex) progress reports = SKIP (e.g., "확인 중", "시작했다", "검증 완료", "reviewing now")
-  - Only store agent messages if they contain a NEW decision, finding, or recommendation
-- Keep the original language (Korean/English) in distilled text
-- NEVER output Chinese or Japanese text. Always write in Korean or English.
-- kind must be one of: fact, task, observation, proposal, feedback, dialog_summary, decision
-- priority: 0-10 (10 = critical decision, 0 = trivial)
-- topicKey: short topic tag in English (e.g., "vector-db", "refund-logic", "api-cost")
-- speaker: who MADE the decision/action, not who said the current message
-  - "Claude: CEO가 X 결정함" → speaker = "user" (CEO made the decision)
-  - "Codex: Claude suggested Y and CEO approved" → speaker = "user" (CEO approved)
-  - Only set speaker to "claude"/"codex" if the agent itself made the decision autonomously
-  - Must be one of: user, claude, codex, system
+## Core Principle — Think like the human brain
 
-CRITICAL - distilled text rules:
-- distilled MUST contain the SPECIFIC SUBSTANCE of the decision/fact, not a meta-description
-- BAD: "SnoopDuck 요청. 업데이트 후 코덱스와 논의" (what was requested? what update?)
-- GOOD: "환불 로직에서 위약금은 계약일 기준 30일 이내면 면제하기로 결정"
-- BAD: "Claude confirmed the plan" (what plan?)
-- GOOD: "LanceDB를 벡터DB로 사용하고, Ollama로 로컬 임베딩 처리하기로 확정"
-- Include WHO decided/said WHAT about WHICH topic
+The brain forgets 90% of a conversation within minutes. What survives:
+- The FINAL CONCLUSION, not the deliberation path (Peak-End Rule)
+- The EXTRACTED KNOWLEDGE, not who said what when (Semanticization)
+- The GIST (bottom-line meaning), not verbatim details (Fuzzy-Trace Theory)
+- WHO decided/committed to WHAT (Social Memory)
+- SURPRISES and FAILURES — things that broke expectations
+
+## STORE (shouldStore: true) — only these patterns
+
+1. **Decisions with substance**: concrete choice + what was chosen
+   - "벡터DB를 LanceDB로 확정, Ollama로 로컬 임베딩 처리" ✅
+2. **Discovered facts / lessons learned**: new knowledge gained from experience
+   - "SDK resume 시 --session-id를 함께 쓰면 크래시 발생" ✅
+3. **Architecture / design rules**: reusable technical knowledge
+   - "distill은 Claude SDK haiku, 임베딩은 Ollama 유지" ✅
+4. **Preferences / constraints**: user's ongoing preferences
+   - "API SDK 비용 우려로 Claude Code 세션 스폰 방식 선호" ✅
+5. **Commitments / ownership**: who will do what
+   - "인증 모듈은 CEO가 직접 처리하기로 결정" ✅
+6. **Corrections / updates**: explicit change to prior knowledge
+   - "중복 임계값 0.85에서 0.90으로 상향 조정" ✅
+7. **Surprising failures**: unexpected outcomes worth avoiding next time
+   - "Turbopack에서 extensionAlias 미지원으로 webpack 설정 충돌 발생" ✅
+
+## SKIP (shouldStore: false) — these are NOISE
+
+1. **Process narration**: "확인 중", "조사하겠습니다", "시작했다", "진행 중", "커밋 완료"
+2. **Meta-descriptions without substance**: "SnoopDuck 요청", "Claude가 계획을 세움", "Codex가 리뷰 수행"
+   - Ask yourself: "요청한 게 뭔데? 계획이 뭔데? 리뷰 결과가 뭔데?" → if no answer, SKIP
+3. **Routine confirmations**: "OK", "ㅇㅇ" (after casual chat), "알겠습니다", "진행해"
+4. **Intermediate deliberation**: "A할까 B할까?" → SKIP (only store the FINAL choice)
+5. **Repetition of known facts**: if it's already common knowledge or was decided before, SKIP
+6. **Completed one-off tasks**: "npm install 완료", "파일 생성함", "테스트 통과" → ephemeral, SKIP
+7. **Agent status updates**: "Claude/Codex: 확인했습니다", "검증 완료", "reviewing now"
+8. **Emotional reactions without content**: "짜증나", "좋아!", "대박" → no extractable knowledge
+
+## The "6-Month Test"
+
+Before storing, ask: "6개월 후에 이 정보가 필요할까?"
+- "LanceDB를 벡터DB로 확정" → YES, 6개월 후에도 이 아키텍처 결정을 알아야 함
+- "SnoopDuck 지시에 따라 리뷰 수행" → NO, 누가 뭘 시켰는지는 내일도 불필요
+- "커밋 완료" → NO, 커밋은 git log에 있음
+
+## distilled text rules
+
+- Extract the KNOWLEDGE, not describe the conversation event
+- BAD: "SnoopDuck 요청하여 조사 수행" → WHO requested WHAT investigation about WHAT?
+- BAD: "Claude가 구현 계획을 작성함" → WHAT plan? WHAT will be implemented?
+- BAD: "Codex 리뷰 완료" → WHAT was the finding?
+- GOOD: "환불 로직에서 위약금은 계약일 기준 30일 이내면 면제"
+- GOOD: "SDK resume 시 sessionId와 resume을 동시에 쓰면 크래시 — resume만 단독 사용해야 함"
+- GOOD: "PM2로 메모리 MCP 서버를 별도 프로세스로 실행하기로 확정"
 - Max 200 chars, 1-2 sentences
+- Write in the SAME LANGUAGE as the original message (Korean or English)
+- NEVER output Chinese or Japanese text
 
-Respond ONLY with valid JSON matching this EXACT schema (use these EXACT field names):
+## Fields
+
+- kind: fact | task | observation | proposal | feedback | dialog_summary | decision
+- priority: 0-10 (10 = critical architecture decision, 0 = trivial)
+- topicKey: short English tag (e.g., "vector-db", "session-recovery"). Reuse existing keys when possible.
+- speaker: who MADE the decision (user/claude/codex/system), not who spoke the current message
+- memoryAction: "create" (new info) or "update" (corrects/changes existing info)
+  - Update signals: "→", "에서...로", "변경", "정정", "취소", "수정", "아니고", "대신", "instead", "renamed", "actually"
+  - Default to "create" if unsure
+- updateConfidence: 0.0-1.0
+- anchorTerms: key entities (names, file paths, numbers, dates, tool names)
+
+## Response format
+
+Respond ONLY with valid JSON (no markdown, no explanation):
 {"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string", "memoryAction": "create"|"update", "updateConfidence": number, "anchorTerms": ["string"]}
 
-- memoryAction: "create" for new info, "update" if this CORRECTS/CHANGES/RESCHEDULES existing info
-  - Update signals: "->", "→", "에서 ... 로", "변경", "정정", "바뀜", "확정", "취소", "수정", "오타", "아니고", "아니라", "대신", "말고", "actually", "instead", "renamed", "moved to", "not ... but ..."
-  - If unsure, default to "create"
-- updateConfidence: 0.0-1.0 (how confident this is an update to existing info vs genuinely new)
-- anchorTerms: array of key entities (person names, places, dates, times, amounts) mentioned in the message
+Example STORE:
+{"shouldStore": true, "distilled": "벡터DB를 LanceDB로 확정, 임베딩은 Ollama qwen3-embedding:4b 사용", "kind": "decision", "priority": 8, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB", "qwen3-embedding"]}
 
-Example — worth remembering (new):
-{"shouldStore": true, "distilled": "LanceDB를 벡터DB로 사용하기로 확정", "kind": "decision", "priority": 7, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB"]}
-
-Example — worth remembering (update):
-{"shouldStore": true, "distilled": "회의 시간 2시에서 3시로 변경", "kind": "decision", "priority": 7, "topicKey": "meeting-schedule", "speaker": "user", "memoryAction": "update", "updateConfidence": 0.95, "anchorTerms": ["회의", "3시"]}
-
-Example — not worth remembering:
+Example SKIP:
 {"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": []}
 
-IMPORTANT: Always include ALL 9 fields. Field name must be "shouldStore", not "remember" or "should_remember".`;
+IMPORTANT: Always include ALL 9 fields.`;
 
 // ── CJK Detection ───────────────────────────────────────────
 
@@ -325,7 +360,7 @@ export class DistillService {
     const minLen = hasKorean ? 15 : 30;
     if (text.length < minLen) return true;
 
-    // Concrete signals — if any present, not vague
+    // ── Concrete signals — if any present, not vague ──
     const concreteSignals = [
       /\d{1,2}[\/\-\.]\d{1,2}/,           // dates (3/6, 03-07)
       /\d+[만천백억원%개건명시분]/,           // Korean numbers with units
@@ -333,21 +368,44 @@ export class DistillService {
       /[a-zA-Z0-9_./-]+\.[a-zA-Z]{2,4}/,   // file paths, emails, URLs
       /`[^`]+`/,                            // code tokens
       /0\.\d+/,                             // decimal values (thresholds)
+      /→|->|에서\s.*로/,                     // update/change arrows
     ];
     if (concreteSignals.some((p) => p.test(text))) return false;
 
-    // Meta-verb patterns — vague only if NO concrete signals above
-    const metaPatterns = [
-      /^(User|사용자|SnoopDuck).{0,15}(requested|요청|확인|논의|asked|mentioned)/i,
-      /^(Claude|Codex).{0,15}(confirmed|completed|agreed|확인|완료|동의)/i,
-      /(확인함|진행 중|작업 중|처리함|implemented|completed)\.?$/i,
+    // ── Noise patterns — always vague ──
+    const noisePatterns = [
+      // "Subject 요청/지시/결정" without substance
+      /^(User|사용자|SnoopDuck|CEO).{0,20}(requested|요청|확인|논의|asked|mentioned|지시|동의)/i,
+      /^(Claude|Codex).{0,20}(confirmed|completed|agreed|확인|완료|동의|작성|수행|진행)/i,
+
+      // Process narration endings
+      /(확인함|진행 중|작업 중|처리함|implemented|completed|시작|커밋 완료|업데이트 확인)\.?$/i,
+
+      // "did X task" without saying what
+      /^.{0,30}(조사|리뷰|검토|수행|작업|처리|확인).{0,10}$/i,
+
+      // Ephemeral task completion (should be in git log, not memory)
+      /커밋.{0,10}(완료|성공)|push.{0,5}(완료|done)|빌드.{0,5}(완료|성공)/i,
+      /npm\s+(install|build|run)\s+완료/i,
+
+      // Agent noise even if longer than minLen
+      /^(Claude|Codex)\s+(설명|확인|제안).{0,5}:/i,
+
+      // "SnoopDuck 결정 + vague action" without what was decided
+      /결정.{0,5}(미리|먼저|나중에|다음에|일단)\s/i,
     ];
-    return metaPatterns.some((p) => p.test(text));
+    return noisePatterns.some((p) => p.test(text));
   }
 
   private parseResponse(raw: string): ParseResult {
     try {
-      const parsed = JSON.parse(raw.trim());
+      let jsonStr = raw.trim();
+      // Strip markdown code blocks (```json ... ``` or ``` ... ```)
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim();
+      }
+      const parsed = JSON.parse(jsonStr);
 
       // Accept common LLM field-name variants for the boolean
       const shouldStore =
