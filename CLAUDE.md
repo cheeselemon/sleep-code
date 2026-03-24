@@ -101,7 +101,9 @@ src/
 │   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
 │   ├── discord-app.ts      # Discord.js app, event routing, memory system init
-│   ├── channel-manager.ts  # Thread/channel management, session mapping, SDK lazy resume
+│   ├── channel-manager.ts  # Thread/channel management, session mapping (uses SessionStore)
+│   ├── session-store.ts    # Generic session persistence (Map + JSON file + thread routing)
+│   ├── control-panel.ts    # #sleep-code-control channel with Interrupt All button
 │   ├── process-manager.ts  # Session spawning, lifecycle, terminal window tracking
 │   ├── settings-manager.ts # User settings (allowed directories, terminal app)
 │   ├── memory-reporter.ts  # #sleep-code-memory channel, daily/weekly threads
@@ -109,7 +111,7 @@ src/
 │   ├── utils.ts            # Message routing, attachment handling
 │   ├── commands/           # Slash command handlers (claude, codex, memory, settings, etc.)
 │   ├── handlers/           # SessionManager callback handlers
-│   ├── interactions/       # Button, select menu, modal handlers
+│   ├── interactions/       # Button, select menu, modal handlers (ask-question-factory.ts for shared logic)
 │   ├── claude-sdk/         # Claude Agent SDK integration
 │   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream
 │   │   └── claude-sdk-handlers.ts         # SDK event → Discord message handlers
@@ -159,23 +161,26 @@ Discord-only. Handles:
 - Registry persistence (`~/.sleep-code/process-registry.json`)
 
 ### ChannelManager (`src/discord/channel-manager.ts`)
-Discord-only. Handles:
+Discord-only. Uses `SessionStore` (generic persistence class) for PTY/Codex/SDK sessions:
 - Creating dedicated text channels per CWD (`sleep-{foldername}`) inside "Sleep Code Sessions" category
 - Creating threads for each session within the channel
-- Session-to-thread mapping with persistence (`~/.sleep-code/session-mappings.json`)
+- Three `SessionStore` instances handle persistence + thread routing for each session type
 - SDK session mapping with lazy resume support (`~/.sleep-code/sdk-session-mappings.json`)
   - Tracks `sessionId` (internal) vs `sdkSessionId` (Claude Agent SDK) separately
   - Restores in-memory maps on bot startup for message routing
-  - Deduplicates and cleans broken mappings on load
+  - Deduplicates and cleans broken mappings on load (skips `sdkSessionId === sessionId`)
 - Thread archival on session end
 
 ### ClaudeSdkSessionManager (`src/discord/claude-sdk/claude-sdk-session-manager.ts`)
 Discord-only. Handles:
 - Claude Agent SDK sessions via `@anthropic-ai/claude-agent-sdk` `query()` API
 - Async generator prompt input + async iterable output stream
-- `canUseTool` callback for permission handling (Allow/YOLO/Deny)
+- `canUseTool` callback for permission handling (Allow/YOLO/Deny) + AskUserQuestion interactive UI
 - Session resume from JSONL history (`resume: sdkSessionId`)
-- Lazy resume: auto-resumes on first message after bot restart
+- Lazy resume: auto-resumes on first message after bot restart (no liveness check deadlock)
+- Duplicate session guards (by ID and by thread)
+- Graceful shutdown: preserves SDK mappings for lazy resume on restart
+- Per-turn token usage tracking and cost reporting
 - Loads CLAUDE.md and user/project settings via `settingSources: ['user', 'project', 'local']`
 
 ### CodexSessionManager (`src/discord/codex/codex-session-manager.ts`)
@@ -196,6 +201,8 @@ Discord-only. Handles:
 - **Text file input**: Users can attach `.txt` files to messages → injected into Claude session (max 100KB)
 - **Typing indicator**: Shown every 8s while Claude session is running
 - **Plan mode notifications**: Posts messages when Claude enters/exits plan mode
+- **Control panel**: `#sleep-code-control` channel with persistent Interrupt All button (interrupts all running SDK/PTY/Codex sessions)
+- **Token usage**: Per-turn context usage and cost displayed after each SDK response
 
 ## Discord Slash Commands
 
