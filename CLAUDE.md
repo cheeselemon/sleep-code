@@ -295,6 +295,11 @@ Long context (3+ lines) between agents **must be shared via files** due to Disco
 | `MCP_PORT` | MCP server port (default: 24242) |
 | `LOG_LEVEL` | Pino log level (default: info) |
 
+## Documentation
+
+- 문서 작성/수정 시 `/write-docs` 스킬을 사용하여 `docs/writing-guide.md`의 5원칙을 적용
+- 정본(canonical) 위치: 아키텍처는 `CLAUDE.md`, 커맨드는 `docs/commands.md`, 메모리는 `docs/memory.md`
+
 ## Code Style
 
 - TypeScript with ES modules
