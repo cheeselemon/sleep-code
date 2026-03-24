@@ -208,9 +208,14 @@ export class ClaudeSdkSessionManager {
     session.inputQueue.length = 0;
     session.turnAbortController.abort();
     session.sessionAbortController.abort();
-    session.activeQuery?.close();
+    try { session.activeQuery?.close(); } catch { /* ignore close errors after abort */ }
 
-    await this.finalizeSession(session, true);
+    // Small delay to let processQueryStream finally block run first
+    await new Promise(resolve => setTimeout(resolve, 200));
+    // finalizeSession may already have been called by processQueryStream's finally block
+    if (this.sessions.has(session.id)) {
+      await this.finalizeSession(session, true);
+    }
     return true;
   }
 
@@ -487,6 +492,11 @@ export class ClaudeSdkSessionManager {
         session.status = 'idle';
         await this.events.onSessionStatus?.(session.id, 'idle');
         log.info({ sessionId: session.id }, 'SDK session recovered from interrupt');
+      } else if (session.status === 'ended') {
+        // Normal stop — finalize if stopSession hasn't already
+        if (this.sessions.has(session.id)) {
+          await this.finalizeSession(session, true);
+        }
       } else if (terminatedUnexpectedly) {
         await this.events.onError(session.id, new Error('Claude SDK query ended unexpectedly.'));
         await this.finalizeSession(session, true);

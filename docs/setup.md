@@ -6,7 +6,7 @@
 - **npm** or compatible package manager
 - [Ollama](https://ollama.com/) (optional, for semantic memory embeddings)
   - `qwen3-embedding:4b` — embedding model (auto-pulled on first use)
-  - Distill classification uses Claude Agent SDK (haiku), not Ollama
+  - Distill classification uses Claude Agent SDK (sonnet), not Ollama
 
 ## Install
 
@@ -25,7 +25,8 @@ npm run build
    - Go to Bot → Reset Token → copy it
    - Enable "Message Content Intent"
    - Go to OAuth2 → URL Generator → select "bot" scope
-   - Select permissions: Send Messages, Manage Channels, Read Message History
+   - Select permissions: Send Messages, Manage Messages, Manage Channels, Manage Threads, Create Public Threads, Send Messages in Threads, Read Message History, Attach Files
+   - Permission integer should be `2252126231308304`
    - Open the generated URL to invite the bot
 2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
 3. Run setup:
