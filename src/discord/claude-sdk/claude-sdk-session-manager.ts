@@ -98,6 +98,21 @@ export class ClaudeSdkSessionManager {
     options?: { model?: string; sessionId?: string; resume?: string },
   ): Promise<ClaudeSdkSessionEntry> {
     const id = options?.sessionId ?? randomUUID();
+
+    // Guard: reuse existing live session by ID
+    const existingById = this.sessions.get(id);
+    if (existingById && existingById.status !== 'ended') {
+      log.warn({ sessionId: id, status: existingById.status, pid: process.pid }, 'startSession: reusing existing live session by ID');
+      return existingById;
+    }
+
+    // Guard: reuse existing live session by thread
+    const existingByThread = this.getSessionByThread(discordThreadId);
+    if (existingByThread && existingByThread.status !== 'ended') {
+      log.warn({ sessionId: existingByThread.id, threadId: discordThreadId, pid: process.pid }, 'startSession: reusing existing live session by thread');
+      return existingByThread;
+    }
+
     const entry = this.createEntry(id, cwd, discordThreadId);
 
     // When resuming, sdkSessionId must match the SDK session we're resuming
@@ -127,9 +142,9 @@ export class ClaudeSdkSessionManager {
     });
 
     if (options?.resume) {
-      log.info({ sessionId: id, resume: options.resume }, 'SDK session resumed');
+      log.info({ sessionId: id, sdkSessionId: entry.sdkSessionId, threadId: discordThreadId, resume: options.resume, pid: process.pid }, 'SDK session resumed');
     } else {
-      log.info({ sessionId: id, sdkSessionId: entry.sdkSessionId }, 'SDK session started');
+      log.info({ sessionId: id, sdkSessionId: entry.sdkSessionId, threadId: discordThreadId, pid: process.pid }, 'SDK session started (fresh)');
     }
 
     return entry;
@@ -244,6 +259,8 @@ export class ClaudeSdkSessionManager {
     toolName: string,
     input: Record<string, unknown>,
   ): Promise<{ behavior: 'allow'; updatedInput?: Record<string, unknown> } | { behavior: 'deny'; message: string }> {
+    log.info({ sessionId: session.id, toolName, input: JSON.stringify(input).slice(0, 500), pid: process.pid }, 'canUseTool: full input');
+
     // AskUserQuestion: show interactive UI and wait for user answer
     if (toolName === 'AskUserQuestion' && input.questions) {
       return new Promise((resolve) => {
@@ -263,6 +280,11 @@ export class ClaudeSdkSessionManager {
         // Send question UI to Discord
         this.events.onAskUserQuestion?.(session.id, requestId, input.questions as any[]);
       });
+    }
+
+    // Log Agent/Task tool input for debugging subagent display
+    if (toolName === 'Task' || toolName === 'Agent') {
+      log.info({ sessionId: session.id, tool: toolName, inputKeys: Object.keys(input), subagentType: input.subagent_type, description: input.description, hasPrompt: !!input.prompt }, 'SDK canUseTool: Agent/Task');
     }
 
     // YOLO mode: auto-approve (except excluded tools)
@@ -391,6 +413,8 @@ export class ClaudeSdkSessionManager {
     session: ClaudeSdkSessionEntry,
     options?: { model?: string; resume?: string },
   ): Promise<void> {
+    log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId, threadId: session.discordThreadId, resume: options?.resume, pid: process.pid }, 'processQueryStream: starting');
+
     // SDK constraint: `sessionId` and `resume` are mutually exclusive
     // (unless `forkSession` is set). When resuming, pass only `resume`.
     // When starting fresh, pass only `sessionId`.
@@ -437,8 +461,11 @@ export class ClaudeSdkSessionManager {
         await this.handleSdkMessage(session, message);
       }
 
+      log.info({ sessionId: session.id, status: session.status, terminatedUnexpectedly, pid: process.pid }, 'processQueryStream: stream ended');
+
       terminatedUnexpectedly = session.status !== 'ended';
     } catch (err) {
+      log.error({ sessionId: session.id, err, interrupted: session.interrupted, pid: process.pid }, 'processQueryStream: stream error');
       if (session.status !== 'ended') {
         terminatedUnexpectedly = true;
         if (!session.interrupted) {
@@ -446,6 +473,7 @@ export class ClaudeSdkSessionManager {
         }
       }
     } finally {
+      log.info({ sessionId: session.id, shuttingDown, interrupted: session.interrupted, terminatedUnexpectedly, pid: process.pid }, 'processQueryStream: finally');
       session.sessionAbortController.signal.removeEventListener('abort', closeQuery);
       session.activeQuery = null;
 

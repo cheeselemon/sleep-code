@@ -28,6 +28,7 @@ const CUSTOM_PROMPT_PATH = join(homedir(), '.sleep-code', 'digest-prompt.txt');
 
 const DEFAULT_DIGEST_PROMPT = `You are a personal assistant generating a smart daily briefing for a busy developer/CEO.
 Your job: surface things the human might FORGET or MISS. Not a data dump.
+GROUP items by project. Show each project as a section header.
 
 📋 Action Required — things that need to be done (not started yet):
 {{ACTION_REQUIRED}}
@@ -43,10 +44,12 @@ Your job: surface things the human might FORGET or MISS. Not a data dump.
 
 Active topics: {{ACTIVE_TOPICS}}
 
-Generate a concise briefing. Rules:
-- Max 600 chars total
-- Skip any section that is empty or says "(none)"
-- For each item, include [project] prefix and one-line summary
+Generate the briefing. Rules:
+- GROUP by project: use "### project-name" as section headers
+- Under each project, list all relevant items from ALL categories above (🔥/⏸️/💭/🔄)
+- Max 800 chars total
+- Skip projects with no items
+- One-line per item with category emoji prefix
 - Prioritize by urgency and importance
 - Be direct and actionable, not descriptive
 - Write in the user's language if detectable from the data, otherwise English

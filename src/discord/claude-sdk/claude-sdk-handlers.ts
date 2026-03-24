@@ -78,10 +78,11 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
       }
 
       try {
-        await thread.send(
+        const msg = await thread.send(
           `📡 **Claude SDK ready**\nDirectory: \`${cwd}\`\n` +
           `🧠 Memory collection active.  \`/memory opt-out\` to disable for this session.`,
         );
+        await msg.pin().catch(() => {});
       } catch (err) {
         log.error({ err, sessionId }, 'Failed to post Claude SDK start message');
       }
@@ -173,6 +174,8 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
+      log.info({ sessionId, threadId: thread.id, contentPreview: content.slice(0, 50), pid: process.pid }, 'SDK onMessage: sending to Discord');
+
       const prefix = multiAgent ? '**Claude:** ' : '';
       const maxLen = DISCORD_SAFE_CONTENT_LIMIT - prefix.length;
       const chunks = chunkMessage(content, maxLen);
@@ -190,6 +193,8 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         return;
       }
 
+      log.info({ sessionId, toolName: info.toolName, inputKeys: info.input ? Object.keys(info.input as Record<string, unknown>) : [], threadId: thread.id, pid: process.pid }, 'SDK onToolCall');
+
       const input = info.input as Record<string, unknown> | null;
       let inputSummary = '';
       if (input) {
@@ -199,14 +204,20 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
           inputSummary = `\`${input.file_path}\``;
         } else if ((info.toolName === 'Grep' || info.toolName === 'Glob') && typeof input.pattern === 'string') {
           inputSummary = `\`${input.pattern}\``;
-        } else if (info.toolName === 'Task' && typeof input.description === 'string') {
-          inputSummary = input.description as string;
+        } else if (info.toolName === 'Task' || info.toolName === 'Agent') {
+          const agentType = input.subagent_type as string | undefined;
+          const desc = (input.description as string) || (input.prompt as string)?.slice(0, 100) || '';
+          inputSummary = agentType ? `\`[${agentType}]\` ${desc}` : desc;
+          if (!inputSummary) {
+            log.info({ toolName: info.toolName, inputKeys: Object.keys(input) }, 'Agent tool call with unknown input structure');
+          }
         }
       }
 
+      const toolLabel = (info.toolName === 'Task' || info.toolName === 'Agent') ? 'Agent' : info.toolName;
       const text = inputSummary
-        ? `🔧 **${info.toolName}**: ${inputSummary}`
-        : `🔧 **${info.toolName}**`;
+        ? `🔧 **${toolLabel}**: ${inputSummary}`
+        : `🔧 **${toolLabel}**`;
 
       try {
         const message = await thread.send(text.slice(0, DISCORD_SAFE_CONTENT_LIMIT));

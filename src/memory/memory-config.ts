@@ -5,8 +5,8 @@
  * Falls back to sensible defaults if file is missing or corrupt.
  */
 
-import { readFile, writeFile, mkdir, watch } from 'fs/promises';
-import { existsSync } from 'fs';
+import { readFile, writeFile, mkdir } from 'fs/promises';
+import { existsSync, watchFile, unwatchFile } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
@@ -91,7 +91,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
 type ConfigListener = (config: MemoryConfig) => void;
 
 let cachedConfig: MemoryConfig = structuredClone(DEFAULT_CONFIG);
-let watchAbortController: AbortController | null = null;
+let watching = false;
 const listeners: Set<ConfigListener> = new Set();
 
 /** Deep merge src into target, preserving target keys not in src */
@@ -139,9 +139,8 @@ export async function loadMemoryConfig(): Promise<MemoryConfig> {
   log.info({ config: cachedConfig }, 'Memory config loaded');
 
   // Start file watcher (if not already running)
-  if (!watchAbortController) {
-    watchAbortController = new AbortController();
-    startWatcher(watchAbortController.signal);
+  if (!watching) {
+    startWatcher();
   }
 
   return cachedConfig;
@@ -179,35 +178,29 @@ export async function updateMemoryConfig(
 
 /** Stop watching config file */
 export function stopConfigWatcher(): void {
-  watchAbortController?.abort();
-  watchAbortController = null;
+  if (watching) {
+    unwatchFile(CONFIG_FILE);
+    watching = false;
+  }
 }
 
-// ── File watcher ────────────────────────────────────────────
+// ── File watcher (polling, reliable on macOS) ───────────────
 
-function startWatcher(signal: AbortSignal): void {
-  (async () => {
+function startWatcher(): void {
+  if (!existsSync(CONFIG_FILE)) return;
+  watching = true;
+  watchFile(CONFIG_FILE, { interval: 2000 }, async () => {
     try {
-      if (!existsSync(CONFIG_FILE)) return;
-      const watcher = watch(CONFIG_FILE, { signal });
-      for await (const event of watcher) {
-        if (event.eventType === 'change') {
-          try {
-            const newConfig = await loadFromDisk();
-            cachedConfig = newConfig;
-            log.info('Memory config reloaded (file changed)');
-            notifyListeners(newConfig);
-          } catch {
-            // ignore parse errors during hot reload
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        log.warn({ err }, 'Config file watcher error');
-      }
+      const newConfig = await loadFromDisk();
+      const changed = JSON.stringify(newConfig) !== JSON.stringify(cachedConfig);
+      if (!changed) return;
+      cachedConfig = newConfig;
+      log.info({ config: newConfig }, 'Memory config hot-reloaded');
+      notifyListeners(newConfig);
+    } catch {
+      // ignore parse errors during hot reload
     }
-  })();
+  });
 }
 
 function notifyListeners(config: MemoryConfig): void {

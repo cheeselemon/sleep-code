@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Critical Rules
+
+- **NEVER restart the Discord bot server (pm2 restart) unless the user EXPLICITLY says "재시작", "restart", or "서버 재시작".** Build alone is fine. Restart is NOT implied by build, commit, or any other command.
+
 ## Project: Sleep Code
 
 **Code from your bed.** Monitor and control Claude Code sessions from Slack, Discord, or Telegram.
