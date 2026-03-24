@@ -160,6 +160,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     get batchDistillRunner() { return batchDistillRunner; },
     get dailyDigestRunner() { return dailyDigestRunner; },
     get memoryReporter() { return memoryReporter; },
+    get memoryService() { return options.memoryService; },
   };
 
   const interactionContext: InteractionContext = commandContext;

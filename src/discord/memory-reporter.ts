@@ -10,6 +10,9 @@ import {
   type TextChannel,
   type Guild,
   type ThreadChannel,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from 'discord.js';
 import { discordLogger as log } from '../utils/logger.js';
 import type { BatchResult } from '../memory/batch-distill-runner.js';
@@ -143,6 +146,33 @@ export class MemoryReporter {
       const text = `${header}\n${stats}\n\n${digest.summary}\n\n${hint}`.slice(0, 2000);
 
       await this.channel.send(text);
+
+      // Post Done buttons for open tasks (max 25 buttons = 5 rows × 5)
+      if (digest.tasks && digest.tasks.length > 0) {
+        const tasks = digest.tasks.slice(0, 25);
+        const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+        let currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+        for (const task of tasks) {
+          if (currentRow.components.length >= 5) {
+            rows.push(currentRow);
+            currentRow = new ActionRowBuilder<ButtonBuilder>();
+          }
+          const label = `✅ ${task.project}: ${task.text}`.slice(0, 80);
+          currentRow.addComponents(
+            new ButtonBuilder()
+              .setCustomId(`digest_done:${task.id}`)
+              .setLabel(label)
+              .setStyle(ButtonStyle.Secondary),
+          );
+        }
+        if (currentRow.components.length > 0) rows.push(currentRow);
+
+        await this.channel.send({
+          content: '**Mark as done:**',
+          components: rows,
+        });
+      }
     } catch (err) {
       log.error({ err }, 'Failed to post digest');
     }

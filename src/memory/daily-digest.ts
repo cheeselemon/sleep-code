@@ -57,12 +57,21 @@ Generate the briefing. Rules:
 
 // ── Types ────────────────────────────────────────────────────
 
+export interface DigestTask {
+  id: string;
+  text: string;
+  project: string;
+  priority: number;
+}
+
 export interface DigestResult {
   generatedAt: string;
   summary: string;
   openTasks: number;
   recentDecisions: number;
   topTopics: string[];
+  /** All open tasks included in this digest (for Done buttons) */
+  tasks: DigestTask[];
 }
 
 export interface DigestEvents {
@@ -157,7 +166,7 @@ export class DailyDigestRunner {
     const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    type MemItem = { text: string; project: string; priority: number; topicKey: string; kind: string; createdAt: string };
+    type MemItem = { id: string; text: string; project: string; priority: number; topicKey: string; kind: string; createdAt: string };
 
     // 5 smart buckets
     const actionRequired: MemItem[] = [];  // needs to be done, not started
@@ -181,6 +190,7 @@ export class DailyDigestRunner {
 
       for (const item of items) {
         const entry: MemItem = {
+          id: item.id,
           text: item.text,
           project,
           priority: item.priority,
@@ -317,12 +327,23 @@ export class DailyDigestRunner {
       summary = sections.join('\n') || 'No items to report.';
     }
 
+    // Collect all unique tasks for Done buttons
+    const allDigestTasks = [...actionRequired, ...stalled, ...forgotten]
+      .filter(t => t.kind === 'task' || t.kind === 'proposal' || t.kind === 'decision')
+      .reduce((acc, t) => {
+        if (!acc.find(x => x.id === t.id)) {
+          acc.push({ id: t.id, text: t.text, project: t.project, priority: t.priority });
+        }
+        return acc;
+      }, [] as DigestTask[]);
+
     return {
       generatedAt: new Date().toISOString(),
       summary,
       openTasks: actionRequired.length,
       recentDecisions: majorChanges.length,
       topTopics,
+      tasks: allDigestTasks,
     };
   }
 

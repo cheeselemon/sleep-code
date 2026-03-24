@@ -2,10 +2,13 @@
  * Interaction router for buttons, select menus, and modals
  */
 
-import type {
-  ButtonInteraction,
-  StringSelectMenuInteraction,
-  ModalSubmitInteraction,
+import {
+  type ButtonInteraction,
+  type StringSelectMenuInteraction,
+  type ModalSubmitInteraction,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from 'discord.js';
 import { handlePermissionButton } from './permissions.js';
 import {
@@ -119,6 +122,40 @@ export async function handleButton(
   // AskUserQuestion buttons
   if (customId.startsWith('askq:')) {
     await handleAskQuestionButton(interaction, context);
+    return;
+  }
+
+  // Digest Done button — mark task as resolved
+  if (customId.startsWith('digest_done:')) {
+    const taskId = customId.slice('digest_done:'.length);
+    if (!context.memoryService) {
+      await interaction.reply({ content: '❌ Memory service not available', ephemeral: true });
+      return;
+    }
+    try {
+      await context.memoryService.updateStatus(taskId, 'resolved');
+      // Update the button to show it's done
+      const label = interaction.component.label || 'Task';
+      const updatedRows = interaction.message.components.map((row: any) => {
+        const newRow = new ActionRowBuilder<ButtonBuilder>();
+        for (const comp of row.components) {
+          const btn = ButtonBuilder.from(comp);
+          if (comp.customId === customId || comp.custom_id === customId) {
+            btn.setLabel(`✅ ${label.replace(/^✅ /, '')}`);
+            btn.setStyle(ButtonStyle.Success);
+            btn.setDisabled(true);
+          }
+          newRow.addComponents(btn);
+        }
+        return newRow;
+      });
+      await interaction.update({
+        content: interaction.message.content,
+        components: updatedRows,
+      });
+    } catch (err) {
+      await interaction.reply({ content: `❌ Failed to resolve task: ${taskId}`, ephemeral: true }).catch(() => {});
+    }
     return;
   }
 }
