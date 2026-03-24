@@ -49,8 +49,8 @@ pm2 logs sleep-discord
 
 Semantic memory pipeline:
 - **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
-- **Distill**: Claude Agent SDK sonnet via `BatchDistillRunner` (batch classification → store/skip/update/resolve_task + open task injection + 2nd-pass review)
-- **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00, 21:00 KST) with pre-consolidation; customizable via `~/.sleep-code/digest-prompt.txt`
+- **Distill**: Claude Agent SDK haiku via `BatchDistillRunner` (batch classification → store/skip/update/resolve_task + open task injection + 2nd-pass review)
+- **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00 KST) with pre-consolidation; customizable via `~/.sleep-code/digest-prompt.txt`
 - **Consolidation**: Auto-runs every 24h + pre-digest (4 phases: topicKey merge, vector merge, lifecycle cleanup, smart task auto-resolution)
 - **Task Migration**: One-time LLM review of open tasks with git log cross-reference (`src/memory/migrate-tasks.ts`)
 - **Config**: `~/.sleep-code/memory-config.json` (hot-reloaded)
@@ -121,7 +121,8 @@ src/
 ├── shared/
 │   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
 ├── slack/
-│   └── slack-app.ts        # Slack Bolt app and event handlers
+│   ├── slack-app.ts        # Slack Bolt app and event handlers
+│   └── session-manager.ts  # Stub (moved to src/shared/session-manager.ts)
 └── telegram/
     └── telegram-app.ts     # grammY app and event handlers
 
@@ -190,6 +191,8 @@ Discord-only. Handles:
 - Model: gpt-5.4, approval_policy: 'never' (no permission prompts)
 - Auto-detected when `~/.codex/auth.json` exists or `OPENAI_API_KEY` is set
 - Sandbox: `read-only` by default, switches to `workspace-write` when YOLO enabled
+- Session persistence: `codexThreadId` saved after first turn, `resumeThread()` for restore after bot restart
+- Sandbox mode switch triggers thread re-creation/resume
 
 ## Discord Interactive Features
 
@@ -203,6 +206,7 @@ Discord-only. Handles:
 - **Plan mode notifications**: Posts messages when Claude enters/exits plan mode
 - **Control panel**: `#sleep-code-control` channel with persistent Interrupt All button (interrupts all running SDK/PTY/Codex sessions)
 - **Token usage**: Per-turn context usage and cost displayed after each SDK response
+- **Session start pin**: SDK new thread creation pins the "Session Starting" message
 
 ## Discord Slash Commands
 
