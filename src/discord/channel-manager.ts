@@ -531,9 +531,10 @@ export class ChannelManager {
           await thread.members.add(this.userId).catch(() => {});
         }
 
-        await thread.send(
+        const startMsg = await thread.send(
           `📡 **Claude SDK Session Starting**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
         );
+        await startMsg.pin().catch(() => {});
       } catch (err: any) {
         log.error({ err: err.message }, 'Failed to create Claude SDK thread');
         return null;
