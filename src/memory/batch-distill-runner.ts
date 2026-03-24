@@ -8,7 +8,7 @@
 
 import { logger } from '../utils/logger.js';
 import { MemoryService, type MemoryKind, type MemorySpeaker } from './memory-service.js';
-import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage } from './distill-service.js';
+import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage, type OpenTaskRef } from './distill-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
 import { ConsolidationService, type ConsolidationReport } from './consolidation-service.js';
@@ -29,13 +29,14 @@ export interface QueuedMessage {
 }
 
 export interface BatchResultItem {
-  action: 'stored' | 'superseded' | 'skipped' | 'error';
+  action: 'stored' | 'superseded' | 'skipped' | 'resolved_task' | 'error';
   distilled?: string;
   kind?: string;
   priority?: number;
   topicKey?: string;
   oldMemoryId?: string;
   newMemoryId?: string;
+  resolvedTaskIds?: string[];
   error?: string;
 }
 
@@ -309,6 +310,21 @@ export class BatchDistillRunner {
     log.info({ batchNum, count: batch.length }, 'Processing batch');
 
     try {
+      // Collect unique projects and fetch their open tasks
+      const projectSet = new Set(batch.map((m) => m.project ?? 'default'));
+      const openTasksByProject = new Map<string, OpenTaskRef[]>();
+      for (const project of projectSet) {
+        try {
+          const tasks = await this.memory.getByProject(project, { statuses: ['open'], limit: 100 });
+          const taskRefs: OpenTaskRef[] = tasks
+            .filter((t) => t.kind === 'task')
+            .map((t) => ({ id: t.id, text: t.text, topicKey: t.topicKey ?? '', priority: t.priority }));
+          openTasksByProject.set(project, taskRefs);
+        } catch {
+          openTasksByProject.set(project, []);
+        }
+      }
+
       // Build distill items
       const distillItems: BatchDistillItem[] = [];
       for (let i = 0; i < batch.length; i++) {
@@ -325,6 +341,7 @@ export class BatchDistillRunner {
           },
           context: msg.context,
           existingTopicKeys: topicKeys,
+          openTasks: openTasksByProject.get(project),
         });
       }
 
@@ -335,6 +352,7 @@ export class BatchDistillRunner {
       const batchItems: BatchResultItem[] = [];
       let stored = 0;
       let superseded = 0;
+      let resolved = 0;
       let skipped = 0;
       let errors = 0;
 
@@ -348,6 +366,7 @@ export class BatchDistillRunner {
           switch (item.action) {
             case 'stored': stored++; break;
             case 'superseded': superseded++; break;
+            case 'resolved_task': resolved++; break;
             case 'skipped': skipped++; break;
             case 'error': errors++; break;
           }
@@ -372,7 +391,7 @@ export class BatchDistillRunner {
       };
 
       log.info(
-        { batchNum, total: batch.length, stored, superseded, skipped, errors },
+        { batchNum, total: batch.length, stored, superseded, resolved, skipped, errors },
         'Batch complete',
       );
 
@@ -402,6 +421,43 @@ export class BatchDistillRunner {
     }
 
     const speakerResolved = (result.speaker as MemorySpeaker) ?? msg.speaker;
+
+    // Resolve task path: mark open tasks as resolved + store the fact
+    if (result.memoryAction === 'resolve_task' && result.resolveTaskIds?.length) {
+      let resolvedCount = 0;
+      for (const taskId of result.resolveTaskIds) {
+        try {
+          await this.memory.updateStatus(taskId, 'resolved');
+          resolvedCount++;
+          log.info({ taskId, evidence: result.distilled.slice(0, 60) }, 'Task resolved via distill');
+        } catch (err) {
+          log.warn({ taskId, err }, 'Failed to resolve task');
+        }
+      }
+
+      // Also store the completion as a fact
+      if (result.shouldStore && result.distilled) {
+        await this.memory.storeIfNew(result.distilled, {
+          project,
+          kind: 'fact',
+          source: 'session',
+          speaker: speakerResolved,
+          priority: result.priority,
+          topicKey: result.topicKey,
+          channelId: msg.channelId,
+          threadId: msg.threadId,
+        });
+      }
+
+      return {
+        action: 'resolved_task',
+        distilled: result.distilled,
+        kind: 'fact',
+        priority: result.priority,
+        topicKey: result.topicKey,
+        resolvedTaskIds: result.resolveTaskIds,
+      };
+    }
 
     // Supersede path
     if (result.memoryAction === 'update' && result.anchorTerms && result.anchorTerms.length > 0) {

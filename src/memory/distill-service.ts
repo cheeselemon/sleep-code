@@ -28,9 +28,17 @@ export interface DistillResult {
   priority: number;
   topicKey: string;
   speaker?: string;           // LLM-determined decision maker override
-  memoryAction?: 'create' | 'update';  // LLM判定: new info vs correction/update
+  memoryAction?: 'create' | 'update' | 'resolve_task';  // new info, correction, or task completion
   updateConfidence?: number;            // 0.0 ~ 1.0
   anchorTerms?: string[];               // key entities (names, places, dates, times)
+  resolveTaskIds?: string[];            // IDs of open tasks this message completes
+}
+
+export interface OpenTaskRef {
+  id: string;
+  text: string;
+  topicKey: string;
+  priority: number;
 }
 
 // ── Prompt ───────────────────────────────────────────────────
@@ -101,24 +109,29 @@ Before storing, ask: "6개월 후에 이 정보가 필요할까?"
 - priority: 0-10 (10 = critical architecture decision, 0 = trivial)
 - topicKey: short English tag (e.g., "vector-db", "session-recovery"). Reuse existing keys when possible.
 - speaker: who MADE the decision (user/claude/codex/system), not who spoke the current message
-- memoryAction: "create" (new info) or "update" (corrects/changes existing info)
+- memoryAction: "create" (new info), "update" (corrects/changes existing info), or "resolve_task" (completes an open task)
   - Update signals: "→", "에서...로", "변경", "정정", "취소", "수정", "아니고", "대신", "instead", "renamed", "actually"
+  - resolve_task: message indicates one or more open tasks are DONE. Set resolveTaskIds to the task IDs.
   - Default to "create" if unsure
 - updateConfidence: 0.0-1.0
 - anchorTerms: key entities (names, file paths, numbers, dates, tool names)
+- resolveTaskIds: array of task IDs from the open task list that this message completes (only when memoryAction is "resolve_task")
 
 ## Response format
 
 Respond ONLY with valid JSON (no markdown, no explanation):
-{"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string", "memoryAction": "create"|"update", "updateConfidence": number, "anchorTerms": ["string"]}
+{"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string", "memoryAction": "create"|"update"|"resolve_task", "updateConfidence": number, "anchorTerms": ["string"], "resolveTaskIds": ["string"]}
 
 Example STORE:
-{"shouldStore": true, "distilled": "벡터DB를 LanceDB로 확정, 임베딩은 Ollama qwen3-embedding:4b 사용", "kind": "decision", "priority": 8, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB", "qwen3-embedding"]}
+{"shouldStore": true, "distilled": "벡터DB를 LanceDB로 확정, 임베딩은 Ollama qwen3-embedding:4b 사용", "kind": "decision", "priority": 8, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB", "qwen3-embedding"], "resolveTaskIds": []}
+
+Example RESOLVE_TASK (message indicates a task from the open task list is done — store the fact AND resolve the task):
+{"shouldStore": true, "distilled": "sdkSessionId 오염 버그 수정 완료, 테스트 통과 확인", "kind": "fact", "priority": 7, "topicKey": "sdk-session", "speaker": "claude", "memoryAction": "resolve_task", "updateConfidence": 0.0, "anchorTerms": ["sdkSessionId"], "resolveTaskIds": ["task-id-here"]}
 
 Example SKIP:
-{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": []}
+{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": [], "resolveTaskIds": []}
 
-IMPORTANT: Always include ALL 9 fields.`;
+IMPORTANT: Always include ALL 10 fields.`;
 
 // ── CJK Detection ───────────────────────────────────────────
 
@@ -160,6 +173,7 @@ export interface BatchDistillItem {
   message: { speaker: string; content: string; timestamp: string };
   context: SlidingMessage[];
   existingTopicKeys?: string[];
+  openTasks?: OpenTaskRef[];
 }
 
 export interface BatchDistillResult {
@@ -197,13 +211,14 @@ export class DistillService {
 
     try {
       const raw = await this.chat.chat(messages);
-      let results = this.parseBatchResponse(raw, items);
+      const results = this.parseBatchResponse(raw, items);
       if (results) {
-        log.info({ count: items.length, stored: results.filter(r => r.result.shouldStore).length }, 'Batch distill complete');
-
-        // 2nd pass: review task classifications against originals
-        results = await this.reviewTaskClassifications(results, items, messages);
-
+        const resolved = results.filter(r => r.result.resolveTaskIds?.length);
+        log.info({
+          count: items.length,
+          stored: results.filter(r => r.result.shouldStore).length,
+          resolved: resolved.length,
+        }, 'Batch distill complete');
         return results;
       }
       log.warn({ rawLen: raw.length }, 'Failed to parse batch response, falling back to individual');
@@ -215,99 +230,20 @@ export class DistillService {
     return this.distillIndividually(items);
   }
 
-  /**
-   * 2nd-pass review: verify that items classified as "task" are truly
-   * unfinished future work, not completion reports or ephemeral instructions.
-   * Uses the same SDK session (cache-warm) for a cheap follow-up turn.
-   */
-  private async reviewTaskClassifications(
-    results: BatchDistillResult[],
-    items: BatchDistillItem[],
-    priorMessages: ChatMessage[],
-  ): Promise<BatchDistillResult[]> {
-    // Find task candidates to review
-    const taskResults = results.filter(
-      (r) => r.result.shouldStore && r.result.kind === 'task',
-    );
-    if (taskResults.length === 0) return results;
-
-    // Build review prompt with original messages + classifications
-    const reviewItems = taskResults.map((tr) => {
-      const original = items.find((i) => i.id === tr.id);
-      return {
-        id: tr.id,
-        original: original ? `${original.message.speaker}: ${original.message.content}` : '(not found)',
-        distilled: tr.result.distilled,
-        kind: tr.result.kind,
-        priority: tr.result.priority,
-      };
-    });
-
-    const reviewPrompt = `Review your task classifications. For each item below, check if it's TRULY an unfinished future task, or actually a completion report / status update / ephemeral instruction that was misclassified.
-
-Items to review:
-${JSON.stringify(reviewItems, null, 2)}
-
-Rules:
-- A "task" must be UNFINISHED FUTURE WORK that someone still needs to do
-- "리태깅 완료 412건" → NOT a task, it's a fact (completion report)
-- "서버 재시작해줘" → NOT a task, it's an ephemeral instruction (skip)
-- "interruptSession 수정 필요" → YES, this is a real task
-- "커밋 완료" → NOT a task (skip)
-
-For each item, respond with ONE of:
-- "keep" = correct, it's a real unfinished task
-- "fact" = misclassified, should be kind=fact (completion report / result)
-- "skip" = should not be stored (ephemeral / noise)
-
-Respond ONLY with a JSON array: [{"id": 0, "verdict": "keep|fact|skip"}, ...]`;
-
-    try {
-      const reviewMessages: ChatMessage[] = [
-        ...priorMessages,
-        { role: 'user', content: reviewPrompt },
-      ];
-      const reviewRaw = await this.chat.chat(reviewMessages);
-
-      // Parse review response
-      let jsonStr = reviewRaw.trim();
-      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
-
-      const verdicts: Array<{ id: number; verdict: string }> = JSON.parse(jsonStr);
-      let corrected = 0;
-
-      for (const v of verdicts) {
-        const target = results.find((r) => r.id === v.id);
-        if (!target) continue;
-
-        if (v.verdict === 'fact') {
-          target.result.kind = 'fact';
-          corrected++;
-          log.info({ id: v.id, text: target.result.distilled.slice(0, 60) }, 'Review: task → fact');
-        } else if (v.verdict === 'skip') {
-          target.result.shouldStore = false;
-          corrected++;
-          log.info({ id: v.id, text: target.result.distilled.slice(0, 60) }, 'Review: task → skip');
-        }
-      }
-
-      if (corrected > 0) {
-        log.info({ reviewed: taskResults.length, corrected }, 'Task review pass complete');
-      }
-    } catch (err) {
-      log.warn({ err }, 'Task review pass failed, keeping original classifications');
-    }
-
-    return results;
-  }
-
   private buildBatchPrompt(items: BatchDistillItem[]): string {
     // Collect all unique topicKeys across items
     const allTopicKeys = new Set<string>();
     for (const item of items) {
       if (item.existingTopicKeys) {
         for (const k of item.existingTopicKeys) allTopicKeys.add(k);
+      }
+    }
+
+    // Collect open tasks from all items (deduplicated)
+    const openTaskMap = new Map<string, OpenTaskRef>();
+    for (const item of items) {
+      if (item.openTasks) {
+        for (const t of item.openTasks) openTaskMap.set(t.id, t);
       }
     }
 
@@ -330,7 +266,16 @@ Respond ONLY with a JSON array: [{"id": 0, "verdict": "keep|fact|skip"}, ...]`;
       prompt += `\nReuse existing topicKeys when the topic matches.\n`;
     }
 
-    prompt += `\nRespond with a JSON array: [{"id": 0, "shouldStore": ..., "distilled": ..., "kind": ..., "priority": ..., "topicKey": ..., "speaker": ..., "memoryAction": ..., "updateConfidence": ..., "anchorTerms": [...]}, ...]`;
+    // Inject open tasks so the LLM can detect task completion
+    if (openTaskMap.size > 0) {
+      const taskList = Array.from(openTaskMap.values()).map(
+        (t) => `  - id:"${t.id}" [${t.topicKey}] (p:${t.priority}) ${t.text.slice(0, 100)}`,
+      );
+      prompt += `\nCurrently open tasks:\n${taskList.join('\n')}`;
+      prompt += `\nIf a message indicates any of these tasks are COMPLETED, set memoryAction:"resolve_task" and resolveTaskIds:[matching task ids]. Store the completion as kind:"fact".\n`;
+    }
+
+    prompt += `\nRespond with a JSON array: [{"id": 0, "shouldStore": ..., "distilled": ..., "kind": ..., "priority": ..., "topicKey": ..., "speaker": ..., "memoryAction": ..., "updateConfidence": ..., "anchorTerms": [...], "resolveTaskIds": [...]}, ...]`;
     prompt += `\nIMPORTANT: Return ONLY the JSON array. One object per message, in the same order.`;
 
     return prompt;
@@ -534,21 +479,29 @@ Respond ONLY with a JSON array: [{"id": 0, "verdict": "keep|fact|skip"}, ...]`;
         : undefined;
 
       // Parse supersede fields
-      const rawAction = parsed.memoryAction === 'update' ? 'update' : 'create';
       const updateConfidence = typeof parsed.updateConfidence === 'number'
         ? Math.max(0, Math.min(1, parsed.updateConfidence)) : 0;
       const anchorTerms = Array.isArray(parsed.anchorTerms)
         ? parsed.anchorTerms.filter((t: unknown) => typeof t === 'string' && (t as string).length > 0)
         : [];
 
+      const rawAction: string = parsed.memoryAction ?? 'create';
+
       // Rule gate: validate "update" action with signal patterns
-      let memoryAction: 'create' | 'update' = 'create';
-      if (rawAction === 'update' && updateConfidence >= 0.8) {
+      let memoryAction: 'create' | 'update' | 'resolve_task' = 'create';
+      if (rawAction === 'resolve_task') {
+        memoryAction = 'resolve_task';
+      } else if (rawAction === 'update' && updateConfidence >= 0.8) {
         const updateSignals = /->|→|에서\s.*로|변경|정정|바뀜|확정|취소|수정|오타|아니고|아니라|대신|말고|actually|instead|renamed|moved to|not\s.*but/i;
         if (updateSignals.test(parsed.distilled) || updateConfidence >= 0.95) {
           memoryAction = 'update';
         }
       }
+
+      // Parse resolveTaskIds
+      const resolveTaskIds = Array.isArray(parsed.resolveTaskIds)
+        ? parsed.resolveTaskIds.filter((id: unknown) => typeof id === 'string' && (id as string).length > 0)
+        : [];
 
       return {
         result: {
@@ -561,6 +514,7 @@ Respond ONLY with a JSON array: [{"id": 0, "verdict": "keep|fact|skip"}, ...]`;
           memoryAction,
           updateConfidence,
           anchorTerms,
+          resolveTaskIds: resolveTaskIds.length > 0 ? resolveTaskIds : undefined,
         },
         cjkRejected: false,
       };

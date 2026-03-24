@@ -9,20 +9,32 @@
 // ── Positive: text IS a completion report ───────────────
 
 const COMPLETION_POSITIVE = [
-  /완료\s*[.!]?\s*$/,              // ends with "완료"
-  /끝\s*[.!]?\s*$/,                // ends with "끝"
-  /처리\s*완료/,                     // "처리 완료"
-  /삭제\s*완료/,                     // "삭제 완료"
-  /구현\s*완료/,                     // "구현 완료"
-  /적용\s*완료/,                     // "적용 완료"
-  /반영\s*완료/,                     // "반영 완료"
-  /정리\s*완료/,                     // "정리 완료"
-  /리태깅\s*완료/,                   // "리태깅 완료"
+  // Korean completion markers (anywhere in text)
+  /완료/,                            // "완료" anywhere
+  /끝\s*[.!]?\s*$/,                  // ends with "끝"
+  /처리\s*됨/,                       // "처리됨"
+  /해결/,                            // "해결"
+  /수정\s*[했하됨]/,                  // "수정했", "수정함", "수정됨"
+  /구현\s*[했하됨]/,                  // "구현했", "구현함"
+  /적용\s*[했하됨]/,                  // "적용했", "적용함"
+  /추가\s*[했하됨]/,                  // "추가했", "추가함"
+  /삭제\s*[했하됨]/,                  // "삭제했", "삭제함"
+  /개선\s*[했하됨]/,                  // "개선했", "개선함"
+  /작업\s*완료/,                     // "작업 완료"
   /총\s+\d+\s*건.*(?:완료|처리|정리|삭제)/, // "총 412건 정리"
   /\d+\s*건\s*(?:삭제|정리|처리|병합|수정)/, // "112건 삭제"
   /커밋\s*(?:완료|성공|됨)/,         // "커밋 완료"
   /배포\s*(?:완료|성공|됨)/,         // "배포 완료"
-  /(?:fixed|done|resolved|implemented|finished|completed|merged|deployed|shipped)\s*[.!]?\s*$/i,
+  // English completion markers (anywhere in text)
+  /\bresolved\b/i,                   // "resolved"
+  /\bfixed\b/i,                      // "fixed"
+  /\bdone\b/i,                       // "done"
+  /\bcompleted?\b/i,                 // "complete" or "completed"
+  /\bimplemented\b/i,                // "implemented"
+  /\bfinished\b/i,                   // "finished"
+  /\bmerged?\b/i,                    // "merge" or "merged"
+  /\bdeployed\b/i,                   // "deployed"
+  /\bshipped\b/i,                    // "shipped"
 ];
 
 // ── Negative: text has future/conditional intent ────────

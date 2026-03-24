@@ -333,6 +333,13 @@ export class MemoryReporter {
       lines.push(`🔄 **SUPERSEDE** [${item.kind} p:${item.priority}] "${item.distilled}"${oldRef}`);
     }
 
+    // Resolved task items
+    const resolvedItems = result.items.filter((i) => i.action === 'resolved_task');
+    for (const item of resolvedItems) {
+      const ids = item.resolvedTaskIds?.map((id) => `\`${id.slice(0, 8)}\``).join(', ') ?? '';
+      lines.push(`✅ **RESOLVED** [${item.topicKey}] "${item.distilled}" (tasks: ${ids})`);
+    }
+
     // Error items
     const errorItems = result.items.filter((i) => i.action === 'error');
     for (const item of errorItems) {
@@ -355,6 +362,7 @@ export class MemoryReporter {
     lines.push(
       `📊 ${result.totalProcessed} processed → ` +
       `${result.stored} stored, ${result.superseded} superseded, ` +
+      `${resolvedItems.length > 0 ? `${resolvedItems.length} resolved, ` : ''}` +
       `${result.skipped} skipped` +
       (result.errors > 0 ? `, ${result.errors} errors` : ''),
     );
