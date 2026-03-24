@@ -28,6 +28,7 @@ import { createCodexEvents } from './codex/codex-handlers.js';
 import { CODEX_MODEL } from './codex/codex-session-manager.js';
 import { ClaudeSdkSessionManager } from './claude-sdk/claude-sdk-session-manager.js';
 import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
+import { ControlPanel } from './control-panel.js';
 
 // Import state management
 import { createState, cleanupState } from './state.js';
@@ -533,6 +534,14 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       log.info('Slash commands registered');
     } catch (err) {
       log.error({ err }, 'Failed to register slash commands');
+    }
+
+    // Initialize control panel
+    try {
+      const controlPanel = new ControlPanel(client);
+      await controlPanel.initialize();
+    } catch (err) {
+      log.error({ err }, 'Failed to initialize control panel');
     }
 
     // Initialize memory system (batch distill + reporter)

@@ -23,6 +23,7 @@ import {
 import { handleInterruptButton, handleYoloButton } from './panel.js';
 import { handleFullResultButton } from './full-result.js';
 import { handleRestoreButton, handleDismissRestoreButton, handleRestoreSdkButton, handleDismissSdkButton } from './restore.js';
+import { handleKillAllButton } from '../control-panel.js';
 import {
   handleStartDirSelect,
   handleStopSessionSelect,
@@ -82,6 +83,12 @@ export async function handleButton(
   // YOLO toggle button
   if (customId.startsWith('yolo:')) {
     await handleYoloButton(interaction, context);
+    return;
+  }
+
+  // Control panel buttons
+  if (customId === 'control:kill_all') {
+    await handleKillAllButton(interaction, context);
     return;
   }
 
