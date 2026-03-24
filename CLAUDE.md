@@ -45,7 +45,7 @@ pm2 logs sleep-discord
 
 Semantic memory pipeline:
 - **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
-- **Distill**: Claude Agent SDK haiku via `BatchDistillRunner` (batch classification → store/skip/update/resolve_task + open task injection + 2nd-pass review)
+- **Distill**: Claude Agent SDK sonnet via `BatchDistillRunner` (batch classification → store/skip/update/resolve_task + open task injection + 2nd-pass review)
 - **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00, 21:00 KST) with pre-consolidation; customizable via `~/.sleep-code/digest-prompt.txt`
 - **Consolidation**: Auto-runs every 24h + pre-digest (4 phases: topicKey merge, vector merge, lifecycle cleanup, smart task auto-resolution)
 - **Task Migration**: One-time LLM review of open tasks with git log cross-reference (`src/memory/migrate-tasks.ts`)

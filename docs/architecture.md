@@ -13,13 +13,15 @@ src/
 ├── memory/                 # Semantic memory pipeline
 │   ├── memory-service.ts       # LanceDB store, search, dedup, supersede
 │   ├── memory-collector.ts     # Message ingestion with sliding window
-│   ├── distill-service.ts      # LLM classifier (store/skip/update)
-│   ├── batch-distill-runner.ts # Queue + timer + SDK session management
-│   ├── daily-digest.ts         # Scheduled digest briefings
-│   ├── consolidation-service.ts # Periodic merge and cleanup
-│   ├── memory-config.ts        # JSON config with hot-reload
+│   ├── distill-service.ts      # LLM classifier (store/skip/update/resolve_task, open task injection, 2nd-pass review)
+│   ├── batch-distill-runner.ts # Queue + timer + SDK session + consolidation scheduler + task resolution
+│   ├── daily-digest.ts         # Scheduled digest briefings (Claude SDK sonnet, pre-consolidation)
+│   ├── consolidation-service.ts # Periodic merge, cleanup, smart task auto-resolution (4 phases)
+│   ├── task-rules.ts           # Shared task lifecycle rules (completion detection, classification)
+│   ├── migrate-tasks.ts        # One-time LLM task review with git log cross-reference
+│   ├── memory-config.ts        # JSON config loader with hot-reload (fs.watch)
 │   ├── embedding-provider.ts   # Ollama embedding abstraction
-│   └── chat-provider.ts        # LLM chat (Ollama / Claude SDK)
+│   └── chat-provider.ts        # LLM chat abstraction (Ollama/Claude CLI/Claude SDK)
 ├── mcp/
 │   └── memory-server.ts        # MCP server (HTTP transport)
 ├── discord/

@@ -102,4 +102,5 @@ sleep-code memory consolidate [--project <name>] [--dry-run]  # Merge duplicates
 sleep-code memory retag [--project <name>] [--dry-run]        # Re-classify topicKeys via LLM
 sleep-code memory graph [--project <name>] [--threshold 0.7]  # Open memory graph in browser
 sleep-code memory distill-test                                # Test distill with sample messages
+sleep-code memory migrate-tasks [--dry-run]                   # One-time LLM review of open tasks with git log
 ```

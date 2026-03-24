@@ -31,7 +31,9 @@ Message → Collect → Batch Distill → 2nd-pass Review → Dedup → Store �
 Replaces per-message Ollama distill with batched Claude SDK processing:
 
 - **Persistent SDK session** — system prompt cached across turns for efficiency
-- **Hybrid trigger** — processes when queue hits 20 messages OR every 30 minutes
+- **Hybrid trigger** — processes when queue hits 30 messages OR every 30 minutes (configurable)
+- **Open task injection** — injects top open tasks into batch prompt so LLM can return `resolve_task` action
+- **2nd-pass review** — after classification, reviews results against originals for accuracy
 - **Session refresh** — SDK session recycled every 2 hours to keep context fresh
 - **Brain-science prompt** — based on Peak-End Rule, Fuzzy-Trace Theory, and Semanticization research
 
@@ -123,6 +125,7 @@ sleep-code memory consolidate [--project <name>] [--dry-run]
 sleep-code memory retag [--project <name>] [--dry-run]
 sleep-code memory graph [--project <name>] [--threshold 0.7]
 sleep-code memory distill-test
+sleep-code memory migrate-tasks [--dry-run]
 ```
 
 ## MCP Server
@@ -165,8 +168,8 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
 {
   "distill": {
     "enabled": true,
-    "model": "haiku",
-    "batchMaxMessages": 20,
+    "model": "sonnet",
+    "batchMaxMessages": 30,
     "batchIntervalMs": 1800000,
     "sessionRefreshMs": 7200000,
     "skipVerbosity": "count",
@@ -179,7 +182,7 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
   },
   "digest": {
     "enabled": true,
-    "schedule": ["10:00", "16:00"],
+    "schedule": ["10:00", "16:00", "21:00"],
     "timezone": "Asia/Seoul",
     "model": "sonnet"
   }

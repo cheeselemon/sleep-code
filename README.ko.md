@@ -82,9 +82,9 @@ Claude Code / Codex
 
 대화를 Claude SDK + Ollama 임베딩으로 자동 정제하여 로컬 벡터 DB에 저장합니다. 결정, 사실, 선호사항은 기억하고, 일상 대화는 필터링합니다.
 
-- **배치 정제** — Claude SDK(haiku)가 메시지를 배치로 분류
-- **일일 다이제스트** — 할 일과 최근 결정 사항을 정기 브리핑
-- **통합 정리** — 중복 자동 병합 및 노이즈 제거 (24시간 주기)
+- **배치 정제** — Claude SDK(sonnet)가 메시지를 배치 분류, open task 주입·2차 검증·자동 task resolution
+- **일일 다이제스트** — 정기 브리핑 (기본 10:00, 16:00, 21:00 KST), pre-consolidation 포함
+- **통합 정리** — 중복 자동 병합, 스마트 task 자동 해결 (4단계 전략), 24시간 주기
 - **커스텀 프롬프트** — `~/.sleep-code/digest-prompt.txt`로 다이제스트 출력 커스터마이징
 
 임베딩에 [Ollama](https://ollama.com/) 필요. Ollama 없이도 메모리 기능만 빠지고 봇은 정상 작동.

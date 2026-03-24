@@ -82,9 +82,9 @@ Claude Code / Codex
 
 Conversations are auto-distilled into a local vector DB using Claude SDK + Ollama embeddings. Decisions, facts, and preferences are remembered; casual chat is filtered out.
 
-- **Batch distill** — Claude SDK (haiku) classifies messages in batches
-- **Daily digest** — scheduled briefings of open tasks and recent decisions
-- **Consolidation** — auto-merges duplicates and cleans noise (24h cycle)
+- **Batch distill** — Claude SDK (sonnet) classifies messages with open task injection, 2nd-pass review, and auto task resolution
+- **Daily digest** — scheduled briefings (default 10:00, 16:00, 21:00 KST) with pre-consolidation
+- **Consolidation** — auto-merges duplicates, smart task auto-resolution (4 strategies), 24h cycle
 - **Custom prompts** — place `~/.sleep-code/digest-prompt.txt` to customize digest output
 
 Requires [Ollama](https://ollama.com/) for embeddings. Without Ollama, the bot runs normally without memory.
