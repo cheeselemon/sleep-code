@@ -253,17 +253,33 @@ export class DailyDigestRunner {
       .slice(0, 5)
       .map(([topic]) => topic);
 
-    // Format helper
-    const fmt = (items: MemItem[], max: number) =>
-      items.slice(0, max).map((t) => `- [${t.project}] (p:${t.priority}) ${t.text}`).join('\n') || '(none)';
+    // Format helper — grouped by project
+    const fmt = (items: MemItem[], max: number) => {
+      if (items.length === 0) return '(none)';
+      const sliced = items.slice(0, max);
+      const byProject = new Map<string, MemItem[]>();
+      for (const item of sliced) {
+        const group = byProject.get(item.project) ?? [];
+        group.push(item);
+        byProject.set(item.project, group);
+      }
+      const lines: string[] = [];
+      for (const [project, group] of byProject) {
+        lines.push(`[${project}]`);
+        for (const t of group) {
+          lines.push(`  - (p:${t.priority}) ${t.text}`);
+        }
+      }
+      return lines.join('\n');
+    };
 
     // Load and fill prompt template
     const template = await this.loadPromptTemplate();
     const prompt = template
-      .replace(/\{\{ACTION_REQUIRED\}\}/g, fmt(actionRequired, 8))
-      .replace(/\{\{STALLED\}\}/g, fmt(stalled, 5))
-      .replace(/\{\{FORGOTTEN\}\}/g, fmt(forgotten, 5))
-      .replace(/\{\{MAJOR_CHANGES\}\}/g, fmt(majorChanges, 5))
+      .replace(/\{\{ACTION_REQUIRED\}\}/g, fmt(actionRequired, 15))
+      .replace(/\{\{STALLED\}\}/g, fmt(stalled, 10))
+      .replace(/\{\{FORGOTTEN\}\}/g, fmt(forgotten, 10))
+      .replace(/\{\{MAJOR_CHANGES\}\}/g, fmt(majorChanges, 10))
       .replace(/\{\{ACTIVE_TOPICS\}\}/g, topTopics.length > 0 ? topTopics.join(', ') : '(none)')
       // Legacy variable support for custom prompts
       .replace(/\{\{OPEN_TASKS\}\}/g, fmt(actionRequired, 8))
