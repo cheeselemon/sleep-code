@@ -45,9 +45,10 @@ pm2 logs sleep-discord
 
 Semantic memory pipeline:
 - **Embedding**: Ollama qwen3-embedding:4b (2560-dim vectors)
-- **Distill**: Claude Agent SDK haiku via `BatchDistillRunner` (batch classification → store/skip)
-- **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00 KST)
-- **Consolidation**: Auto-runs every 24h (merge duplicates + clean noise)
+- **Distill**: Claude Agent SDK haiku via `BatchDistillRunner` (batch classification → store/skip/update/resolve_task + open task injection + 2nd-pass review)
+- **Daily Digest**: Claude SDK sonnet generates scheduled briefings (default 10:00, 16:00, 21:00 KST) with pre-consolidation; customizable via `~/.sleep-code/digest-prompt.txt`
+- **Consolidation**: Auto-runs every 24h + pre-digest (4 phases: topicKey merge, vector merge, lifecycle cleanup, smart task auto-resolution)
+- **Task Migration**: One-time LLM review of open tasks with git log cross-reference (`src/memory/migrate-tasks.ts`)
 - **Config**: `~/.sleep-code/memory-config.json` (hot-reloaded)
 - **Storage**: LanceDB at `~/.sleep-code/memory/lancedb`
 - **MCP Server**: HTTP transport on port 24242 (PM2: sleep-memory-mcp, env: `MCP_PORT`)
@@ -83,11 +84,13 @@ src/
 ├── memory/                 # Semantic memory pipeline
 │   ├── memory-service.ts       # LanceDB store, search, dedup, supersede
 │   ├── memory-collector.ts     # Message ingestion with sliding window, batch delegation
-│   ├── distill-service.ts      # LLM classifier (store/skip/update detection, batch support)
-│   ├── batch-distill-runner.ts # Queue + timer + SDK session + consolidation scheduler
-│   ├── daily-digest.ts         # Scheduled digest briefings (Claude SDK sonnet)
+│   ├── distill-service.ts      # LLM classifier (store/skip/update/resolve_task, open task injection, 2nd-pass review)
+│   ├── batch-distill-runner.ts # Queue + timer + SDK session + consolidation scheduler + task resolution
+│   ├── daily-digest.ts         # Scheduled digest briefings (Claude SDK sonnet, pre-consolidation)
 │   ├── memory-config.ts        # JSON config loader with hot-reload (fs.watch)
-│   ├── consolidation-service.ts # Periodic merge and cleanup
+│   ├── consolidation-service.ts # Periodic merge, cleanup, smart task auto-resolution (4 phases)
+│   ├── task-rules.ts           # Shared task lifecycle rules (completion detection, classification)
+│   ├── migrate-tasks.ts        # One-time LLM task review with git log cross-reference
 │   ├── embedding-provider.ts   # Ollama embedding abstraction
 │   ├── chat-provider.ts        # LLM chat abstraction (Ollama/Claude CLI/Claude SDK)
 ├── mcp/

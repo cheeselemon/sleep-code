@@ -7,13 +7,16 @@ Sleep Code's semantic memory pipeline automatically remembers important conversa
 ## Pipeline Overview
 
 ```
-Message → Collect → Batch Distill → Dedup → Store → Recall
-                        ↓
-                 Supersede detection
+Message → Collect → Batch Distill → 2nd-pass Review → Dedup → Store → Recall
+                        ↓                                        ↓
+                 Supersede detection                   Task auto-resolution
+                        ↓                           (matches open tasks by vector)
+                 Open task injection
 ```
 
 1. **Collect** — Sliding context window per channel (default 15 messages)
-2. **Batch Distill** — Claude SDK (haiku) classifies messages in batches: store or skip. Only decisions, facts, preferences, tasks, and feedback survive
+2. **Batch Distill** — Claude SDK (haiku) classifies messages in batches. Actions: `create` (new memory), `update` (supersede), `resolve_task` (close open task), `skip`. Open task list is injected so the LLM can detect task completions in real-time
+3. **2nd-pass Review** — Same SDK session reviews its own classifications against original messages, catching misclassifications (e.g., completion reports stored as open tasks)
 3. **Validate** — Rejects vague meta-descriptions (e.g., "User requested something"). Requires concrete signals: dates, numbers, file names, code tokens
 4. **Dedup** — Two-layer duplicate prevention:
    - Exact text match (pre-embedding, cheap)
@@ -48,24 +51,44 @@ Before storing, the classifier asks: *"Will this information matter in 6 months?
 
 ## Daily Digest
 
-Scheduled briefings summarizing your open tasks and recent decisions.
+Scheduled briefings summarizing important items across all projects.
 
-- **Default schedule:** 10:00, 16:00 (configurable timezone and times)
+- **Default schedule:** 10:00, 16:00, 21:00 KST (configurable timezone and times)
 - **Model:** Claude SDK sonnet (configurable)
-- **Content:** Open tasks (all projects) + recent decisions (24h) + active topics
+- **Pre-consolidation:** Runs full consolidation before generating digest (clean data → accurate briefing)
+- **5-bucket format:**
+  - 🔥 Action Required — unstarted high-priority tasks
+  - ⏸️ Stalled — tasks in progress but idle 3+ days
+  - 💭 Forgotten Decisions — decisions made but never acted on
+  - 🔄 Follow-up — items needing confirmation
+  - ✅ Major Changes — direction changes, supersedes
 - **Custom prompt:** Place `~/.sleep-code/digest-prompt.txt` to override the default template
 
 Template variables: `{{OPEN_TASKS}}`, `{{RECENT_DECISIONS}}`, `{{ACTIVE_TOPICS}}`, `{{TASK_COUNT}}`, `{{DECISION_COUNT}}`
 
 ## Consolidation
 
-Periodic cleanup that merges near-duplicates and removes noise. Runs every 24 hours automatically.
+Periodic cleanup that merges near-duplicates, removes noise, and manages task lifecycle. Runs every 24 hours + before each digest.
 
 1. **TopicKey merge** — Same topic + kind, within 7 days, cosine ≥ 0.85 → merge
 2. **Vector merge** — Any topic, cosine ≥ 0.93 → merge
-3. **Cleanup** — Remove low-priority observations, agent noise, language errors
+3. **Lifecycle cleanup** — Expire stale tasks (30d+), ephemeral tasks (7d+, p≤4), old observations (30d), old summaries (14d)
+4. **Smart task auto-resolution** — 4 strategies:
+   - Self-resolution: task text itself is a completion report
+   - TopicKey evidence: newer decision/fact with completion keywords on same topic
+   - Vector similarity: semantic match (≥0.80) across different topicKeys
+   - Date expiry: schedule/event tasks past their date + 7 days
 
 Results posted to `#sleep-code-memory` weekly consolidation thread.
+
+## Task Migration
+
+One-time LLM-based review of all open tasks (`src/memory/migrate-tasks.ts`):
+
+- Cross-references each task against `git log` of its project
+- Sonnet reviews with commit evidence → resolve/reclassify/keep
+- Reads project directories from `~/.sleep-code/settings.json`
+- Run: `node --import tsx/esm src/memory/migrate-tasks.ts [--dry-run]`
 
 ## Discord Integration
 
