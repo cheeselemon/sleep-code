@@ -172,7 +172,7 @@ export class ClaudeSdkSessionManager {
 
   interruptSession(sessionId: string): boolean {
     const session = this.sessions.get(sessionId);
-    if (!session || session.status !== 'running') {
+    if (!session || session.status === 'ended') {
       return false;
     }
 

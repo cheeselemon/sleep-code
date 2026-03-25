@@ -1,4 +1,4 @@
-import { homedir } from 'os';
+import { homedir, networkInterfaces } from 'os';
 import { mkdir, writeFile, readFile, access } from 'fs/promises';
 import * as readline from 'readline';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
@@ -423,6 +423,57 @@ export async function discordRun(): Promise<void> {
     }
   }
 
+  // ── Network watchdog: detect VPN/WiFi changes and recover ──
+  // Strategy: detect IP change → give Discord.js 10s to self-heal → if not, exit for PM2 restart
+  function getIPFingerprint(): string {
+    const ifaces = networkInterfaces();
+    const ips: string[] = [];
+    for (const [name, addrs] of Object.entries(ifaces)) {
+      if (!addrs || name === 'lo0') continue;
+      for (const addr of addrs) {
+        if (!addr.internal && addr.family === 'IPv4') {
+          ips.push(`${name}:${addr.address}`);
+        }
+      }
+    }
+    return ips.sort().join(',');
+  }
+
+  let lastIPFingerprint = getIPFingerprint();
+  let networkCheckPending = false;
+
+  const networkWatchdog = setInterval(async () => {
+    const current = getIPFingerprint();
+    if (current === lastIPFingerprint) return;
+    if (networkCheckPending) return;
+    if (!current) return; // network completely down, wait for it to come back
+
+    log.warn({ old: lastIPFingerprint, new: current }, 'Network change detected (VPN/WiFi)');
+    lastIPFingerprint = current;
+    networkCheckPending = true;
+
+    // Give Discord.js 10s to auto-reconnect
+    setTimeout(async () => {
+      networkCheckPending = false;
+      // Status 0 = Ready (connected)
+      const wsStatus = client.ws.status;
+      if (wsStatus === 0) {
+        log.info({ wsStatus }, 'Discord auto-recovered after network change');
+        return;
+      }
+
+      log.error({ wsStatus }, 'Discord failed to recover after network change, restarting via PM2...');
+
+      // Graceful shutdown: preserve SDK mappings for lazy resume
+      if (claudeSdkSessionManager) {
+        await claudeSdkSessionManager.shutdown().catch(() => {});
+      }
+      await cleanup().catch(() => {});
+
+      process.exit(1); // PM2 restarts the process cleanly
+    }, 10000);
+  }, 5000);
+
   // Graceful shutdown — interrupt running sessions before exit
   const shutdown = async () => {
     log.info('Shutting down...');
@@ -456,6 +507,7 @@ export async function discordRun(): Promise<void> {
     await cleanup();
     processManager.shutdown();
     sessionManager.stop();
+    clearInterval(networkWatchdog);
     client.destroy();
     process.exit(0);
   };

@@ -147,31 +147,26 @@ export class MemoryReporter {
 
       await this.channel.send(text);
 
-      // Post Done buttons for open tasks (max 25 buttons = 5 rows × 5)
+      // Post Done buttons — 1 button per row for readability (max 5 rows per message)
       if (digest.tasks && digest.tasks.length > 0) {
-        const tasks = digest.tasks.slice(0, 25);
-        const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-        let currentRow = new ActionRowBuilder<ButtonBuilder>();
-
-        for (const task of tasks) {
-          if (currentRow.components.length >= 5) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder<ButtonBuilder>();
-          }
-          const label = `✅ ${task.project}: ${task.text}`.slice(0, 80);
-          currentRow.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`digest_done:${task.id}`)
-              .setLabel(label)
-              .setStyle(ButtonStyle.Secondary),
-          );
+        const tasks = digest.tasks.slice(0, 20); // Discord max: 5 rows × 5 messages = 25
+        // Split into chunks of 5 (5 rows per message)
+        for (let i = 0; i < tasks.length; i += 5) {
+          const chunk = tasks.slice(i, i + 5);
+          const rows = chunk.map((task) => {
+            const label = `✅ [${task.project}] ${task.text}`.slice(0, 80);
+            return new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`digest_done:${task.id}`)
+                .setLabel(label)
+                .setStyle(ButtonStyle.Secondary),
+            );
+          });
+          await this.channel.send({
+            content: i === 0 ? '**Mark as done:**' : undefined,
+            components: rows,
+          });
         }
-        if (currentRow.components.length > 0) rows.push(currentRow);
-
-        await this.channel.send({
-          content: '**Mark as done:**',
-          components: rows,
-        });
       }
     } catch (err) {
       log.error({ err }, 'Failed to post digest');

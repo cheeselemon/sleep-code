@@ -327,9 +327,8 @@ export class DailyDigestRunner {
       summary = sections.join('\n') || 'No items to report.';
     }
 
-    // Collect all unique tasks for Done buttons
+    // Collect ALL unique items for Done buttons (tasks, decisions, facts — anything in digest)
     const allDigestTasks = [...actionRequired, ...stalled, ...forgotten]
-      .filter(t => t.kind === 'task' || t.kind === 'proposal' || t.kind === 'decision')
       .reduce((acc, t) => {
         if (!acc.find(x => x.id === t.id)) {
           acc.push({ id: t.id, text: t.text, project: t.project, priority: t.priority });
