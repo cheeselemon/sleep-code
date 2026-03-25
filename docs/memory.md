@@ -55,7 +55,7 @@ Before storing, the classifier asks: *"Will this information matter in 6 months?
 
 Scheduled briefings summarizing important items across all projects.
 
-- **Default schedule:** 10:00, 16:00, 21:00 KST (configurable timezone and times)
+- **Default schedule:** 10:00, 16:00 KST (configurable timezone and times)
 - **Model:** Claude SDK sonnet (configurable)
 - **Pre-consolidation:** Runs full consolidation before generating digest (clean data → accurate briefing)
 - **5-bucket format:**
@@ -168,8 +168,8 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
 {
   "distill": {
     "enabled": true,
-    "model": "sonnet",
-    "batchMaxMessages": 30,
+    "model": "haiku",
+    "batchMaxMessages": 20,
     "batchIntervalMs": 1800000,
     "sessionRefreshMs": 7200000,
     "skipVerbosity": "count",
@@ -182,7 +182,7 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
   },
   "digest": {
     "enabled": true,
-    "schedule": ["10:00", "16:00", "21:00"],
+    "schedule": ["10:00", "16:00"],
     "timezone": "Asia/Seoul",
     "model": "sonnet"
   }

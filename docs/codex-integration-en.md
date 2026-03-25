@@ -157,13 +157,13 @@ Session mappings are persisted separately in `codex-session-mappings.json`.
 | Communication | PTY + Unix socket + JSONL | Direct SDK calls |
 | Permissions | Permission hook (interactive buttons) | `approval_policy: 'never'` (auto-approve) |
 | YOLO mode | Toggle with `/yolo-sleep` | Always auto-approve |
-| Session recovery | JSONL-based recovery | In-memory only, lost on bot restart |
+| Session recovery | JSONL-based recovery | `codexThreadId` persisted, `resumeThread()` on bot restart |
 | Process | Separate terminal/background process | SDK thread within bot process |
 | Event format | JSONL file watching (chokidar) | SDK streaming events |
 
 ## Limitations
 
-- Codex sessions are not recoverable after bot restart (unlike Claude which has JSONL files)
+- Codex sessions auto-recover after bot restart via persisted `codexThreadId` and `resumeThread()`
 - Command output is truncated to 1500 characters
 - File diff previews are truncated to 200 characters
 - Codex always runs in auto-approve mode (no permission request UI)

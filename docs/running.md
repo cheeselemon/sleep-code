@@ -174,7 +174,7 @@ When the Discord bot starts with memory enabled, it automatically:
 - Creates a `#sleep-code-memory` channel
 - Starts the **batch distill** pipeline (Claude SDK haiku, processes messages in batches)
 - Starts the **consolidation scheduler** (merges duplicates every 24h)
-- Starts the **daily digest** (briefings at scheduled times, default 10:00 + 16:00)
+- Starts the **daily digest** (briefings at scheduled times, default 10:00 + 16:00 KST)
 
 ### Configuration
 

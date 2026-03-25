@@ -157,13 +157,13 @@ archiveCodexSession(sessionId)
 | 통신 방식 | PTY + Unix socket + JSONL | SDK 직접 호출 |
 | 권한 관리 | Permission hook (interactive buttons) | `approval_policy: 'never'` (자동 승인) |
 | YOLO 모드 | `/yolo-sleep`으로 토글 | 항상 자동 승인 |
-| 세션 복구 | JSONL 파일 기반 복구 가능 | 메모리 내 관리, 봇 재시작 시 소멸 |
+| 세션 복구 | JSONL 파일 기반 복구 가능 | `codexThreadId` 저장, 봇 재시작 시 `resumeThread()` 복구 |
 | 프로세스 | 별도 터미널/백그라운드 프로세스 | 봇 프로세스 내 SDK 스레드 |
 | 이벤트 형식 | JSONL 파일 감시 (chokidar) | SDK 스트리밍 이벤트 |
 
 ## 제한사항
 
-- Codex 세션은 봇 재시작 시 복구되지 않는다 (Claude는 JSONL로 복구 가능)
+- Codex 세션은 봇 재시작 시 `codexThreadId` 기반으로 자동 복구된다 (`resumeThread()`)
 - 명령어 출력은 1500자로 잘린다
 - 파일 diff 미리보기는 200자로 잘린다
 - Codex는 항상 자동 승인 모드로 실행된다 (권한 요청 UI 없음)

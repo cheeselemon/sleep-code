@@ -25,15 +25,21 @@ src/
 ├── mcp/
 │   └── memory-server.ts        # MCP server (HTTP transport)
 ├── discord/
-│   ├── discord-app.ts          # Discord.js app, event handlers
-│   ├── channel-manager.ts      # Thread/channel management, session mapping
-│   ├── process-manager.ts      # Session spawning, lifecycle
+│   ├── discord-app.ts          # Discord.js app, event routing, memory system init
+│   ├── channel-manager.ts      # Thread/channel management, session mapping (uses SessionStore)
+│   ├── session-store.ts        # Generic session persistence (Map + JSON file + thread routing)
+│   ├── control-panel.ts        # #sleep-code-control channel with Interrupt All button
+│   ├── process-manager.ts      # Session spawning, lifecycle, terminal window tracking
 │   ├── settings-manager.ts     # User settings (directories, terminal app)
-│   ├── memory-reporter.ts      # #sleep-code-memory channel management
-│   ├── agent-routing.ts        # @codex/@claude message routing
+│   ├── memory-reporter.ts      # #sleep-code-memory channel, daily/weekly threads
+│   ├── state.ts                # Shared state (permissions, YOLO, routing)
+│   ├── utils.ts                # Message routing, attachment handling
+│   ├── commands/               # Slash command handlers
+│   ├── handlers/               # SessionManager callback handlers
+│   ├── interactions/           # Button, select menu, modal handlers (ask-question-factory.ts)
 │   ├── claude-sdk/
-│   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle
-│   │   └── claude-sdk-handlers.ts         # SDK event → Discord
+│   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream
+│   │   └── claude-sdk-handlers.ts         # SDK event → Discord message handlers
 │   └── codex/
 │       ├── codex-session-manager.ts
 │       └── codex-handlers.ts
@@ -89,36 +95,6 @@ Queues messages and processes them in batches via a persistent Claude SDK sessio
 ### MemoryReporter (`src/discord/memory-reporter.ts`)
 Manages `#sleep-code-memory` channel. Creates daily distill threads, weekly consolidation threads, and posts batch results + digest briefings.
 
-## Config & Data Files
+## Config, Environment Variables, Code Style
 
-| Path | Purpose |
-|------|---------|
-| `~/.sleep-code/discord.env` | Discord bot token + user ID |
-| `~/.sleep-code/slack.env` | Slack tokens |
-| `~/.sleep-code/settings.json` | Allowed dirs, terminal app, maxConcurrentSessions |
-| `~/.sleep-code/memory-config.json` | Memory system configuration (hot-reloaded) |
-| `~/.sleep-code/digest-prompt.txt` | Custom daily digest prompt template |
-| `~/.sleep-code/process-registry.json` | ProcessManager session registry |
-| `~/.sleep-code/session-mappings.json` | PTY session → Discord thread mappings |
-| `~/.sleep-code/sdk-session-mappings.json` | SDK session → Discord thread mappings |
-| `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
-| `~/.sleep-code/memory/lancedb/` | LanceDB vector store |
-
-## Environment Variables
-
-| Variable | Purpose |
-|----------|---------|
-| `DISCORD_BOT_TOKEN` / `DISCORD_USER_ID` | Discord credentials |
-| `OPENAI_API_KEY` | Enables Codex integration |
-| `DISABLE_MEMORY` | Set `1` to skip memory collector |
-| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_USER_ID` | Slack credentials |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Telegram credentials |
-| `MCP_PORT` | MCP server port (default: 24242) |
-| `LOG_LEVEL` | Pino log level (default: info) |
-
-## Code Style
-
-- TypeScript with ES modules
-- Async/await for all async operations
-- Pino for structured logging (`src/utils/logger.ts`)
-- Error handling: catch and log, don't crash the bot
+See [CLAUDE.md](../CLAUDE.md) for the canonical reference on config files, environment variables, and code style.

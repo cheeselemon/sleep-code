@@ -103,13 +103,7 @@ Activate with `/yolo-sleep` or the YOLO button. When active:
 
 ### Permission Timeout
 
-If no response within 5 minutes, the request is auto-denied:
-
-```
-⏰ Permission timed out: `Bash` — auto-denied
-```
-
-Adjust the timeout in `~/.sleep-code/settings.json`:
+By default, permission requests wait indefinitely (no timeout). To enable auto-deny after a timeout, set `sdkPermissionTimeoutMs` in `~/.sleep-code/settings.json`:
 
 ```json
 {
@@ -248,7 +242,7 @@ Claude responses from SDK sessions are automatically collected into the memory p
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `sdkDefaultModel` | `"sonnet"` | Default model for SDK sessions |
-| `sdkPermissionTimeoutMs` | `300000` (5 min) | Permission request timeout |
+| `sdkPermissionTimeoutMs` | `0` (no timeout) | Permission request timeout (0 = wait indefinitely) |
 | `sdkStreamingEnabled` | `false` | Enable streaming (experimental) |
 
 Environment variables:

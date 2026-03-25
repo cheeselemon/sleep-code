@@ -6,7 +6,7 @@
 - **npm** or compatible package manager
 - [Ollama](https://ollama.com/) (optional, for semantic memory embeddings)
   - `qwen3-embedding:4b` — embedding model (auto-pulled on first use)
-  - Distill classification uses Claude Agent SDK (sonnet), not Ollama
+  - Distill classification uses Claude Agent SDK (haiku), not Ollama
 
 ## Install
 
