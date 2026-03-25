@@ -449,6 +449,8 @@ export class ClaudeSdkSessionManager {
     session.sessionAbortController.signal.addEventListener('abort', closeQuery, { once: true });
 
     let terminatedUnexpectedly = false;
+    let autoRestartNeeded = false;
+    const resumeSdkSessionId = options?.resume;
 
     try {
       for await (const message of queryHandle) {
@@ -471,7 +473,13 @@ export class ClaudeSdkSessionManager {
       terminatedUnexpectedly = session.status !== 'ended';
     } catch (err) {
       log.error({ sessionId: session.id, err, interrupted: session.interrupted, pid: process.pid }, 'processQueryStream: stream error');
-      if (session.status !== 'ended') {
+
+      // If resume failed with "No conversation found", try fresh start automatically
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('No conversation found') && resumeSdkSessionId) {
+        log.warn({ sessionId: session.id, pid: process.pid }, 'Resume failed: conversation not found, will auto-restart as fresh session');
+        autoRestartNeeded = true;
+      } else if (session.status !== 'ended') {
         terminatedUnexpectedly = true;
         if (!session.interrupted) {
           throw err;
@@ -496,6 +504,29 @@ export class ClaudeSdkSessionManager {
         // Normal stop — finalize if stopSession hasn't already
         if (this.sessions.has(session.id)) {
           await this.finalizeSession(session, true);
+        }
+      } else if (autoRestartNeeded) {
+        // Resume failed — clean up and restart as fresh session
+        const pendingInput = [...session.inputQueue];
+        this.sessions.delete(session.id);
+        log.info({ sessionId: session.id, cwd: session.cwd, pendingMessages: pendingInput.length, pid: process.pid }, 'Auto-restarting as fresh session after resume failure');
+        try {
+          const freshEntry = await this.startSession(session.cwd, session.discordThreadId, {
+            sessionId: session.id,
+          });
+          // Re-queue pending messages so user doesn't have to resend
+          for (const msg of pendingInput) {
+            freshEntry.inputQueue.push(msg);
+          }
+          if (freshEntry.pendingInputResolve && freshEntry.inputQueue.length > 0) {
+            freshEntry.pendingInputResolve(freshEntry.inputQueue.shift()!);
+            freshEntry.pendingInputResolve = null;
+          }
+          await this.events.onSessionStatus?.(freshEntry.id, 'idle');
+          log.info({ sessionId: freshEntry.id, sdkSessionId: freshEntry.sdkSessionId, pid: process.pid }, 'Auto-restart succeeded: fresh session ready');
+        } catch (freshErr) {
+          log.error({ err: freshErr, sessionId: session.id, pid: process.pid }, 'Auto-restart also failed');
+          await this.events.onError(session.id, new Error('Failed to restart session. Use `/claude start-sdk` to start a new one.'));
         }
       } else if (terminatedUnexpectedly) {
         await this.events.onError(session.id, new Error('Claude SDK query ended unexpectedly.'));
