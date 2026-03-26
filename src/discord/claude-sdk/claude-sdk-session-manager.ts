@@ -274,12 +274,14 @@ export class ClaudeSdkSessionManager {
         // Store resolve so button/select handlers can call it with answers
         this.state.sdkAskQuestionResolvers.set(requestId, (answers: Record<string, string>) => {
           this.state.sdkAskQuestionResolvers.delete(requestId);
-          // Merge answers into the original input
-          const updatedQuestions = (input.questions as any[]).map((q: any, idx: number) => ({
-            ...q,
-            answer: answers[String(idx)] || '',
-          }));
-          resolve({ behavior: 'allow', updatedInput: { ...input, questions: updatedQuestions } });
+          // Build answers object: key = question text, value = selected label
+          // Per SDK docs: https://platform.claude.com/docs/en/agent-sdk/user-input
+          const questions = input.questions as any[];
+          const answersMap: Record<string, string> = {};
+          for (let idx = 0; idx < questions.length; idx++) {
+            answersMap[questions[idx].question] = answers[String(idx)] || '';
+          }
+          resolve({ behavior: 'allow', updatedInput: { questions, answers: answersMap } });
         });
 
         // Send question UI to Discord
