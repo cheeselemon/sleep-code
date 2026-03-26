@@ -203,6 +203,10 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
           inputSummary = `\`${input.file_path}\``;
         } else if ((info.toolName === 'Grep' || info.toolName === 'Glob') && typeof input.pattern === 'string') {
           inputSummary = `\`${input.pattern}\``;
+        } else if (info.toolName === 'Skill') {
+          const skillName = (input.skill as string) || '';
+          const args = (input.args as string) || '';
+          inputSummary = skillName ? `\`${skillName}\`${args ? ` ${args.slice(0, 80)}` : ''}` : '';
         } else if (info.toolName === 'Task' || info.toolName === 'Agent') {
           const agentType = input.subagent_type as string | undefined;
           const desc = (input.description as string) || (input.prompt as string)?.slice(0, 100) || '';
