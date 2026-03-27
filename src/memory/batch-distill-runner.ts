@@ -8,7 +8,7 @@
 
 import { logger } from '../utils/logger.js';
 import { MemoryService, type MemoryKind, type MemorySpeaker } from './memory-service.js';
-import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage, type OpenTaskRef } from './distill-service.js';
+import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage, type OpenTaskRef, type ExistingMemoryRef } from './distill-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
 import { ConsolidationService, type ConsolidationReport } from './consolidation-service.js';
@@ -47,6 +47,7 @@ export interface BatchResult {
   totalProcessed: number;
   stored: number;
   superseded: number;
+  resolved: number;
   skipped: number;
   errors: number;
 }
@@ -310,88 +311,110 @@ export class BatchDistillRunner {
     log.info({ batchNum, count: batch.length }, 'Processing batch');
 
     try {
-      // Collect unique projects and fetch their open tasks
-      const projectSet = new Set(batch.map((m) => m.project ?? 'default'));
-      const openTasksByProject = new Map<string, OpenTaskRef[]>();
-      for (const project of projectSet) {
-        try {
-          const tasks = await this.memory.getByProject(project, { statuses: ['open'], limit: 100 });
-          const taskRefs: OpenTaskRef[] = tasks
-            .filter((t) => t.kind === 'task')
-            .map((t) => ({ id: t.id, text: t.text, topicKey: t.topicKey ?? '', priority: t.priority }));
-          openTasksByProject.set(project, taskRefs);
-        } catch {
-          openTasksByProject.set(project, []);
-        }
-      }
-
-      // Build distill items
-      const distillItems: BatchDistillItem[] = [];
+      // Group messages by project
+      const byProject = new Map<string, { msgs: QueuedMessage[]; indices: number[] }>();
       for (let i = 0; i < batch.length; i++) {
-        const msg = batch[i];
-        const project = msg.project ?? 'default';
-        const topicKeys = await this.getTopicKeys(project);
-
-        distillItems.push({
-          id: i,
-          message: {
-            speaker: `${msg.displayName} (${msg.speaker})`,
-            content: msg.content,
-            timestamp: msg.timestamp,
-          },
-          context: msg.context,
-          existingTopicKeys: topicKeys,
-          openTasks: openTasksByProject.get(project),
-        });
+        const project = batch[i].project ?? 'default';
+        if (!byProject.has(project)) byProject.set(project, { msgs: [], indices: [] });
+        const group = byProject.get(project)!;
+        group.msgs.push(batch[i]);
+        group.indices.push(i);
       }
 
-      // Run batch distill
-      const distillResults = await this.distill.distillBatch(distillItems);
+      log.info({ batchNum, projects: Array.from(byProject.keys()), total: batch.length }, 'Split batch by project');
 
-      // Process each result
-      const batchItems: BatchResultItem[] = [];
+      const batchItems: BatchResultItem[] = new Array(batch.length);
       let stored = 0;
       let superseded = 0;
       let resolved = 0;
       let skipped = 0;
       let errors = 0;
 
-      for (const dr of distillResults) {
-        const msg = batch[dr.id];
-        const project = msg.project ?? 'default';
-
+      // Process each project independently
+      for (const [project, { msgs, indices }] of byProject) {
         try {
-          const item = await this.processDistillResult(dr, msg, project);
-          batchItems.push(item);
-          switch (item.action) {
-            case 'stored': stored++; break;
-            case 'superseded': superseded++; break;
-            case 'resolved_task': resolved++; break;
-            case 'skipped': skipped++; break;
-            case 'error': errors++; break;
+          // Fetch project context once
+          const CONTEXT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+          const MEMORY_CAP_PER_PROJECT = 50;
+          const cutoff = new Date(Date.now() - CONTEXT_WINDOW_MS).toISOString();
+
+          const openItems = await this.memory.getByProject(project, { statuses: ['open'], limit: 100 });
+          const taskRefs: OpenTaskRef[] = openItems
+            .filter((t) => t.kind === 'task')
+            .map((t) => ({ id: t.id, text: t.text, topicKey: t.topicKey ?? '', priority: t.priority }));
+
+          const allItems = await this.memory.getByProject(project, { limit: 500 });
+          const memRefs: ExistingMemoryRef[] = allItems
+            .filter((m) => m.kind !== 'task' && m.status !== 'superseded' && m.createdAt >= cutoff)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, MEMORY_CAP_PER_PROJECT)
+            .map((m) => ({
+              id: m.id, text: m.text, kind: m.kind,
+              topicKey: m.topicKey ?? '', priority: m.priority, createdAt: m.createdAt,
+            }));
+
+          const topicKeys = await this.getTopicKeys(project);
+
+          // Build distill items for this project only
+          const distillItems: BatchDistillItem[] = msgs.map((msg, i) => ({
+            id: i,
+            project,
+            message: {
+              speaker: `${msg.displayName} (${msg.speaker})`,
+              content: msg.content,
+              timestamp: msg.timestamp,
+            },
+            context: msg.context,
+            existingTopicKeys: topicKeys,
+            openTasks: taskRefs,
+            existingMemories: memRefs,
+          }));
+
+          // Run distill for this project
+          const distillResults = await this.distill.distillBatch(distillItems);
+
+          // Process results
+          for (const dr of distillResults) {
+            const originalIdx = indices[dr.id];
+            const msg = batch[originalIdx];
+            try {
+              const item = await this.processDistillResult(dr, msg, project);
+              batchItems[originalIdx] = item;
+              switch (item.action) {
+                case 'stored': stored++; break;
+                case 'superseded': superseded++; break;
+                case 'resolved_task': resolved++; break;
+                case 'skipped': skipped++; break;
+                case 'error': errors++; break;
+              }
+            } catch (err) {
+              errors++;
+              batchItems[originalIdx] = { action: 'error', error: (err as Error).message };
+            }
           }
         } catch (err) {
-          errors++;
-          batchItems.push({
-            action: 'error',
-            error: (err as Error).message,
-          });
+          log.error({ err, project, batchNum }, 'Project sub-batch failed');
+          for (const idx of indices) {
+            errors++;
+            batchItems[idx] = { action: 'error', error: (err as Error).message };
+          }
         }
       }
 
       const result: BatchResult = {
         batchNumber: batchNum,
         timestamp: new Date().toISOString(),
-        items: batchItems,
+        items: batchItems.filter(Boolean),
         totalProcessed: batch.length,
         stored,
         superseded,
+        resolved,
         skipped,
         errors,
       };
 
       log.info(
-        { batchNum, total: batch.length, stored, superseded, resolved, skipped, errors },
+        { batchNum, total: batch.length, projects: byProject.size, stored, superseded, resolved, skipped, errors },
         'Batch complete',
       );
 
@@ -425,11 +448,18 @@ export class BatchDistillRunner {
     // Resolve task path: mark open tasks as resolved + store the fact
     if (result.memoryAction === 'resolve_task' && result.resolveTaskIds?.length) {
       let resolvedCount = 0;
+      // Get task project ownership for validation
+      const openTasks = await this.memory.getByProject(project, { statuses: ['open'], limit: 200 });
+      const projectTaskIds = new Set(openTasks.filter(t => t.kind === 'task').map(t => t.id));
       for (const taskId of result.resolveTaskIds) {
+        if (!projectTaskIds.has(taskId)) {
+          log.warn({ taskId, project }, 'Skipping task resolution: task does not belong to this project');
+          continue;
+        }
         try {
           await this.memory.updateStatus(taskId, 'resolved');
           resolvedCount++;
-          log.info({ taskId, evidence: result.distilled.slice(0, 60) }, 'Task resolved via distill');
+          log.info({ taskId, project, evidence: result.distilled.slice(0, 60) }, 'Task resolved via distill');
         } catch (err) {
           log.warn({ taskId, err }, 'Failed to resolve task');
         }

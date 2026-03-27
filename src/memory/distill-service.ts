@@ -168,12 +168,23 @@ interface ParseResult {
 
 // ── Batch Types ─────────────────────────────────────────────
 
+export interface ExistingMemoryRef {
+  id: string;
+  text: string;
+  kind: string;
+  topicKey: string;
+  priority: number;
+  createdAt: string;
+}
+
 export interface BatchDistillItem {
   id: number;
+  project?: string;
   message: { speaker: string; content: string; timestamp: string };
   context: SlidingMessage[];
   existingTopicKeys?: string[];
   openTasks?: OpenTaskRef[];
+  existingMemories?: ExistingMemoryRef[];
 }
 
 export interface BatchDistillResult {
@@ -251,6 +262,7 @@ export class DistillService {
       const contextLines = item.context.map((m) => `${m.speaker}: ${m.content}`);
       return {
         id: item.id,
+        project: item.project ?? 'default',
         speaker: item.message.speaker,
         content: item.message.content,
         timestamp: item.message.timestamp,
@@ -266,13 +278,29 @@ export class DistillService {
       prompt += `\nReuse existing topicKeys when the topic matches.\n`;
     }
 
-    // Inject open tasks so the LLM can detect task completion
+    // Inject open tasks (batch is single-project, so deduplicate only)
     if (openTaskMap.size > 0) {
       const taskList = Array.from(openTaskMap.values()).map(
         (t) => `  - id:"${t.id}" [${t.topicKey}] (p:${t.priority}) ${t.text.slice(0, 100)}`,
       );
       prompt += `\nCurrently open tasks:\n${taskList.join('\n')}`;
       prompt += `\nIf a message indicates any of these tasks are COMPLETED, set memoryAction:"resolve_task" and resolveTaskIds:[matching task ids]. Store the completion as kind:"fact".\n`;
+    }
+
+    // Inject existing memories (batch is single-project, so deduplicate only)
+    const existingMemories = new Map<string, ExistingMemoryRef>();
+    for (const item of items) {
+      if (item.existingMemories) {
+        for (const m of item.existingMemories) existingMemories.set(m.id, m);
+      }
+    }
+    if (existingMemories.size > 0) {
+      const memList = Array.from(existingMemories.values()).map(
+        (m) => `  - [${m.kind}/${m.topicKey}] (p:${m.priority}) ${m.text.slice(0, 80)}`,
+      );
+      prompt += `\nAlready stored memories (last 7 days):\n${memList.join('\n')}`;
+      prompt += `\nIMPORTANT: If a message repeats or is very similar to an existing memory, SKIP it (shouldStore: false).`;
+      prompt += `\nIf a message updates/corrects an existing memory, set memoryAction:"update". The system will find the matching memory to supersede automatically.\n`;
     }
 
     prompt += `\nRespond with a JSON array: [{"id": 0, "shouldStore": ..., "distilled": ..., "kind": ..., "priority": ..., "topicKey": ..., "speaker": ..., "memoryAction": ..., "updateConfidence": ..., "anchorTerms": [...], "resolveTaskIds": [...]}, ...]`;
@@ -314,20 +342,35 @@ export class DistillService {
   }
 
   private async distillIndividually(items: BatchDistillItem[]): Promise<BatchDistillResult[]> {
+    log.warn({ count: items.length }, 'Falling back to individual distill (openTasks/existingMemories preserved with reduced context)');
     const results: BatchDistillResult[] = [];
     for (const item of items) {
+      // Build individual prompt with reduced context from openTasks/existingMemories
+      let extraContext = '';
+      if (item.openTasks && item.openTasks.length > 0) {
+        const taskLines = item.openTasks.slice(0, 10).map(
+          (t) => `  - id:"${t.id}" [${t.topicKey}] ${t.text.slice(0, 60)}`,
+        );
+        extraContext += `\nOpen tasks:\n${taskLines.join('\n')}\n`;
+      }
+      if (item.existingMemories && item.existingMemories.length > 0) {
+        const memLines = item.existingMemories.slice(0, 15).map(
+          (m) => `  - [${m.kind}/${m.topicKey}] ${m.text.slice(0, 60)}`,
+        );
+        extraContext += `\nExisting memories:\n${memLines.join('\n')}\nSKIP if similar to existing.\n`;
+      }
       const result = await this.distill({
         message: item.message,
         context: item.context,
         existingTopicKeys: item.existingTopicKeys,
-      });
+      }, extraContext);
       results.push({ id: item.id, result });
     }
     return results;
   }
 
-  async distill(input: DistillInput): Promise<DistillResult> {
-    const userPrompt = this.buildUserPrompt(input);
+  async distill(input: DistillInput, extraContext?: string): Promise<DistillResult> {
+    const userPrompt = this.buildUserPrompt(input) + (extraContext ?? '');
     const messages: ChatMessage[] = [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt },
