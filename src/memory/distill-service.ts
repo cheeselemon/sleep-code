@@ -43,7 +43,7 @@ export interface OpenTaskRef {
 
 // ── Prompt ───────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a long-term memory filter. Your job: decide if a message contains knowledge worth remembering MONTHS from now.
+const SYSTEM_PROMPT = `You are a ruthless long-term memory filter. You REJECT 80%+ of messages. Only knowledge worth remembering 6 MONTHS from now survives.
 
 ## Core Principle — Think like the human brain
 
@@ -54,84 +54,123 @@ The brain forgets 90% of a conversation within minutes. What survives:
 - WHO decided/committed to WHAT (Social Memory)
 - SURPRISES and FAILURES — things that broke expectations
 
-## STORE (shouldStore: true) — only these patterns
+## STORE (shouldStore: true) — ONLY these, nothing else
 
-1. **Decisions with substance**: concrete choice + what was chosen
-   - "벡터DB를 LanceDB로 확정, Ollama로 로컬 임베딩 처리" ✅
-2. **Discovered facts / lessons learned**: new knowledge gained from experience
-   - "SDK resume 시 --session-id를 함께 쓰면 크래시 발생" ✅
-3. **Architecture / design rules**: reusable technical knowledge
-   - "distill은 Claude SDK haiku, 임베딩은 Ollama 유지" ✅
-4. **Preferences / constraints**: user's ongoing preferences
-   - "API SDK 비용 우려로 Claude Code 세션 스폰 방식 선호" ✅
-5. **Commitments / ownership**: who will do what
-   - "인증 모듈은 CEO가 직접 처리하기로 결정" ✅
-6. **Corrections / updates**: explicit change to prior knowledge
-   - "중복 임계값 0.85에서 0.90으로 상향 조정" ✅
-7. **Surprising failures**: unexpected outcomes worth avoiding next time
-   - "Turbopack에서 extensionAlias 미지원으로 webpack 설정 충돌 발생" ✅
+1. **CEO/human decisions**: concrete choice made by a human with authority
+   - "벡터DB를 LanceDB로 확정" ✅
+   - "환불 위약금은 계약일 기준 30일 이내면 면제" ✅
+2. **Project-specific lessons**: knowledge UNIQUE to this project, not in any docs
+   - "SDK resume 시 --session-id를 함께 쓰면 크래시 발생" ✅ (project-specific bug)
+   - "Prisma include는 N+1 없음" ❌ (general knowledge, in Prisma docs)
+3. **Architecture rules**: how THIS project is built (not general tech facts)
+   - "distill은 Claude SDK sonnet, 임베딩은 Ollama 유지" ✅
+4. **User preferences / constraints**: ongoing rules from the human
+   - "as any 캐스팅 사용 금지" ✅
+5. **Corrections that change prior knowledge**: explicit override of something stored
+   - "중복 임계값 0.85에서 0.90으로 상향" ✅
+6. **Surprising failures**: unexpected outcomes worth avoiding next time
+   - "Turbopack에서 extensionAlias 미지원으로 충돌" ✅
 
-## SKIP (shouldStore: false) — these are NOISE
+## SKIP (shouldStore: false) — when in doubt, SKIP
 
-1. **Process narration**: "확인 중", "조사하겠습니다", "시작했다", "진행 중", "커밋 완료"
-2. **Meta-descriptions without substance**: "SnoopDuck 요청", "Claude가 계획을 세움", "Codex가 리뷰 수행"
-   - Ask yourself: "요청한 게 뭔데? 계획이 뭔데? 리뷰 결과가 뭔데?" → if no answer, SKIP
-3. **Routine confirmations**: "OK", "ㅇㅇ" (after casual chat), "알겠습니다", "진행해"
-4. **Intermediate deliberation**: "A할까 B할까?" → SKIP (only store the FINAL choice)
-5. **Repetition of known facts**: if it's already common knowledge or was decided before, SKIP
-6. **Completed one-off tasks**: "npm install 완료", "파일 생성함", "테스트 통과" → ephemeral, SKIP
-7. **Agent status updates**: "Claude/Codex: 확인했습니다", "검증 완료", "reviewing now"
-8. **Emotional reactions without content**: "짜증나", "좋아!", "대박" → no extractable knowledge
+1. **Process narration**: "확인 중", "조사하겠습니다", "진행 중", "커밋 완료"
+2. **Meta-descriptions**: "SnoopDuck 요청", "Claude가 계획을 세움" → WHAT was the plan?
+3. **Routine confirmations**: "OK", "ㅇㅇ", "알겠습니다", "진행해"
+4. **Intermediate deliberation**: "A할까 B할까?" → wait for the FINAL choice
+5. **General technical knowledge**: framework/library behavior available in official docs
+   - "Prisma include는 batch query로 처리" ❌ (Prisma docs에 있음)
+   - "Next.js App Router는 서버 컴포넌트 기본" ❌ (Next.js docs에 있음)
+6. **Intermediate progress reports**: "리뷰 통과", "범위 확정", "데이터 경로 확인"
+   → store only the FINAL deliverable, not intermediate checkpoints
+7. **Setup/config instructions**: installation steps, environment config
+   → these belong in docs, not in memory
+8. **Completed one-off tasks**: "파일 생성함", "테스트 통과" → ephemeral
+9. **Agent status updates**: "확인했습니다", "검증 완료", "reviewing now"
+10. **Emotional reactions**: "짜증나", "좋아!" → no extractable knowledge
+11. **Code implementation details**: specific code changes, file edits, refactoring steps
+    → code is in git, not in memory
 
-## The "6-Month Test"
+## Deduplication — CRITICAL
 
-Before storing, ask: "6개월 후에 이 정보가 필요할까?"
-- "LanceDB를 벡터DB로 확정" → YES, 6개월 후에도 이 아키텍처 결정을 알아야 함
-- "SnoopDuck 지시에 따라 리뷰 수행" → NO, 누가 뭘 시켰는지는 내일도 불필요
-- "커밋 완료" → NO, 커밋은 git log에 있음
+Check "Already stored memories" before storing:
+1. Same topic + same conclusion → SKIP (already known)
+2. Same topic + more detail → UPDATE (supersede the old one)
+3. Same topic + contradicts old → UPDATE with correction
+4. Genuinely NEW topic or insight → STORE
+
+**Default to SKIP if in doubt. Overstoring is worse than missing something.**
+
+## Priority scale (be strict)
+
+- 9-10: CEO decisions, architecture changes, business rules
+- 7-8: implementation direction, major bugs, team rules
+- 5-6: useful but uncertain if needed in 6 months → reconsider SKIP
+- 1-4: almost certainly should be SKIP instead
+If priority < 5, reconsider: should this be SKIP?
+
+## Final gate — before outputting shouldStore:true
+
+"6개월 후 새 세션에서 이 프로젝트를 처음 보는 개발자가 이 정보를 필요로 할까?"
+- YES → store
+- MAYBE → SKIP (maybe = no)
+- NO → SKIP
 
 ## distilled text rules
 
 - Extract the KNOWLEDGE, not describe the conversation event
-- BAD: "SnoopDuck 요청하여 조사 수행" → WHO requested WHAT investigation about WHAT?
-- BAD: "Claude가 구현 계획을 작성함" → WHAT plan? WHAT will be implemented?
-- BAD: "Codex 리뷰 완료" → WHAT was the finding?
-- GOOD: "환불 로직에서 위약금은 계약일 기준 30일 이내면 면제"
-- GOOD: "SDK resume 시 sessionId와 resume을 동시에 쓰면 크래시 — resume만 단독 사용해야 함"
-- GOOD: "PM2로 메모리 MCP 서버를 별도 프로세스로 실행하기로 확정"
+- BAD: "SnoopDuck 요청하여 조사 수행" → SKIP (meta-description)
+- BAD: "Claude가 구현 계획을 작성함" → SKIP (meta-description)
+- BAD: "CPI-270 리뷰 통과" → SKIP (intermediate progress)
+- GOOD: "환불 위약금은 계약일 기준 30일 이내면 면제"
+- GOOD: "SDK resume 시 resume만 단독 사용해야 함 (sessionId 병용 시 크래시)"
 - Max 200 chars, 1-2 sentences
-- Write in the SAME LANGUAGE as the original message (Korean or English)
+- Write in the SAME LANGUAGE as the original message
 - NEVER output Chinese or Japanese text
 
 ## Fields
 
 - kind: fact | task | observation | proposal | feedback | dialog_summary | decision
-- priority: 0-10 (10 = critical architecture decision, 0 = trivial)
-- topicKey: short English tag (e.g., "vector-db", "session-recovery"). Reuse existing keys when possible.
-- speaker: who MADE the decision (user/claude/codex/system), not who spoke the current message
-- memoryAction: "create" (new info), "update" (corrects/changes existing info), or "resolve_task" (completes an open task)
-  - Update signals: "→", "에서...로", "변경", "정정", "취소", "수정", "아니고", "대신", "instead", "renamed", "actually"
-  - resolve_task: message indicates one or more open tasks are DONE. Set resolveTaskIds to the task IDs.
-  - Default to "create" if unsure
+- priority: 0-10 (strict scale above)
+- topicKey: short English tag. Reuse existing keys when possible.
+- speaker: who MADE the decision (user/claude/codex/system)
+- memoryAction: "create" | "update" | "resolve_task"
+  - update: corrects/changes existing memory (supersede). Signals: "→", "변경", "정정", "취소", "수정", "대신"
+  - resolve_task: completes open task. Set resolveTaskIds.
+  - Default: "create"
 - updateConfidence: 0.0-1.0
-- anchorTerms: key entities (names, file paths, numbers, dates, tool names)
-- resolveTaskIds: array of task IDs from the open task list that this message completes (only when memoryAction is "resolve_task")
+- anchorTerms: key entities (names, file paths, numbers, dates)
+- resolveTaskIds: task IDs completed (only when memoryAction is "resolve_task")
 
 ## Response format
 
-Respond ONLY with valid JSON (no markdown, no explanation):
+JSON only (no markdown):
 {"shouldStore": boolean, "distilled": "string", "kind": "string", "priority": number, "topicKey": "string", "speaker": "string", "memoryAction": "create"|"update"|"resolve_task", "updateConfidence": number, "anchorTerms": ["string"], "resolveTaskIds": ["string"]}
 
-Example STORE:
-{"shouldStore": true, "distilled": "벡터DB를 LanceDB로 확정, 임베딩은 Ollama qwen3-embedding:4b 사용", "kind": "decision", "priority": 8, "topicKey": "vector-db", "speaker": "user", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": ["LanceDB", "qwen3-embedding"], "resolveTaskIds": []}
-
-Example RESOLVE_TASK (message indicates a task from the open task list is done — store the fact AND resolve the task):
-{"shouldStore": true, "distilled": "sdkSessionId 오염 버그 수정 완료, 테스트 통과 확인", "kind": "fact", "priority": 7, "topicKey": "sdk-session", "speaker": "claude", "memoryAction": "resolve_task", "updateConfidence": 0.0, "anchorTerms": ["sdkSessionId"], "resolveTaskIds": ["task-id-here"]}
-
-Example SKIP:
-{"shouldStore": false, "distilled": "", "kind": "observation", "priority": 0, "topicKey": "", "speaker": "system", "memoryAction": "create", "updateConfidence": 0.0, "anchorTerms": [], "resolveTaskIds": []}
-
 IMPORTANT: Always include ALL 10 fields.`;
+
+// ── 2nd Pass Review Prompt ──────────────────────────────────
+
+const REVIEW_PROMPT = `You are a strict quality reviewer for a memory distillation system.
+You receive the original messages and their proposed classifications from Pass 1.
+Your job: REJECT anything that shouldn't be stored. You are the final gate.
+
+## Review each STORE item against these criteria:
+
+1. **6-Month Test**: Would a new developer need this info 6 months from now? If not → flip to SKIP
+2. **Deduplication**: Is this essentially the same as an existing memory? → flip to SKIP
+3. **General knowledge**: Is this in official docs for the framework/library? → flip to SKIP
+4. **Progress report**: Is this an intermediate step, not a final conclusion? → flip to SKIP
+5. **Kind check**: Is a completion report classified as "task"? → flip kind to "fact" or SKIP
+6. **Priority inflation**: Is priority >= 7 justified? If not → lower it or SKIP
+
+## Response format
+
+Return a JSON array. For each item:
+- If the classification is correct: return as-is
+- If it should be SKIP: set shouldStore to false
+- If kind/priority needs correction: fix it
+
+JSON array only, same format as input.`;
 
 // ── CJK Detection ───────────────────────────────────────────
 
@@ -239,6 +278,88 @@ export class DistillService {
 
     // Fallback: distill individually
     return this.distillIndividually(items);
+  }
+
+  /**
+   * 2nd pass: review distill results and reject/fix misclassifications.
+   * Only reviews items that were marked shouldStore=true.
+   */
+  async reviewBatch(
+    items: BatchDistillItem[],
+    results: BatchDistillResult[],
+    existingMemories: ExistingMemoryRef[],
+  ): Promise<BatchDistillResult[]> {
+    const toReview = results.filter(r => r.result.shouldStore);
+    if (toReview.length === 0) return results;
+
+    // Build review prompt with original messages + pass 1 results + existing memories
+    const reviewItems = toReview.map(r => {
+      const original = items.find(i => i.id === r.id);
+      return {
+        id: r.id,
+        originalMessage: original?.message.content?.slice(0, 200) ?? '',
+        pass1: {
+          shouldStore: r.result.shouldStore,
+          distilled: r.result.distilled,
+          kind: r.result.kind,
+          priority: r.result.priority,
+          topicKey: r.result.topicKey,
+          memoryAction: r.result.memoryAction,
+        },
+      };
+    });
+
+    let prompt = `Review these Pass 1 classifications. Reject or fix as needed.\n\n`;
+    prompt += `Pass 1 results to review:\n${JSON.stringify(reviewItems, null, 2)}\n`;
+
+    if (existingMemories.length > 0) {
+      const memList = existingMemories.slice(0, 30).map(
+        (m) => `  - [${m.kind}/${m.topicKey}] (p:${m.priority}) ${m.text.slice(0, 80)}`,
+      );
+      prompt += `\nAlready stored memories:\n${memList.join('\n')}\n`;
+    }
+
+    prompt += `\nReturn JSON array with corrected items (same format, include id).`;
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: REVIEW_PROMPT },
+      { role: 'user', content: prompt },
+    ];
+
+    try {
+      const raw = await this.chat.chat(messages);
+      let jsonStr = raw.trim();
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim();
+
+      const parsed = JSON.parse(jsonStr);
+      if (!Array.isArray(parsed)) throw new Error('Not an array');
+
+      let flipped = 0;
+      const resultMap = new Map(results.map(r => [r.id, r]));
+
+      for (const reviewed of parsed) {
+        const existing = resultMap.get(reviewed.id);
+        if (!existing) continue;
+
+        if (reviewed.shouldStore === false && existing.result.shouldStore === true) {
+          existing.result.shouldStore = false;
+          flipped++;
+        } else if (reviewed.shouldStore === true) {
+          // Apply corrections (kind, priority)
+          if (reviewed.kind) existing.result.kind = reviewed.kind;
+          if (reviewed.priority !== undefined) existing.result.priority = reviewed.priority;
+          if (reviewed.distilled) existing.result.distilled = reviewed.distilled;
+        }
+      }
+
+      const finalStored = results.filter(r => r.result.shouldStore).length;
+      log.info({ reviewed: toReview.length, flipped, finalStored }, '2nd pass review complete');
+      return results;
+    } catch (err) {
+      log.warn({ err }, '2nd pass review failed, using pass 1 results');
+      return results;
+    }
   }
 
   private buildBatchPrompt(items: BatchDistillItem[]): string {

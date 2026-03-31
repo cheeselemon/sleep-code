@@ -370,8 +370,14 @@ export class BatchDistillRunner {
             existingMemories: memRefs,
           }));
 
-          // Run distill for this project
-          const distillResults = await this.distill.distillBatch(distillItems);
+          // Pass 1: Distill
+          let distillResults = await this.distill.distillBatch(distillItems);
+
+          // Pass 2: Review (only if there are STORE items)
+          const storeCount = distillResults.filter(r => r.result.shouldStore).length;
+          if (storeCount > 0) {
+            distillResults = await this.distill.reviewBatch(distillItems, distillResults, memRefs);
+          }
 
           // Process results
           for (const dr of distillResults) {
