@@ -205,6 +205,144 @@ function createMcpServerWithTools(memoryService: MemoryService): McpServer {
   return server;
 }
 
+// ── Internal API Router ─────────────────────────────────────
+
+type InternalHandler = (body: any, memoryService: MemoryService) => Promise<unknown>;
+
+const WRITE_HANDLERS: Record<string, InternalHandler> = {
+  '/internal/store': async (body, ms) => {
+    const id = await ms.store(body.text, body.options);
+    return { id };
+  },
+  '/internal/storeIfNew': async (body, ms) => {
+    const id = await ms.storeIfNew(body.text, body.options);
+    return { id };
+  },
+  '/internal/markSuperseded': async (body, ms) => {
+    await ms.markSuperseded(body.oldId, body.newId);
+  },
+  '/internal/updateStatus': async (body, ms) => {
+    await ms.updateStatus(body.id, body.status);
+  },
+  '/internal/remove': async (body, ms) => {
+    await ms.remove(body.id);
+  },
+  '/internal/updateFields': async (body, ms) => {
+    await ms.updateFields(body.id, body.fields);
+  },
+  '/internal/undoSupersede': async (body, ms) => {
+    await ms.undoSupersede(body.id);
+  },
+  '/internal/snooze': async (body, ms) => {
+    await ms.snooze(body.id, body.until);
+  },
+  '/internal/reinforcePriority': async (body, ms) => {
+    await ms.reinforcePriority(body.id, body.currentPriority);
+  },
+};
+
+const QUERY_OPS: Record<string, InternalHandler> = {
+  search: async (body, ms) => ms.search(body.query, body),
+  getByProject: async (body, ms) => ms.getByProject(body.project, body),
+  getAllWithVectors: async (body, ms) => ms.getAllWithVectors(body.project),
+  listProjects: async (_body, ms) => ms.listProjects(),
+  getTopicKeys: async (body, ms) => ms.getTopicKeys(body.project),
+  searchByVector: async (body, ms) => ms.searchByVector(body.vector, body),
+  findSupersedeCandidate: async (body, ms) => {
+    const { vector, ...options } = body;
+    return ms.findSupersedeCandidate(vector, options);
+  },
+  embedForSearch: async (body, ms) => ms.embedForSearch(body.text),
+  countByProject: async (body, ms) => ms.countByProject(body.project),
+};
+
+function parseBody(req: import('node:http').IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString()));
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function handleInternalRequest(
+  req: import('node:http').IncomingMessage,
+  res: import('node:http').ServerResponse,
+  memoryService: MemoryService,
+): Promise<boolean> {
+  const url = req.url || '';
+
+  // Health check (GET)
+  if (url === '/internal/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    return true;
+  }
+
+  // Not an internal route — let MCP handle it
+  if (!url.startsWith('/internal/')) {
+    return false;
+  }
+
+  // Internal routes only accept POST (except /health which is GET above)
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `Method ${req.method} not allowed on ${url}` }));
+    return true;
+  }
+
+  try {
+    const body = await parseBody(req);
+
+    // Write endpoints
+    const writeHandler = WRITE_HANDLERS[url];
+    if (writeHandler) {
+      const result = await writeHandler(body, memoryService);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result ?? { ok: true }));
+      return true;
+    }
+
+    // Query endpoint
+    if (url === '/internal/query') {
+      const { op, ...params } = body;
+      const queryHandler = QUERY_OPS[op];
+      if (!queryHandler) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Unknown query op: ${op}` }));
+        return true;
+      }
+      const result = await queryHandler(params, memoryService);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+      return true;
+    }
+
+    // Composite endpoints (stubs for future steps)
+    if (url === '/internal/distill-batch' || url === '/internal/consolidate' || url === '/internal/generate-digest') {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not implemented yet' }));
+      return true;
+    }
+
+    // Unknown internal route
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `Unknown internal route: ${url}` }));
+    return true;
+  } catch (err: any) {
+    const status = err.message === 'Invalid JSON' ? 400 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message || 'Internal server error' }));
+    return true;
+  }
+}
+
 // ── Main ────────────────────────────────────────────────────
 
 async function main() {
@@ -216,17 +354,26 @@ async function main() {
   const memoryService = new MemoryService(embeddingService);
   await memoryService.initialize();
 
-  // ── HTTP Transport (stateless: new server per request) ──
+  // ── HTTP Server ──
+  // Routes:
+  //   /internal/*  → Internal API (Memory Authority)
+  //   everything else → MCP transport
 
   const PORT = Number(process.env.MCP_PORT) || 24242;
 
   createServer(async (req, res) => {
+    // Internal API routes (write/read/health)
+    const handled = await handleInternalRequest(req, res, memoryService);
+    if (handled) return;
+
+    // MCP transport (all other routes)
     const server = createMcpServerWithTools(memoryService);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     await transport.handleRequest(req, res);
   }).listen(PORT, '127.0.0.1', () => {
     console.error(`sleep-code-memory MCP server listening on http://127.0.0.1:${PORT}/mcp`);
+    console.error(`  Internal API: http://127.0.0.1:${PORT}/internal/*`);
   });
 }
 
