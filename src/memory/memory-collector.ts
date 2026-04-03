@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
-import { MemoryService, type MemoryKind, type MemorySpeaker } from './memory-service.js';
+import { type MemoryKind, type MemorySpeaker } from './memory-service.js';
+import type { IMemoryStore } from './batch-distill-runner.js';
 import { DistillService, type SlidingMessage } from './distill-service.js';
 import type { BatchDistillRunner, QueuedMessage } from './batch-distill-runner.js';
 
@@ -27,7 +28,7 @@ export interface MemoryCollectorOptions {
 // ── Collector ────────────────────────────────────────────────
 
 export class MemoryCollector {
-  private memory: MemoryService;
+  private memory: IMemoryStore;
   private distill: DistillService;
   private defaultProject: string;
   private windowSize: number;
@@ -45,7 +46,7 @@ export class MemoryCollector {
   private static TOPIC_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   constructor(
-    memory: MemoryService,
+    memory: IMemoryStore,
     distill: DistillService,
     options?: MemoryCollectorOptions,
   ) {
