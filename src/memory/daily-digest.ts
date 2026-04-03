@@ -15,7 +15,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { logger } from '../utils/logger.js';
-import { type MemoryService } from './memory-service.js';
+import type { IMemoryStore } from './batch-distill-runner.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
 import type { ConsolidationReport } from './consolidation-service.js';
@@ -83,7 +83,7 @@ export interface DigestEvents {
 // ── Runner ───────────────────────────────────────────────────
 
 export class DailyDigestRunner {
-  private memory: MemoryService;
+  private memory: IMemoryStore;
   private events: DigestEvents;
   private consolidation: import('./consolidation-service.js').ConsolidationService | null = null;
   private checkTimer: NodeJS.Timeout | null = null;
@@ -100,7 +100,7 @@ export class DailyDigestRunner {
 
   private configUnsubscribe: (() => void) | null = null;
 
-  constructor(memory: MemoryService, events: DigestEvents) {
+  constructor(memory: IMemoryStore, events: DigestEvents) {
     this.memory = memory;
     this.events = events;
 
