@@ -1,6 +1,18 @@
 import { logger } from '../utils/logger.js';
-import type { MemoryService } from './memory-service.js';
+import type { MemoryRecord, MemoryStatus, MemorySearchResult } from './memory-service.js';
 import { isCompletionReport } from './task-rules.js';
+
+/**
+ * Subset of MemoryService / MemoryAuthorityClient methods used by ConsolidationService.
+ * Both classes satisfy this interface.
+ */
+export interface IConsolidationMemory {
+  listProjects(): Promise<string[]>;
+  getAllWithVectors(project: string): Promise<MemoryRecord[]>;
+  searchByVector(vector: number[], options: { project?: string; limit?: number; minScore?: number }): Promise<MemorySearchResult[]>;
+  remove(id: string): Promise<void>;
+  updateStatus(id: string, status: MemoryStatus): Promise<void>;
+}
 
 const log = logger.child({ component: 'consolidation' });
 
@@ -66,9 +78,9 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 // ── Service ──────────────────────────────────────────────────
 
 export class ConsolidationService {
-  private memory: MemoryService;
+  private memory: IConsolidationMemory;
 
-  constructor(memory: MemoryService) {
+  constructor(memory: IConsolidationMemory) {
     this.memory = memory;
   }
 

@@ -7,13 +7,13 @@
  */
 
 import { logger } from '../utils/logger.js';
-import type { MemoryService } from './memory-service.js';
 import { type MemoryKind, type MemorySpeaker, type MemoryUnit, type MemoryStatus } from './memory-service.js';
 import type { StoreOptions } from './memory-authority-client.js';
 import { DistillService, type BatchDistillItem, type BatchDistillResult, type SlidingMessage, type OpenTaskRef, type ExistingMemoryRef } from './distill-service.js';
 import { ChatService, ClaudeSdkChatProvider } from './chat-provider.js';
 import { getMemoryConfig, onConfigChange, type MemoryConfig } from './memory-config.js';
-import { ConsolidationService, type ConsolidationReport } from './consolidation-service.js';
+import { ConsolidationService, type IConsolidationMemory, type ConsolidationReport } from './consolidation-service.js';
+import type { MemorySearchResult } from './memory-service.js';
 
 const log = logger.child({ component: 'batch-distill' });
 
@@ -23,19 +23,18 @@ const log = logger.child({ component: 'batch-distill' });
  */
 /**
  * Subset of MemoryService / MemoryAuthorityClient methods that BatchDistillRunner
- * directly calls. Both classes satisfy this interface.
- * NOTE: ConsolidationService needs additional methods (listProjects, getAllWithVectors,
- * remove, searchByVector) — those are handled via `as MemoryService` cast until Step 4.
+ * directly calls. Extends IConsolidationMemory so ConsolidationService can also
+ * accept this type without unsafe casts.
  */
-export interface IMemoryStore {
+export interface IMemoryStore extends IConsolidationMemory {
   store(text: string, options: StoreOptions): Promise<string>;
   storeIfNew(text: string, options: Omit<StoreOptions, 'vector' | 'supersedesId'>): Promise<string | null>;
   markSuperseded(oldId: string, newId: string): Promise<void>;
-  updateStatus(id: string, status: MemoryStatus): Promise<void>;
   getByProject(project: string, options?: { statuses?: MemoryStatus[]; limit?: number; includeSuperseded?: boolean }): Promise<MemoryUnit[]>;
   getTopicKeys(project: string): Promise<string[]>;
   embedForSearch(text: string): Promise<number[]>;
   findSupersedeCandidate(vector: number[], options: { project: string; topicKey?: string; anchorTerms?: string[]; kind?: MemoryKind }): Promise<{ id: string; score: number } | null>;
+  search(query: string, options?: { project?: string; limit?: number; includeSuperseded?: boolean }): Promise<MemorySearchResult[]>;
 }
 
 // ── Types ────────────────────────────────────────────────────
@@ -132,11 +131,8 @@ export class BatchDistillRunner {
     this.globalEnabled = config.distill.enabled;
     this.consolidationIntervalMs = config.consolidation.intervalMs;
     this.consolidationEnabled = config.consolidation.enabled;
-    // TEMPORARY CAST: ConsolidationService requires full MemoryService (listProjects,
-    // getAllWithVectors, remove, searchByVector). This cast is unsafe if memory is
-    // MemoryAuthorityClient — will be removed in Step 4 when ConsolidationService
-    // moves to the Authority process.
-    this.consolidation = new ConsolidationService(memory as unknown as MemoryService);
+    // IMemoryStore extends IConsolidationMemory, so this is type-safe.
+    this.consolidation = new ConsolidationService(memory);
 
     // Create SDK chat provider
     this.chatProvider = new ClaudeSdkChatProvider({

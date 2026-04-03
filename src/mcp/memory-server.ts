@@ -20,6 +20,7 @@ import {
   type MemorySearchResult,
   type MemoryUnit,
 } from '../memory/index.js';
+import { ConsolidationService } from '../memory/consolidation-service.js';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -324,8 +325,20 @@ async function handleInternalRequest(
       return true;
     }
 
+    // Consolidation endpoint — runs ConsolidationService inside Authority process
+    if (url === '/internal/consolidate') {
+      const consolidation = new ConsolidationService(memoryService);
+      const report = await consolidation.consolidate({
+        project: body.project,
+        dryRun: body.dryRun ?? false,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(report));
+      return true;
+    }
+
     // Composite endpoints (stubs for future steps)
-    if (url === '/internal/distill-batch' || url === '/internal/consolidate' || url === '/internal/generate-digest') {
+    if (url === '/internal/distill-batch' || url === '/internal/generate-digest') {
       res.writeHead(501, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not implemented yet' }));
       return true;
