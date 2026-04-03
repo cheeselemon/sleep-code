@@ -207,6 +207,10 @@ Discord-only. Handles:
 - **Control panel**: `#sleep-code-control` channel with persistent Interrupt All button (interrupts all running SDK/PTY/Codex sessions)
 - **Token usage**: Per-turn context usage and cost displayed after each SDK response
 - **Session start pin**: SDK new thread creation pins the "Session Starting" message
+- **Message debounce**: User messages batched with 3s window before sending to agent (multi-message input)
+- **Network watchdog**: Polls IP fingerprint every 5s, auto-recovers on VPN/WiFi switch (10s grace → PM2 restart)
+- **Session auto-restart**: Resume failure (expired conversation) → auto-creates fresh session with same CWD
+- **Digest Done buttons**: Mark tasks as resolved directly from digest messages
 
 ## Discord Slash Commands
 

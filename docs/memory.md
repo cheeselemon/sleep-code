@@ -168,8 +168,8 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
 {
   "distill": {
     "enabled": true,
-    "model": "haiku",
-    "batchMaxMessages": 20,
+    "model": "sonnet",
+    "batchMaxMessages": 30,
     "batchIntervalMs": 1800000,
     "sessionRefreshMs": 7200000,
     "skipVerbosity": "count",
@@ -182,7 +182,7 @@ All memory settings in `~/.sleep-code/memory-config.json` (hot-reloaded on chang
   },
   "digest": {
     "enabled": true,
-    "schedule": ["10:00", "16:00"],
+    "schedule": ["10:00", "16:00", "21:00"],
     "timezone": "Asia/Seoul",
     "model": "sonnet"
   }

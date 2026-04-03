@@ -66,8 +66,8 @@ export interface MemoryConfig {
 const DEFAULT_CONFIG: MemoryConfig = {
   distill: {
     enabled: true,
-    model: 'haiku',
-    batchMaxMessages: 20,
+    model: 'sonnet',
+    batchMaxMessages: 30,
     batchIntervalMs: 30 * 60 * 1000,   // 30 minutes
     sessionRefreshMs: 2 * 60 * 60 * 1000, // 2 hours
     skipVerbosity: 'count',
@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: MemoryConfig = {
   },
   digest: {
     enabled: true,
-    schedule: ['10:00', '16:00'],
+    schedule: ['10:00', '16:00', '21:00'],
     timezone: 'Asia/Seoul',
     model: 'sonnet',
   },

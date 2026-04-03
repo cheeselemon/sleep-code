@@ -172,9 +172,9 @@ cd explorer && npm run dev
 When the Discord bot starts with memory enabled, it automatically:
 
 - Creates a `#sleep-code-memory` channel
-- Starts the **batch distill** pipeline (Claude SDK haiku, processes messages in batches)
-- Starts the **consolidation scheduler** (merges duplicates every 24h)
-- Starts the **daily digest** (briefings at scheduled times, default 10:00 + 16:00 KST)
+- Starts the **batch distill** pipeline (Claude SDK sonnet, processes messages in project-separated batches with 2nd-pass review)
+- Starts the **consolidation scheduler** (merges duplicates every 24h + pre-digest)
+- Starts the **daily digest** (briefings at scheduled times, default 10:00, 16:00, 21:00 KST)
 
 ### Configuration
 
@@ -182,9 +182,9 @@ All memory settings live in `~/.sleep-code/memory-config.json` (hot-reloaded on 
 
 ```json
 {
-  "distill": { "enabled": true, "model": "haiku", "batchMaxMessages": 20, "batchIntervalMs": 1800000 },
+  "distill": { "enabled": true, "model": "sonnet", "batchMaxMessages": 30, "batchIntervalMs": 1800000 },
   "consolidation": { "enabled": true, "intervalMs": 86400000 },
-  "digest": { "enabled": true, "schedule": ["10:00", "16:00"], "timezone": "Asia/Seoul", "model": "sonnet" }
+  "digest": { "enabled": true, "schedule": ["10:00", "16:00", "21:00"], "timezone": "Asia/Seoul", "model": "sonnet" }
 }
 ```
 

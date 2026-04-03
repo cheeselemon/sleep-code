@@ -6,13 +6,13 @@
 src/
 ├── cli/                    # CLI entry point and commands
 │   ├── index.ts            # Main CLI entry (commander.js)
-│   ├── run.ts              # Session runner (PTY + socket)
-│   ├── hook.ts             # Permission hook handler
-│   ├── memory.ts           # Memory CLI commands
-│   └── {telegram,discord,slack}.ts
+│   ├── run.ts              # Session runner (PTY + socket, CJK-safe chunked input, reconnect backoff)
+│   ├── hook.ts             # Claude Code permission hook handler (writes to ~/.claude/settings.json)
+│   ├── memory.ts           # Memory CLI commands (search, store, consolidate, retag, supersede, graph)
+│   └── {telegram,discord,slack}.ts  # Platform-specific setup/run
 ├── memory/                 # Semantic memory pipeline
 │   ├── memory-service.ts       # LanceDB store, search, dedup, supersede
-│   ├── memory-collector.ts     # Message ingestion with sliding window
+│   ├── memory-collector.ts     # Message ingestion with sliding window, batch delegation
 │   ├── distill-service.ts      # LLM classifier (store/skip/update/resolve_task, open task injection, 2nd-pass review)
 │   ├── batch-distill-runner.ts # Queue + timer + SDK session + consolidation scheduler + task resolution
 │   ├── daily-digest.ts         # Scheduled digest briefings (Claude SDK sonnet, pre-consolidation)
@@ -23,7 +23,7 @@ src/
 │   ├── embedding-provider.ts   # Ollama embedding abstraction
 │   └── chat-provider.ts        # LLM chat abstraction (Ollama/Claude CLI/Claude SDK)
 ├── mcp/
-│   └── memory-server.ts        # MCP server (HTTP transport)
+│   └── memory-server.ts        # MCP server (HTTP transport, memory tools)
 ├── discord/
 │   ├── discord-app.ts          # Discord.js app, event routing, memory system init
 │   ├── channel-manager.ts      # Thread/channel management, session mapping (uses SessionStore)
@@ -34,9 +34,9 @@ src/
 │   ├── memory-reporter.ts      # #sleep-code-memory channel, daily/weekly threads
 │   ├── state.ts                # Shared state (permissions, YOLO, routing)
 │   ├── utils.ts                # Message routing, attachment handling
-│   ├── commands/               # Slash command handlers
+│   ├── commands/               # Slash command handlers (claude, codex, memory, settings, etc.)
 │   ├── handlers/               # SessionManager callback handlers
-│   ├── interactions/           # Button, select menu, modal handlers (ask-question-factory.ts)
+│   ├── interactions/           # Button, select menu, modal handlers (ask-question-factory.ts for shared logic)
 │   ├── claude-sdk/
 │   │   ├── claude-sdk-session-manager.ts  # SDK session lifecycle, query stream
 │   │   └── claude-sdk-handlers.ts         # SDK event → Discord message handlers
@@ -44,13 +44,18 @@ src/
 │       ├── codex-session-manager.ts
 │       └── codex-handlers.ts
 ├── shared/
-│   └── session-manager.ts  # JSONL watching (shared across platforms)
+│   └── session-manager.ts  # JSONL watching, session tracking (shared by all platforms)
 ├── slack/
-│   └── slack-app.ts        # Slack Bolt app
+│   ├── slack-app.ts        # Slack Bolt app and event handlers
+│   └── session-manager.ts  # Stub (moved to src/shared/session-manager.ts)
 └── telegram/
-    └── telegram-app.ts     # grammY app
+    └── telegram-app.ts     # grammY app and event handlers
 
 explorer/                   # Memory Explorer web app (Next.js 16)
+├── src/app/                # Pages: dashboard, graph, memories
+├── src/app/api/            # API routes: projects, memories, search, graph, stats
+├── src/components/         # MemoryGraph (D3.js), MemoryTable, SearchBar
+└── src/lib/memory.ts       # MemoryService singleton
 ```
 
 ## Data Flow
