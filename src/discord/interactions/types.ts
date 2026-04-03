@@ -16,6 +16,7 @@ import type { DiscordState } from '../state.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
 import type { MemoryService } from '../../memory/memory-service.js';
+import type { MemoryAuthorityClient } from '../../memory/memory-authority-client.js';
 
 export interface InteractionContext {
   client: Client;
@@ -26,6 +27,7 @@ export interface InteractionContext {
   codexSessionManager?: CodexSessionManager;
   claudeSdkSessionManager?: ClaudeSdkSessionManager;
   memoryService?: MemoryService;
+  memoryClient?: MemoryAuthorityClient;
   state: DiscordState;
 }
 

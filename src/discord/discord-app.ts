@@ -59,6 +59,7 @@ import { BatchDistillRunner } from '../memory/batch-distill-runner.js';
 import { DailyDigestRunner } from '../memory/daily-digest.js';
 import { MemoryReporter } from './memory-reporter.js';
 import { loadMemoryConfig, ensureConfigFile, getMemoryConfig, stopConfigWatcher } from '../memory/memory-config.js';
+import { MemoryAuthorityClient } from '../memory/memory-authority-client.js';
 
 export interface DiscordAppOptions {
   config: DiscordConfig;
@@ -89,6 +90,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   let memoryReporter: MemoryReporter | undefined;
   let batchDistillRunner: BatchDistillRunner | undefined;
   let dailyDigestRunner: DailyDigestRunner | undefined;
+
+  // Memory Authority client — single writer for LanceDB via MCP server
+  const memoryClient = new MemoryAuthorityClient();
 
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
@@ -161,9 +165,27 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     get dailyDigestRunner() { return dailyDigestRunner; },
     get memoryReporter() { return memoryReporter; },
     get memoryService() { return options.memoryService; },
+    memoryClient,
   };
 
   const interactionContext: InteractionContext = commandContext;
+
+  // ── Message Debounce Queue ─────────────────────────────────
+  // Collect rapid-fire user messages (within 3s) and deliver as one batch
+  const DEBOUNCE_MS = 3000;
+  const messageQueue = new Map<string, {
+    messages: typeof import('discord.js').Message[];
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+
+  function flushMessageQueue(threadId: string) {
+    const entry = messageQueue.get(threadId);
+    if (!entry || entry.messages.length === 0) return;
+    messageQueue.delete(threadId);
+    processMessages(entry.messages).catch(err =>
+      log.error({ err, threadId }, 'Failed to process debounced messages'),
+    );
+  }
 
   // Handle messages in session channels (user sending input to Claude or Codex)
   client.on(Events.MessageCreate, async (message) => {
@@ -183,32 +205,82 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     // Check which agents are active in this thread
     const agents = channelManager.getAgentsInThread(threadId);
+    if (!agents.claude && !agents.codex) return;
+
+    // Quick interrupt commands bypass debounce
+    const INTERRUPT_COMMANDS = new Set(['!중지', '!halt', '!잠깐']);
+    if (INTERRUPT_COMMANDS.has(message.content.trim().toLowerCase())) {
+      // Flush any pending messages first
+      const pending = messageQueue.get(threadId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        flushMessageQueue(threadId);
+      }
+      processMessages([message]).catch(err =>
+        log.error({ err, threadId }, 'Failed to process interrupt message'),
+      );
+      return;
+    }
+
+    // Add to debounce queue
+    const existing = messageQueue.get(threadId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.messages.push(message);
+      existing.timer = setTimeout(() => flushMessageQueue(threadId), DEBOUNCE_MS);
+    } else {
+      messageQueue.set(threadId, {
+        messages: [message],
+        timer: setTimeout(() => flushMessageQueue(threadId), DEBOUNCE_MS),
+      });
+    }
+  });
+
+  // Process a batch of debounced messages
+  async function processMessages(messages: any[]) {
+    if (messages.length === 0) return;
+    const firstMessage = messages[0];
+    const threadId = firstMessage.channelId;
+
+    // Check which agents are active in this thread
+    const agents = channelManager.getAgentsInThread(threadId);
     const claudeSessionId = agents.claude;
     const codexSessionId = agents.codex;
 
-    // Not a session thread
     if (!claudeSessionId && !codexSessionId) return;
 
-    // Parse routing from raw user text (before attachment merging)
-    const directive = parseRoutingDirective(message.content, {
+    // Use first message for routing (determines @claude vs @codex)
+    const directive = parseRoutingDirective(firstMessage.content, {
       hasClaude: !!claudeSessionId,
       hasCodex: !!codexSessionId,
       lastActive: state.lastActiveAgent.get(threadId),
     });
-    const { target, cleanContent, invalidMention } = directive;
+    const { target, invalidMention } = directive;
 
-    log.info({ threadId, target, explicit: directive.explicit, contentPreview: cleanContent.slice(0, 50) }, 'Routing message');
+    // Merge all message contents
+    const allContents: string[] = [];
+    for (const msg of messages) {
+      const d = parseRoutingDirective(msg.content, {
+        hasClaude: !!claudeSessionId,
+        hasCodex: !!codexSessionId,
+        lastActive: state.lastActiveAgent.get(threadId),
+      });
+      allContents.push(d.cleanContent);
+    }
+    const cleanContent = allContents.join('\n');
+
+    log.info({ threadId, target, explicit: directive.explicit, msgCount: messages.length, contentPreview: cleanContent.slice(0, 80) }, 'Routing message');
 
     // Warn if @mention is in body but not at the start (multi-agent only)
     if (invalidMention && claudeSessionId && codexSessionId) {
-      await message.reply('💡 `@codex`/`@claude` must be the **first word** of your message to route it. Your message was sent to the default agent.').catch(() => {});
+      await firstMessage.reply('💡 `@codex`/`@claude` must be the **first word** of your message to route it. Your message was sent to the default agent.').catch(() => {});
     }
 
     // Reset agent-to-agent routing counter on user message
     state.agentRoutingCount.set(threadId, 0);
 
-    // React with checkmark to acknowledge receipt
-    await message.react('✅').catch(() => {});
+    // React with checkmark on all messages to acknowledge receipt
+    await Promise.all(messages.map(msg => msg.react('✅').catch(() => {})));
 
     // Collect user message for memory
     if (handlerContext.memoryCollector && cleanContent.trim()) {
@@ -218,51 +290,53 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const sessionCwd = claudeMapping?.cwd;
       handlerContext.memoryCollector.onMessage({
         speaker: 'user',
-        displayName: message.member?.displayName ?? message.author.username,
+        displayName: firstMessage.member?.displayName ?? firstMessage.author.username,
         content: cleanContent,
-        channelId: message.channel.parentId ?? message.channelId,
-        threadId: message.channelId,
+        channelId: firstMessage.channel.parentId ?? firstMessage.channelId,
+        threadId: firstMessage.channelId,
         project: sessionCwd ? basename(sessionCwd) : undefined,
       }).catch(err => log.error({ err }, 'Memory collect failed'));
     }
 
-    // Download any image attachments
+    // Download any image attachments from all messages
     const imagePaths: string[] = [];
     const textContents: string[] = [];
     const errors: string[] = [];
 
-    for (const [, attachment] of message.attachments) {
-      // Try image first
-      const filepath = await downloadAttachment(attachment);
-      if (filepath) {
-        imagePaths.push(filepath);
-        continue;
-      }
+    for (const msg of messages) {
+      for (const [, attachment] of msg.attachments) {
+        // Try image first
+        const filepath = await downloadAttachment(attachment);
+        if (filepath) {
+          imagePaths.push(filepath);
+          continue;
+        }
 
-      // Try text file
-      const textResult = await downloadTextAttachment(attachment);
-      if (textResult) {
-        if (textResult.success && textResult.content) {
-          textContents.push(`[File: ${textResult.filename}]\n${textResult.content}`);
-        } else if (textResult.error === 'size_exceeded') {
-          const sizeKB = Math.round((textResult.size || 0) / 1024);
-          errors.push(`\`${textResult.filename}\` is too large (${sizeKB}KB > 100KB limit)`);
-        } else {
-          errors.push(`Failed to download \`${textResult.filename}\``);
+        // Try text file
+        const textResult = await downloadTextAttachment(attachment);
+        if (textResult) {
+          if (textResult.success && textResult.content) {
+            textContents.push(`[File: ${textResult.filename}]\n${textResult.content}`);
+          } else if (textResult.error === 'size_exceeded') {
+            const sizeKB = Math.round((textResult.size || 0) / 1024);
+            errors.push(`\`${textResult.filename}\` is too large (${sizeKB}KB > 100KB limit)`);
+          } else {
+            errors.push(`Failed to download \`${textResult.filename}\``);
+          }
         }
       }
     }
 
     // Report errors if any
     if (errors.length > 0) {
-      await message.reply(`⚠️ ${errors.join('\n')}`);
+      await firstMessage.reply(`⚠️ ${errors.join('\n')}`);
       if (textContents.length === 0 && imagePaths.length === 0 && !cleanContent.trim()) {
         return; // Nothing to send
       }
     }
 
     // Prefix with Discord display name so agents can identify the human speaker
-    const displayName = message.member?.displayName ?? message.author.displayName ?? message.author.username;
+    const displayName = firstMessage.member?.displayName ?? firstMessage.author.displayName ?? firstMessage.author.username;
 
     // Build message with attachments
     let inputText = cleanContent;
@@ -331,9 +405,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       }
 
       if (interrupted) {
-        await message.react('🛑');
+        await firstMessage.react('🛑');
       } else {
-        await message.reply('⚠️ No active session to interrupt.');
+        await firstMessage.reply('⚠️ No active session to interrupt.');
       }
       return;
     }
@@ -341,7 +415,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     // Route to the correct agent
     if (target === 'codex') {
       if (!codexSessionManager) {
-        await message.reply('⚠️ Codex is not enabled.');
+        await firstMessage.reply('⚠️ Codex is not enabled.');
         return;
       }
 
@@ -353,14 +427,14 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           ? channelManager.getSession(claudeSessionId) ?? channelManager.getSdkSession(claudeSessionId)
           : null;
         if (!claudeMapping) {
-          await message.reply('⚠️ Cannot determine working directory for Codex.');
+          await firstMessage.reply('⚠️ Cannot determine working directory for Codex.');
           return;
         }
 
         try {
           const mapping = await channelManager.createCodexSession('pending', 'codex-auto', claudeMapping.cwd, threadId);
           if (!mapping) {
-            await message.reply('⚠️ Failed to create Codex session.');
+            await firstMessage.reply('⚠️ Failed to create Codex session.');
             return;
           }
           const isYolo = claudeSessionId ? state.yoloSessions.has(claudeSessionId) : false;
@@ -374,11 +448,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           // Notify Discord thread only — no PTY injection to avoid prompt injection suspicion
           // Claude learns about Codex via CLAUDE.md protocol (set up with /setup-multi-agent)
           try {
-            await message.channel.send(`**Codex joined this thread.** Model: \`${CODEX_MODEL}\`. Messages are prefixed with agent names.`);
+            await firstMessage.channel.send(`**Codex joined this thread.** Model: \`${CODEX_MODEL}\`. Messages are prefixed with agent names.`);
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Codex session');
-          await message.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
+          await firstMessage.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
           return;
         }
       }
@@ -386,7 +460,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const codexInput = `${displayName}: ${inputText}`;
       const sent = await codexSessionManager.sendInput(effectiveCodexSessionId, codexInput);
       if (!sent) {
-        await message.reply('⚠️ Failed to send input to Codex - session busy or ended.');
+        await firstMessage.reply('⚠️ Failed to send input to Codex - session busy or ended.');
       }
       state.lastActiveAgent.set(threadId, 'codex');
     } else {
@@ -400,7 +474,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           ? codexSessionManager?.getSession(codexSessionId)
           : null;
         if (!codexEntry) {
-          await message.reply('⚠️ No Claude session in this thread. Use `/claude start` or `/claude start-sdk` first.');
+          await firstMessage.reply('⚠️ No Claude session in this thread. Use `/claude start` or `/claude start-sdk` first.');
           return;
         }
 
@@ -409,7 +483,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           const sessionName = `claude-sdk-auto`;
           const mapping = await channelManager.createSdkSession(sdkSessionId, sessionName, codexEntry.cwd, threadId);
           if (!mapping) {
-            await message.reply('⚠️ Failed to create Claude SDK session.');
+            await firstMessage.reply('⚠️ Failed to create Claude SDK session.');
             return;
           }
 
@@ -421,11 +495,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           log.info({ sessionId: entry.id, cwd: codexEntry.cwd }, 'Auto-created Claude SDK session in existing thread');
 
           try {
-            await message.channel.send('**Claude joined this thread (SDK mode).** Messages are prefixed with agent names.');
+            await firstMessage.channel.send('**Claude joined this thread (SDK mode).** Messages are prefixed with agent names.');
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Claude SDK session');
-          await message.reply(`⚠️ Failed to start Claude SDK: ${(err as Error).message}`);
+          await firstMessage.reply(`⚠️ Failed to start Claude SDK: ${(err as Error).message}`);
           return;
         }
       }
@@ -491,7 +565,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
               if (result) {
                 sdkSession = result;
               } else {
-                await message.reply('⚠️ Failed to resume Claude session. Use `/claude start-sdk` to start a new one.');
+                await firstMessage.reply('⚠️ Failed to resume Claude session. Use `/claude start-sdk` to start a new one.');
                 return;
               }
             } finally {
@@ -505,7 +579,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         const claudeInput = `${displayName}: ${inputText}`;
         const sent = claudeSdkSessionManager.sendInput(effectiveClaudeSessionId, claudeInput);
         if (!sent) {
-          await message.reply('⚠️ Failed to send input to Claude SDK - session busy or ended.');
+          await firstMessage.reply('⚠️ Failed to send input to Claude SDK - session busy or ended.');
           return;
         }
 
@@ -515,7 +589,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
       const channel = channelManager.getSession(effectiveClaudeSessionId);
       if (!channel || channel.status === 'ended') {
-        await message.reply('⚠️ This Claude session has ended.');
+        await firstMessage.reply('⚠️ This Claude session has ended.');
         return;
       }
 
@@ -526,11 +600,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const sent = sessionManager.sendInput(effectiveClaudeSessionId, claudeInput);
       if (!sent) {
         state.discordSentMessages.delete(claudeInput.trim());
-        await message.reply('⚠️ Failed to send input - session not connected.');
+        await firstMessage.reply('⚠️ Failed to send input - session not connected.');
       }
       state.lastActiveAgent.set(threadId, 'claude');
     }
-  });
+  }
 
   // Handle Discord client errors to prevent crashes
   client.on('error', (err) => {
