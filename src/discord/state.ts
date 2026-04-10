@@ -31,6 +31,11 @@ export interface PendingQuestion {
   }>;
 }
 
+export type PendingAnswerValue =
+  | { kind: 'option'; label: string; optionIndex: number }
+  | { kind: 'custom'; text: string }
+  | { kind: 'multi'; labels: string[]; hasCustom: boolean; customText?: string };
+
 export interface PendingPermission {
   requestId: string;
   sessionId: string;
@@ -63,7 +68,7 @@ export interface DiscordState {
   pendingMultiSelections: Map<string, string[]>;
 
   // Track answers for multi-question AskUserQuestion
-  pendingAnswers: Map<string, string>;
+  pendingAnswers: Map<string, PendingAnswerValue>;
 
   // Track pending permission requests
   pendingPermissions: Map<string, PendingPermission>;
@@ -89,8 +94,8 @@ export interface DiscordState {
   // Track consecutive agent-to-agent routing count (reset on user message)
   agentRoutingCount: Map<string, number>; // threadId -> count
 
-  // SDK AskUserQuestion resolvers (requestId -> resolve with answers)
-  sdkAskQuestionResolvers: Map<string, (answers: Record<string, string>) => void>;
+  // SDK AskUserQuestion resolvers (requestId -> resolve with structured answers)
+  sdkAskQuestionResolvers: Map<string, (answers: Record<string, PendingAnswerValue>) => void>;
 }
 
 /**
@@ -149,12 +154,12 @@ export function cleanupState(state: DiscordState): void {
 export function getAllAnswers(
   state: DiscordState,
   toolUseId: string
-): Record<string, string> | null {
+): Record<string, PendingAnswerValue> | null {
   const pending = state.pendingQuestions.get(toolUseId);
   if (!pending) return null;
 
   const totalQuestions = pending.questions.length;
-  const answers: Record<string, string> = {};
+  const answers: Record<string, PendingAnswerValue> = {};
 
   for (let i = 0; i < totalQuestions; i++) {
     const answerKey = `${toolUseId}:${i}`;
@@ -166,6 +171,23 @@ export function getAllAnswers(
   }
 
   return answers;
+}
+
+/**
+ * Convert structured PendingAnswerValue to flat strings (for PTY sessions)
+ */
+export function flattenAnswers(answers: Record<string, PendingAnswerValue>): Record<string, string> {
+  const flat: Record<string, string> = {};
+  for (const [key, val] of Object.entries(answers)) {
+    if (val.kind === 'option') {
+      flat[key] = val.label;
+    } else if (val.kind === 'custom') {
+      flat[key] = val.text;
+    } else if (val.kind === 'multi') {
+      flat[key] = val.labels.join(', ');
+    }
+  }
+  return flat;
 }
 
 /**

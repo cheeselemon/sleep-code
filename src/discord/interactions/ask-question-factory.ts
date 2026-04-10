@@ -16,7 +16,7 @@ import {
   ActionRowBuilder,
 } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
-import { getAllAnswers, cleanupQuestionState } from '../state.js';
+import { getAllAnswers, cleanupQuestionState, type PendingAnswerValue } from '../state.js';
 import type { ButtonHandler, SelectMenuHandler, ModalHandler, InteractionContext } from './types.js';
 
 export interface AskQuestionConfig {
@@ -32,7 +32,7 @@ export interface AskQuestionConfig {
     context: InteractionContext,
     requestId: string,
     sessionId: string,
-    answers: Record<string, string>,
+    answers: Record<string, PendingAnswerValue>,
   ) => void;
   /** Label for log messages */
   label: string;
@@ -118,7 +118,7 @@ export function createAskQuestionHandlers(config: AskQuestionConfig): AskQuestio
     }
 
     const answerKey = `${requestId}:${qIdx}`;
-    state.pendingAnswers.set(answerKey, selectedOption.label);
+    state.pendingAnswers.set(answerKey, { kind: 'option', label: selectedOption.label, optionIndex: optIdx });
 
     await interaction.update({
       content: `✅ **${question.header}**: ${selectedOption.label}`,
@@ -163,7 +163,7 @@ export function createAskQuestionHandlers(config: AskQuestionConfig): AskQuestio
 
     const answerText = selectedLabels.join(', ');
     const answerKey = `${requestId}:${qIdx}`;
-    state.pendingAnswers.set(answerKey, answerText);
+    state.pendingAnswers.set(answerKey, { kind: 'multi', labels: selectedLabels, hasCustom: false });
 
     await interaction.update({
       content: `✅ **${question.header}**: ${answerText}`,
@@ -231,7 +231,7 @@ export function createAskQuestionHandlers(config: AskQuestionConfig): AskQuestio
 
     const answer = interaction.fields.getTextInputValue('answer');
     const answerKey = `${requestId}:${qIdx}`;
-    state.pendingAnswers.set(answerKey, answer);
+    state.pendingAnswers.set(answerKey, { kind: 'custom', text: answer });
 
     await interaction.reply({
       content: `✅ **${question.header}**: ${answer}`,

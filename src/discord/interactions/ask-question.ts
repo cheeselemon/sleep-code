@@ -6,6 +6,7 @@
  */
 
 import { createAskQuestionHandlers } from './ask-question-factory.js';
+import { flattenAnswers } from '../state.js';
 
 const handlers = createAskQuestionHandlers({
   prefix: {
@@ -15,7 +16,8 @@ const handlers = createAskQuestionHandlers({
     modal: 'askq_modal',
   },
   onSubmitAnswers: (context, _requestId, sessionId, answers) => {
-    context.sessionManager.allowPendingAskUserQuestion(sessionId, answers);
+    // PTY sessions expect flat string answers
+    context.sessionManager.allowPendingAskUserQuestion(sessionId, flattenAnswers(answers));
   },
   label: 'AskUserQuestion',
 });

@@ -29,6 +29,8 @@ export interface ClaudeSdkSessionEntry {
   pendingPermissions: Map<string, { resolve: Function; toolName: string; input: unknown }>;
   activeQuery: Query | null;
   interrupted: boolean;
+  forceClosedByInterrupt: boolean;
+  interruptTimeoutHandle: ReturnType<typeof setTimeout> | null;
   transport: ClaudeTransport;
   lastAssistantUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null;
 }
@@ -177,10 +179,36 @@ export class ClaudeSdkSessionManager {
     }
 
     session.interrupted = true;
+    session.forceClosedByInterrupt = false;
     session.turnAbortController.abort();
-    void session.activeQuery?.interrupt().catch((err) => {
+    const activeQuery = session.activeQuery;
+    void activeQuery?.interrupt().catch((err) => {
       log.warn({ sessionId, err }, 'Failed to interrupt Claude SDK query');
     });
+
+    // Clear any previous timeout
+    if (session.interruptTimeoutHandle) {
+      clearTimeout(session.interruptTimeoutHandle);
+      session.interruptTimeoutHandle = null;
+    }
+
+    // Fallback: if interrupt() doesn't break the stream within 5s (e.g. subagent hang),
+    // force-close the query to unblock the for-await loop in processQueryStream.
+    if (activeQuery) {
+      const INTERRUPT_TIMEOUT_MS = 5_000;
+      session.interruptTimeoutHandle = setTimeout(() => {
+        session.interruptTimeoutHandle = null;
+        if (session.interrupted && session.activeQuery === activeQuery) {
+          log.warn({ sessionId, pid: process.pid }, 'Interrupt timeout — force-closing query stream');
+          session.forceClosedByInterrupt = true;
+          try { activeQuery.close(); } catch { /* ignore */ }
+          if (!session.sessionAbortController.signal.aborted) {
+            session.sessionAbortController.abort();
+          }
+        }
+      }, INTERRUPT_TIMEOUT_MS);
+    }
+
     return true;
   }
 
@@ -271,16 +299,46 @@ export class ClaudeSdkSessionManager {
       return new Promise((resolve) => {
         const requestId = randomUUID();
 
-        // Store resolve so button/select handlers can call it with answers
-        this.state.sdkAskQuestionResolvers.set(requestId, (answers: Record<string, string>) => {
+        // Store resolve so button/select handlers can call it with structured answers
+        this.state.sdkAskQuestionResolvers.set(requestId, (answers: Record<string, import('../state.js').PendingAnswerValue>) => {
           this.state.sdkAskQuestionResolvers.delete(requestId);
-          // Build answers object: key = question text, value = selected label
-          // Per SDK docs: https://platform.claude.com/docs/en/agent-sdk/user-input
-          const questions = input.questions as any[];
+          // Build answers + inject synthetic options for custom answers
+          const questions = structuredClone(input.questions as any[]);
           const answersMap: Record<string, string> = {};
+
           for (let idx = 0; idx < questions.length; idx++) {
-            answersMap[questions[idx].question] = answers[String(idx)] || '';
+            const answer = answers[String(idx)];
+            if (!answer) continue;
+
+            if (answer.kind === 'option') {
+              answersMap[questions[idx].question] = answer.label;
+            } else if (answer.kind === 'custom') {
+              // Inject synthetic option so Claude sees the custom answer as a real option
+              const existingLabels = new Set(questions[idx].options?.map((o: any) => o.label) ?? []);
+              if (!existingLabels.has(answer.text)) {
+                questions[idx].options = questions[idx].options ?? [];
+                questions[idx].options.push({
+                  label: answer.text,
+                  description: 'User-provided custom answer',
+                });
+              }
+              answersMap[questions[idx].question] = answer.text;
+            } else if (answer.kind === 'multi') {
+              // For multi-select, inject custom text as synthetic option if present
+              if (answer.hasCustom && answer.customText) {
+                const existingLabels = new Set(questions[idx].options?.map((o: any) => o.label) ?? []);
+                if (!existingLabels.has(answer.customText)) {
+                  questions[idx].options = questions[idx].options ?? [];
+                  questions[idx].options.push({
+                    label: answer.customText,
+                    description: 'User-provided custom answer',
+                  });
+                }
+              }
+              answersMap[questions[idx].question] = answer.labels.join(', ');
+            }
           }
+
           resolve({ behavior: 'allow', updatedInput: { questions, answers: answersMap } });
         });
 
@@ -363,6 +421,8 @@ export class ClaudeSdkSessionManager {
       pendingPermissions: new Map(),
       activeQuery: null,
       interrupted: false,
+      forceClosedByInterrupt: false,
+      interruptTimeoutHandle: null,
       lastAssistantUsage: null,
       transport: {
         type: 'sdk',
@@ -476,10 +536,13 @@ export class ClaudeSdkSessionManager {
     } catch (err) {
       log.error({ sessionId: session.id, err, interrupted: session.interrupted, pid: process.pid }, 'processQueryStream: stream error');
 
-      // If resume failed with "No conversation found", try fresh start automatically
+      // If session died due to recoverable error, try fresh start automatically
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes('No conversation found') && resumeSdkSessionId) {
-        log.warn({ sessionId: session.id, pid: process.pid }, 'Resume failed: conversation not found, will auto-restart as fresh session');
+      const isConversationGone = errMsg.includes('No conversation found') && resumeSdkSessionId;
+      const isNetworkError = /ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|fetch failed/i.test(errMsg);
+      if (isConversationGone || (isNetworkError && !session.interrupted)) {
+        const reason = isConversationGone ? 'conversation not found' : 'network error';
+        log.warn({ sessionId: session.id, reason, errMsg: errMsg.slice(0, 100), pid: process.pid }, 'Session died, will auto-restart');
         autoRestartNeeded = true;
       } else if (session.status !== 'ended') {
         terminatedUnexpectedly = true;
@@ -488,20 +551,40 @@ export class ClaudeSdkSessionManager {
         }
       }
     } finally {
-      log.info({ sessionId: session.id, shuttingDown, interrupted: session.interrupted, terminatedUnexpectedly, pid: process.pid }, 'processQueryStream: finally');
+      log.info({ sessionId: session.id, shuttingDown, interrupted: session.interrupted, forceClose: session.forceClosedByInterrupt, terminatedUnexpectedly, pid: process.pid }, 'processQueryStream: finally');
       session.sessionAbortController.signal.removeEventListener('abort', closeQuery);
       session.activeQuery = null;
+      // Clear pending interrupt timeout (normal interrupt succeeded before timeout fired)
+      if (session.interruptTimeoutHandle) {
+        clearTimeout(session.interruptTimeoutHandle);
+        session.interruptTimeoutHandle = null;
+      }
 
       if (shuttingDown) {
         // Graceful shutdown — don't archive, don't post errors
         log.info({ sessionId: session.id }, 'SDK session closed during shutdown (persisted mapping kept)');
       } else if (session.interrupted) {
-        // Interrupt is intentional — recover to idle, ready for next input
+        const wasForceClose = session.forceClosedByInterrupt;
         session.interrupted = false;
+        session.forceClosedByInterrupt = false;
         session.turnAbortController = new AbortController();
+        if (session.sessionAbortController.signal.aborted) {
+          session.sessionAbortController = new AbortController();
+        }
         session.status = 'idle';
         await this.events.onSessionStatus?.(session.id, 'idle');
-        log.info({ sessionId: session.id }, 'SDK session recovered from interrupt');
+
+        if (wasForceClose) {
+          // Force-close killed the query stream — restart with resume to keep context
+          log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId }, 'SDK session force-closed — restarting query stream via resume');
+          this.processQueryStream(session, { resume: session.sdkSessionId }).catch(async (err) => {
+            log.error({ sessionId: session.id, err }, 'Failed to restart query stream after force-close');
+            await this.events.onError(session.id, err as Error);
+            await this.finalizeSession(session, true);
+          });
+        } else {
+          log.info({ sessionId: session.id }, 'SDK session recovered from interrupt');
+        }
       } else if (session.status === 'ended') {
         // Normal stop — finalize if stopSession hasn't already
         if (this.sessions.has(session.id)) {
