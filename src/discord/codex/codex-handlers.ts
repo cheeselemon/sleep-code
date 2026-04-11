@@ -278,7 +278,23 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
       log.error({ sessionId, error: error.message }, 'Codex session error');
       getCodexThread(client, channelManager, sessionId).then(thread => {
         if (thread) {
-          thread.send(`❌ **Codex Error:** ${error.message}`).catch(() => {});
+          const msg = error.message || '';
+          let display: string;
+          if (/usage limit|purchase more credits/i.test(msg)) {
+            // Extract retry time if present (e.g. "try again at 8:05 PM")
+            const retryMatch = msg.match(/try again at ([^.]+)/i);
+            const retry = retryMatch ? ` (${retryMatch[1]}에 리셋)` : '';
+            display = `💳 **Codex 크레딧 소진** — OpenAI API 사용량 한도에 도달했습니다${retry}`;
+          } else if (/rate limit|too many requests/i.test(msg)) {
+            display = `⏳ **Codex Rate Limit** — 잠시 후 다시 시도해주세요`;
+          } else if (/ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|fetch failed/i.test(msg)) {
+            display = `🌐 **Codex 네트워크 에러** — ${msg.slice(0, 100)}`;
+          } else if (/exited with code 1.*Reading prompt from stdin/i.test(msg)) {
+            display = `❌ **Codex 프로세스 종료** — 위의 에러로 인해 세션이 종료되었습니다`;
+          } else {
+            display = `❌ **Codex Error:** ${msg.slice(0, 300)}`;
+          }
+          thread.send(display).catch(() => {});
         }
       });
     },

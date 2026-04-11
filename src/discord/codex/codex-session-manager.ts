@@ -241,6 +241,7 @@ export class CodexSessionManager {
           discordThreadId: m.discordThreadId,
           startedAt: new Date(),
           activeTurn: null,
+          turnCount: 0,
         };
 
         this.sessions.set(m.sessionId, entry);
@@ -341,8 +342,10 @@ export class CodexSessionManager {
           }
 
           case 'error': {
-            log.error({ sessionId: session.id, error: event }, 'Codex stream error');
-            this.events.onError(session.id, new Error(String(event)));
+            const errEvent = event as any;
+            const errMessage = errEvent?.message || errEvent?.error?.message || errEvent?.error || JSON.stringify(event);
+            log.error({ sessionId: session.id, error: errEvent }, 'Codex stream error');
+            this.events.onError(session.id, new Error(String(errMessage)));
             break;
           }
         }
