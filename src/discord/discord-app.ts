@@ -67,7 +67,7 @@ export interface DiscordAppOptions {
   settingsManager?: SettingsManager;
   enableCodex?: boolean;
   memoryCollector?: MemoryCollector;
-  memoryService?: import('../memory/memory-service.js').MemoryService;
+  memoryClient?: MemoryAuthorityClient;
 }
 
 export function createDiscordApp(config: DiscordConfig, options?: Partial<DiscordAppOptions>) {
@@ -92,7 +92,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   let dailyDigestRunner: DailyDigestRunner | undefined;
 
   // Memory Authority client — single writer for LanceDB via MCP server
-  const memoryClient = new MemoryAuthorityClient();
+  const memoryClient = options?.memoryClient ?? new MemoryAuthorityClient();
 
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
@@ -164,7 +164,6 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     get batchDistillRunner() { return batchDistillRunner; },
     get dailyDigestRunner() { return dailyDigestRunner; },
     get memoryReporter() { return memoryReporter; },
-    get memoryService() { return options.memoryService; },
     memoryClient,
   };
 
@@ -665,7 +664,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     }
 
     // Initialize memory system (batch distill + reporter)
-    if (options?.memoryService && process.env.DISABLE_MEMORY !== '1') {
+    if (memoryClient && process.env.DISABLE_MEMORY !== '1') {
       try {
         await ensureConfigFile();
         await loadMemoryConfig();
@@ -676,7 +675,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
         // Create batch distill runner with reporter events
         batchDistillRunner = new BatchDistillRunner(
-          options.memoryService,
+          memoryClient,
           {
             onBatchComplete: async (result) => {
               await memoryReporter?.postBatchResult(result);
@@ -706,7 +705,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
         // Initialize daily digest
         dailyDigestRunner = new DailyDigestRunner(
-          options.memoryService,
+          memoryClient,
           {
             onDigestReady: async (digest) => {
               await memoryReporter?.postDigest(digest);

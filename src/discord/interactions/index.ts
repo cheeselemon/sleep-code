@@ -128,13 +128,12 @@ export async function handleButton(
   // Digest Done button — mark task as resolved
   if (customId.startsWith('digest_done:')) {
     const taskId = customId.slice('digest_done:'.length);
-    const writer = context.memoryClient ?? context.memoryService;
-    if (!writer) {
-      await interaction.reply({ content: '❌ Memory service not available', ephemeral: true });
+    if (!context.memoryClient) {
+      await interaction.reply({ content: '❌ Memory Authority client not available', ephemeral: true });
       return;
     }
     try {
-      await writer.updateStatus(taskId, 'resolved');
+      await context.memoryClient.updateStatus(taskId, 'resolved');
       // Update the button to show it's done
       const label = interaction.component.label || 'Task';
       const updatedRows = interaction.message.components.map((row: any) => {

@@ -1,24 +1,36 @@
 import {
-  OllamaEmbeddingProvider,
-  EmbeddingService,
-  MemoryService,
   OllamaChatProvider,
   ChatService,
   DistillService,
   ConsolidationService,
 } from '../memory/index.js';
+import { MemoryAuthorityClient } from '../memory/memory-authority-client.js';
 
 // ── Helpers ──────────────────────────────────────────────────
 
-async function createServices() {
-  const embeddingProvider = new OllamaEmbeddingProvider();
-  const embeddingService = new EmbeddingService(embeddingProvider);
-  await embeddingService.initialize();
+function isAuthorityUnavailableError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    message.includes('ECONNREFUSED')
+    || message.includes('ETIMEDOUT')
+    || message.includes('ECONNRESET')
+    || message.includes('UND_ERR_SOCKET')
+    || message.includes('AbortError')
+    || message.includes('fetch failed')
+  );
+}
 
-  const memoryService = new MemoryService(embeddingService);
-  await memoryService.initialize();
+async function createMemoryClient() {
+  const memoryClient = new MemoryAuthorityClient();
+  const healthy = await memoryClient.healthCheck();
+  if (!healthy) {
+    throw new Error(
+      'Memory Authority server is unreachable at http://127.0.0.1:24242. Start the MCP server before using memory commands.',
+    );
+  }
 
-  return { embeddingService, memoryService };
+  await memoryClient.initialize();
+  return memoryClient;
 }
 
 async function createDistillService() {
@@ -31,14 +43,14 @@ async function createDistillService() {
 // ── Commands ─────────────────────────────────────────────────
 
 async function memorySearch(query: string, project?: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
   console.log(`Searching for: "${query}"${project ? ` (project: ${project})` : ''}...\n`);
-  const results = await memoryService.search(query, { project, limit: 10 });
+  const results = await memoryClient.search(query, { project, limit: 10 });
 
   if (results.length === 0) {
     console.log('No memories found.');
-    memoryService.shutdown();
+    memoryClient.shutdown();
     return;
   }
 
@@ -49,13 +61,13 @@ async function memorySearch(query: string, project?: string) {
     console.log(`  id: ${r.id}  created: ${r.createdAt}\n`);
   }
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryStore(text: string, project: string, kind: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
-  const id = await memoryService.store(text, {
+  const id = await memoryClient.store(text, {
     project,
     kind: kind as import('../memory/index.js').MemoryKind,
     source: 'user',
@@ -63,20 +75,20 @@ async function memoryStore(text: string, project: string, kind: string) {
   });
 
   console.log(`Stored memory: ${id}`);
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryStats(project?: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
   if (project) {
-    const count = await memoryService.countByProject(project);
+    const count = await memoryClient.countByProject(project);
     console.log(`Project "${project}": ${count} memories`);
   } else {
     console.log('Usage: sleep-code memory stats <project>');
   }
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryDistillTest() {
@@ -146,18 +158,18 @@ async function memoryDistillTest() {
 }
 
 async function memoryDelete(id: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
   // Verify it exists first
-  const projects = await memoryService.listProjects();
+  const projects = await memoryClient.listProjects();
   let found = false;
   for (const project of projects) {
-    const memories = await memoryService.getByProject(project, { limit: 1000 });
+    const memories = await memoryClient.getByProject(project, { limit: 1000 });
     const match = memories.find((m) => m.id === id);
     if (match) {
       console.log(`Found: [${match.kind}] "${match.text}"`);
       console.log(`  project: ${match.project}, priority: ${match.priority}`);
-      await memoryService.remove(id);
+      await memoryClient.remove(id);
       console.log(`Deleted: ${id}`);
       found = true;
       break;
@@ -168,12 +180,12 @@ async function memoryDelete(id: string) {
     console.error(`Memory not found: ${id}`);
   }
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryConsolidate(project: string | undefined, dryRun: boolean) {
-  const { memoryService } = await createServices();
-  const consolidation = new ConsolidationService(memoryService);
+  const memoryClient = await createMemoryClient();
+  const consolidation = new ConsolidationService(memoryClient);
 
   if (dryRun) {
     console.log('=== DRY RUN (no changes will be made) ===\n');
@@ -215,13 +227,13 @@ async function memoryConsolidate(project: string | undefined, dryRun: boolean) {
     console.log('\nRe-run without --dry-run to apply changes.');
   }
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryGraph(project: string | undefined, threshold: number) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
-  const projects = project ? [project] : await memoryService.listProjects();
+  const projects = project ? [project] : await memoryClient.listProjects();
   console.log(`Loading memories from ${projects.length} project(s)...`);
 
   // Load all memories with vectors
@@ -233,7 +245,7 @@ async function memoryGraph(project: string | undefined, threshold: number) {
   const allNodes: NodeData[] = [];
 
   for (const p of projects) {
-    const records = await memoryService.getAllWithVectors(p);
+    const records = await memoryClient.getAllWithVectors(p);
     for (const r of records) {
       allNodes.push({
         id: r.id, text: r.text, project: r.project, kind: r.kind,
@@ -390,20 +402,20 @@ sim.on('tick', () => {
   const { exec } = await import('child_process');
   exec(`open "${outPath}"`);
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryRetag(project: string | undefined, dryRun: boolean) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
   const distill = await createDistillService();
 
-  const projects = project ? [project] : await memoryService.listProjects();
+  const projects = project ? [project] : await memoryClient.listProjects();
 
   let totalRetagged = 0;
   let totalSkipped = 0;
 
   for (const p of projects) {
-    const memories = await memoryService.getByProject(p, { limit: 1000 });
+    const memories = await memoryClient.getByProject(p, { limit: 1000 });
     if (memories.length === 0) continue;
 
     // Collect current topicKeys as reference
@@ -441,7 +453,7 @@ async function memoryRetag(project: string | undefined, dryRun: boolean) {
         console.log(`  [retag] "${mem.text.slice(0, 60)}..."`);
         console.log(`    ${mem.topicKey || '(none)'} → ${newTopic}`);
       } else {
-        await memoryService.updateFields(mem.id, { topicKey: newTopic });
+        await memoryClient.updateFields(mem.id, { topicKey: newTopic });
         console.log(`  [retag] ${mem.topicKey || '(none)'} → ${newTopic}: "${mem.text.slice(0, 50)}..."`);
       }
 
@@ -461,17 +473,17 @@ async function memoryRetag(project: string | undefined, dryRun: boolean) {
     console.log('\nRe-run without --dry-run to apply changes.');
   }
 
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memorySupersede(oldId: string, newId: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
   // Verify both exist
-  const projects = await memoryService.listProjects();
+  const projects = await memoryClient.listProjects();
   let oldFound = false, newFound = false;
   for (const p of projects) {
-    const memories = await memoryService.getByProject(p, { limit: 1000, includeSuperseded: true });
+    const memories = await memoryClient.getByProject(p, { limit: 1000, includeSuperseded: true });
     for (const m of memories) {
       if (m.id === oldId) { oldFound = true; console.log(`Old: [${m.kind}] "${m.text.slice(0, 80)}"`); }
       if (m.id === newId) { newFound = true; console.log(`New: [${m.kind}] "${m.text.slice(0, 80)}"`); }
@@ -481,125 +493,126 @@ async function memorySupersede(oldId: string, newId: string) {
   if (!oldFound || !newFound) {
     if (!oldFound) console.error(`Old memory not found: ${oldId}`);
     if (!newFound) console.error(`New memory not found: ${newId}`);
-    memoryService.shutdown();
+    memoryClient.shutdown();
     return;
   }
 
-  await memoryService.markSuperseded(oldId, newId);
+  await memoryClient.markSuperseded(oldId, newId);
   console.log(`Done: ${oldId} superseded by ${newId}`);
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 async function memoryUnsupersede(id: string) {
-  const { memoryService } = await createServices();
+  const memoryClient = await createMemoryClient();
 
-  await memoryService.undoSupersede(id);
+  await memoryClient.undoSupersede(id);
   console.log(`Done: ${id} restored to open`);
-  memoryService.shutdown();
+  memoryClient.shutdown();
 }
 
 // ── Entry ────────────────────────────────────────────────────
 
 export async function memoryCommand(args: string[]): Promise<void> {
-  const subcommand = args[0];
+  try {
+    const subcommand = args[0];
 
-  switch (subcommand) {
-    case 'search': {
-      const query = args[1];
-      if (!query) {
-        console.error('Usage: sleep-code memory search <query> [--project <name>]');
-        process.exit(1);
+    switch (subcommand) {
+      case 'search': {
+        const query = args[1];
+        if (!query) {
+          console.error('Usage: sleep-code memory search <query> [--project <name>]');
+          process.exit(1);
+        }
+        const projectIdx = args.indexOf('--project');
+        const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+        await memorySearch(query, project);
+        break;
       }
-      const projectIdx = args.indexOf('--project');
-      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
-      await memorySearch(query, project);
-      break;
-    }
 
-    case 'store': {
-      const text = args[1];
-      if (!text) {
-        console.error('Usage: sleep-code memory store <text> [--project <name>] [--kind <kind>]');
-        process.exit(1);
+      case 'store': {
+        const text = args[1];
+        if (!text) {
+          console.error('Usage: sleep-code memory store <text> [--project <name>] [--kind <kind>]');
+          process.exit(1);
+        }
+        const pIdx = args.indexOf('--project');
+        const kIdx = args.indexOf('--kind');
+        await memoryStore(
+          text,
+          pIdx !== -1 ? args[pIdx + 1] : 'default',
+          kIdx !== -1 ? args[kIdx + 1] : 'fact',
+        );
+        break;
       }
-      const pIdx = args.indexOf('--project');
-      const kIdx = args.indexOf('--kind');
-      await memoryStore(
-        text,
-        pIdx !== -1 ? args[pIdx + 1] : 'default',
-        kIdx !== -1 ? args[kIdx + 1] : 'fact',
-      );
-      break;
-    }
 
-    case 'stats': {
-      await memoryStats(args[1]);
-      break;
-    }
-
-    case 'distill-test': {
-      await memoryDistillTest();
-      break;
-    }
-
-    case 'delete': {
-      const id = args[1];
-      if (!id) {
-        console.error('Usage: sleep-code memory delete <id>');
-        process.exit(1);
+      case 'stats': {
+        await memoryStats(args[1]);
+        break;
       }
-      await memoryDelete(id);
-      break;
-    }
 
-    case 'consolidate': {
-      const projectIdx = args.indexOf('--project');
-      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
-      const dryRun = args.includes('--dry-run');
-      await memoryConsolidate(project, dryRun);
-      break;
-    }
-
-    case 'retag': {
-      const projectIdx = args.indexOf('--project');
-      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
-      const dryRun = args.includes('--dry-run');
-      await memoryRetag(project, dryRun);
-      break;
-    }
-
-    case 'supersede': {
-      const oldId = args[1];
-      const newId = args[2];
-      if (!oldId || !newId) {
-        console.error('Usage: sleep-code memory supersede <oldId> <newId>');
-        process.exit(1);
+      case 'distill-test': {
+        await memoryDistillTest();
+        break;
       }
-      await memorySupersede(oldId, newId);
-      break;
-    }
 
-    case 'unsupersede': {
-      const id = args[1];
-      if (!id) {
-        console.error('Usage: sleep-code memory unsupersede <id>');
-        process.exit(1);
+      case 'delete': {
+        const id = args[1];
+        if (!id) {
+          console.error('Usage: sleep-code memory delete <id>');
+          process.exit(1);
+        }
+        await memoryDelete(id);
+        break;
       }
-      await memoryUnsupersede(id);
-      break;
-    }
 
-    case 'graph': {
-      const projectIdx = args.indexOf('--project');
-      const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
-      const threshIdx = args.indexOf('--threshold');
-      const threshold = threshIdx !== -1 ? parseFloat(args[threshIdx + 1]) : 0.7;
-      await memoryGraph(project, threshold);
-      break;
-    }
+      case 'consolidate': {
+        const projectIdx = args.indexOf('--project');
+        const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+        const dryRun = args.includes('--dry-run');
+        await memoryConsolidate(project, dryRun);
+        break;
+      }
 
-    default: {
-      console.log(`
+      case 'retag': {
+        const projectIdx = args.indexOf('--project');
+        const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+        const dryRun = args.includes('--dry-run');
+        await memoryRetag(project, dryRun);
+        break;
+      }
+
+      case 'supersede': {
+        const oldId = args[1];
+        const newId = args[2];
+        if (!oldId || !newId) {
+          console.error('Usage: sleep-code memory supersede <oldId> <newId>');
+          process.exit(1);
+        }
+        await memorySupersede(oldId, newId);
+        break;
+      }
+
+      case 'unsupersede': {
+        const id = args[1];
+        if (!id) {
+          console.error('Usage: sleep-code memory unsupersede <id>');
+          process.exit(1);
+        }
+        await memoryUnsupersede(id);
+        break;
+      }
+
+      case 'graph': {
+        const projectIdx = args.indexOf('--project');
+        const project = projectIdx !== -1 ? args[projectIdx + 1] : undefined;
+        const threshIdx = args.indexOf('--threshold');
+        const threshold = threshIdx !== -1 ? parseFloat(args[threshIdx + 1]) : 0.7;
+        await memoryGraph(project, threshold);
+        break;
+      }
+
+      default: {
+        console.log(`
 Memory commands:
   memory search <query> [--project <name>]                 Search memories
   memory store <text> [--project <name>] [--kind <kind>]   Store a memory
@@ -614,7 +627,15 @@ Memory commands:
 
 Kinds: fact, task, observation, proposal, feedback, decision, dialog_summary
 `);
-      break;
+        break;
+      }
     }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isAuthorityUnavailableError(err) || message.includes('Memory Authority server is unreachable')) {
+      console.error(message);
+      process.exit(1);
+    }
+    throw err;
   }
 }

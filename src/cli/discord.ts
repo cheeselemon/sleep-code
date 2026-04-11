@@ -6,14 +6,12 @@ import { cliLogger as log } from '../utils/logger.js';
 import { ProcessManager } from '../discord/process-manager.js';
 import { SettingsManager } from '../discord/settings-manager.js';
 import {
-  OllamaEmbeddingProvider,
-  EmbeddingService,
-  MemoryService,
   OllamaChatProvider,
   ChatService,
   DistillService,
   MemoryCollector,
 } from '../memory/index.js';
+import { MemoryAuthorityClient } from '../memory/memory-authority-client.js';
 
 const CONFIG_DIR = `${homedir()}/.sleep-code`;
 const DISCORD_CONFIG_FILE = `${CONFIG_DIR}/discord.env`;
@@ -220,40 +218,34 @@ export async function discordRun(): Promise<void> {
 
   // Initialize memory collector (optional — disable with DISABLE_MEMORY=1)
   let memoryCollector: MemoryCollector | undefined;
-  let memoryService: MemoryService | undefined;
+  let memoryClient: MemoryAuthorityClient | undefined;
   if (process.env.DISABLE_MEMORY === '1') {
     log.info('Memory collector disabled via DISABLE_MEMORY=1');
   } else {
     try {
-      const embeddingProvider = new OllamaEmbeddingProvider();
-      const embeddingService = new EmbeddingService(embeddingProvider);
-      await embeddingService.initialize();
-      memoryService = new MemoryService(embeddingService);
-      await memoryService.initialize();
+      memoryClient = new MemoryAuthorityClient();
+      await memoryClient.initialize();
       const chatProvider = new OllamaChatProvider();
       const chatService = new ChatService(chatProvider);
       await chatService.initialize();
       const distillService = new DistillService(chatService);
-      memoryCollector = new MemoryCollector(memoryService, distillService);
+      memoryCollector = new MemoryCollector(memoryClient, distillService);
       log.info('Memory collector initialized');
     } catch (err) {
       log.warn({ err }, 'Memory collector disabled (Ollama not available?)');
-      // Even if Ollama fails, try to initialize memory service for batch distill (uses SDK)
-      if (!memoryService) {
+      // Even if Ollama fails, keep the collector available for batch mode via Memory Authority.
+      if (!memoryClient) {
         try {
-          const embeddingProvider = new OllamaEmbeddingProvider();
-          const embeddingService = new EmbeddingService(embeddingProvider);
-          await embeddingService.initialize();
-          memoryService = new MemoryService(embeddingService);
-          await memoryService.initialize();
+          memoryClient = new MemoryAuthorityClient();
+          await memoryClient.initialize();
           // Create collector without legacy distill (batch runner will be attached later)
           const dummyChatProvider = new OllamaChatProvider();
           const dummyChatService = new ChatService(dummyChatProvider);
           const dummyDistill = new DistillService(dummyChatService);
-          memoryCollector = new MemoryCollector(memoryService, dummyDistill);
+          memoryCollector = new MemoryCollector(memoryClient, dummyDistill);
           log.info('Memory collector initialized (batch mode only — Ollama unavailable for legacy distill)');
         } catch (err2) {
-          log.warn({ err: err2 }, 'Memory service initialization also failed');
+          log.warn({ err: err2 }, 'Memory Authority initialization also failed');
         }
       }
     }
@@ -264,7 +256,7 @@ export async function discordRun(): Promise<void> {
     settingsManager,
     enableCodex,
     memoryCollector,
-    memoryService,
+    memoryClient,
   });
 
   // Start session manager (Unix socket server for CLI connections)
