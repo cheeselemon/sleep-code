@@ -1,6 +1,6 @@
 import { getToolByName, type ToolResult } from './tool-definitions.js';
 import { readFileSync, existsSync, realpathSync } from 'fs';
-import { join, resolve, relative, isAbsolute } from 'path';
+import { join, resolve, relative, isAbsolute, dirname } from 'path';
 import { homedir } from 'os';
 
 interface ToolCall {
@@ -103,13 +103,26 @@ function pathInCwd(targetPath: string, cwd: string): boolean {
 
   if (!checkPath(absTarget)) return false;
 
-  // symlink 실제 대상도 체크 (존재하는 경우에만)
+  // symlink 실제 대상도 체크
+  // 파일이 존재하면 직접 realpath, 없으면 가장 깊이 존재하는 조상 디렉토리의 realpath
+  // (Write로 symlink 디렉토리 아래에 새 파일을 쓰는 케이스 방어)
   try {
-    if (existsSync(absTarget)) {
-      const realTarget = normalizeMacOS(realpathSync(absTarget));
-      if (!checkPath(realTarget)) return false;
+    let pathToResolve = absTarget;
+    if (!existsSync(absTarget)) {
+      // 가장 깊이 존재하는 조상 찾기
+      let ancestor = dirname(absTarget);
+      for (let depth = 0; depth < 40; depth++) {
+        if (existsSync(ancestor)) { pathToResolve = ancestor; break; }
+        const parent = dirname(ancestor);
+        if (parent === ancestor) break; // root
+        ancestor = parent;
+      }
     }
-  } catch { /* 파일이 없거나 접근 불가 — lexical check만으로 판단 */ }
+    if (existsSync(pathToResolve)) {
+      const realResolved = normalizeMacOS(realpathSync(pathToResolve));
+      if (!checkPath(realResolved)) return false;
+    }
+  } catch { /* 접근 불가 — lexical check만으로 판단 */ }
 
   return true;
 }

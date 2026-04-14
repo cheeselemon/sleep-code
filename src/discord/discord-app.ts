@@ -725,6 +725,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           }));
 
         if (restorable.length > 0) {
+          // Rebuild in-memory channelManager mappings first
+          for (const m of agentMappings.filter(p => p.modelAlias)) {
+            channelManager.restoreAgentSessionMapping(m);
+          }
           const restored = await agentSessionManager.restoreSessions(restorable);
           log.info({ restored, total: restorable.length }, 'Agent session restoration complete');
         }

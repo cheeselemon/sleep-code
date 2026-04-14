@@ -988,6 +988,26 @@ export class ChannelManager {
     return mapping;
   }
 
+  /**
+   * Rebuild in-memory agent mapping from persisted data (for bot restart restore)
+   */
+  restoreAgentSessionMapping(persisted: PersistedMapping): void {
+    if (this.agentStore.has(persisted.sessionId)) return;
+    const mapping: ChannelMapping = {
+      sessionId: persisted.sessionId,
+      channelId: persisted.channelId,
+      threadId: persisted.threadId,
+      channelName: '',
+      threadName: '',
+      sessionName: persisted.modelAlias || '',
+      cwd: persisted.cwd,
+      status: 'idle',
+      createdAt: new Date(),
+    };
+    this.agentStore.set(persisted.sessionId, mapping);
+    log.info({ sessionId: persisted.sessionId, threadId: persisted.threadId }, 'Restored agent session mapping');
+  }
+
   getAgentSession(sessionId: string): ChannelMapping | undefined {
     return this.agentStore.get(sessionId);
   }
