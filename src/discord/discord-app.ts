@@ -112,6 +112,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       state,
       sessionManagerRef,
       claudeSdkSessionManagerRef,
+      agentSessionManagerRef,
       memoryCollector: options?.memoryCollector,
     });
     codexSessionManager = new CodexSessionManager(codexEvents, {
@@ -176,6 +177,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     channelManager,
     state,
     codexSessionManager,
+    agentSessionManagerRef,
     memoryCollector: options?.memoryCollector,
   });
   const claudeSdkSessionManager = new ClaudeSdkSessionManager(claudeSdkEvents, state);
@@ -189,6 +191,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     processManager,
     codexSessionManager,
     claudeSdkSessionManager,
+    agentSessionManagerRef,
     state,
     memoryCollector: options?.memoryCollector,
   };

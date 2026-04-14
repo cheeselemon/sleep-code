@@ -14,6 +14,7 @@ import type { CodexEvents } from './codex-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
 import { basename } from 'path';
 import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
+import type { AgentSessionManager } from '../agents/agent-session-manager.js';
 
 interface CodexHandlerContext {
   client: Client;
@@ -21,6 +22,7 @@ interface CodexHandlerContext {
   state: DiscordState;
   sessionManagerRef: { current: SessionManager | null };
   claudeSdkSessionManagerRef?: { current: ClaudeSdkSessionManager | undefined };
+  agentSessionManagerRef?: { current: AgentSessionManager | undefined };
   memoryCollector?: MemoryCollector;
 }
 
@@ -145,32 +147,43 @@ export function createCodexEvents(context: CodexHandlerContext): CodexEvents {
 
       const multiAgent = isMultiAgentThread(channelManager, thread.id);
 
-      // Auto-route: detect @claude in Codex output → forward to Claude
+      // Auto-route: detect @claude/@gemma4/etc. in Codex output → forward to target
       if (multiAgent) {
         const agents = channelManager.getAgentsInThread(thread.id);
         const sessionManager = context.sessionManagerRef.current;
         const claudeSdkSessionManager = context.claudeSdkSessionManagerRef?.current;
-        const sdkSession = claudeSdkSessionManager?.getSession(agents.claude!);
-        const targetAvailable = sdkSession
-          ? sdkSession.status !== 'ended'
-          : !!sessionManager;
-        const sendToClaude = sdkSession
-          ? (msg: string) => claudeSdkSessionManager!.sendInput(agents.claude!, msg)
-          : (msg: string) => sessionManager!.sendInput(agents.claude!, msg);
+        const agentSessionManager = context.agentSessionManagerRef?.current;
+
+        const resolveTarget = (targetName: string) => {
+          if (targetName === 'claude' && agents.claude) {
+            const sdkSession = claudeSdkSessionManager?.getSession(agents.claude);
+            const available = sdkSession ? sdkSession.status !== 'ended' : !!sessionManager;
+            const send = sdkSession
+              ? (msg: string) => claudeSdkSessionManager!.sendInput(agents.claude!, msg)
+              : (msg: string) => sessionManager!.sendInput(agents.claude!, msg);
+            return { agent: 'claude', isAvailable: () => available, send };
+          }
+          const targetSessionId = agents.agentAliases.get(targetName);
+          if (targetSessionId && agentSessionManager) {
+            const targetSession = agentSessionManager.getSession(targetSessionId);
+            return {
+              agent: targetName,
+              isAvailable: () => !!(targetSession && targetSession.status !== 'ended'),
+              send: (msg: string) => agentSessionManager.sendInput(targetSessionId, msg),
+            };
+          }
+          return null;
+        };
+
         const { routed } = await tryRouteToAgent({
           thread,
           content,
           agents,
           sourceAgent: 'codex',
           state,
-          target: {
-            agent: 'claude',
-            transportType: sdkSession ? 'sdk' : 'pty',
-            isAvailable: () => targetAvailable,
-            send: sendToClaude,
-          },
-          isTargetAvailable: () => targetAvailable,
-          sendToTarget: sendToClaude,
+          resolveTarget,
+          isTargetAvailable: () => false,
+          sendToTarget: () => false,
           onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
         });
         if (routed) return;

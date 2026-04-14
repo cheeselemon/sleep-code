@@ -8,6 +8,7 @@ import type { ProcessManager } from '../process-manager.js';
 import type { DiscordState } from '../state.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
+import type { AgentSessionManager } from '../agents/agent-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
 
 export interface HandlerContext {
@@ -16,6 +17,7 @@ export interface HandlerContext {
   processManager?: ProcessManager;
   codexSessionManager?: CodexSessionManager;
   claudeSdkSessionManager?: ClaudeSdkSessionManager;
+  agentSessionManagerRef?: { current: AgentSessionManager | undefined };
   state: DiscordState;
   memoryCollector?: MemoryCollector;
 }

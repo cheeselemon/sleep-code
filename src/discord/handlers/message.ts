@@ -77,23 +77,43 @@ export function createMessageHandler(context: HandlerContext, sessionManagerRef:
         state.pendingTitles.delete(sessionId);
       }
 
-      // Add "Claude:" prefix when both agents are in the same thread
+      // Add "Claude:" prefix when multiple agents are in the same thread
       const agents = channelManager.getAgentsInThread(thread.id);
-      const multiAgent = !!(agents.claude && agents.codex);
+      const multiAgent = !!(agents.codex || agents.agentAliases.size > 0);
 
-      // Auto-route: detect @codex in Claude output → forward to Codex
-      if (multiAgent && codexSessionManager) {
+      // Auto-route: detect @codex/@gemma4/etc. in Claude output → forward to target
+      if (multiAgent) {
+        const agentSessionManager = context.agentSessionManagerRef?.current;
+        const resolveTarget = (targetName: string) => {
+          if (targetName === 'codex' && agents.codex && codexSessionManager) {
+            const codexSession = codexSessionManager.getSession(agents.codex);
+            return {
+              agent: 'codex',
+              isAvailable: () => !!(codexSession && codexSession.status !== 'ended'),
+              send: (msg: string) => codexSessionManager.sendInput(agents.codex!, msg),
+            };
+          }
+          const targetSessionId = agents.agentAliases.get(targetName);
+          if (targetSessionId && agentSessionManager) {
+            const targetSession = agentSessionManager.getSession(targetSessionId);
+            return {
+              agent: targetName,
+              isAvailable: () => !!(targetSession && targetSession.status !== 'ended'),
+              send: (msg: string) => agentSessionManager.sendInput(targetSessionId, msg),
+            };
+          }
+          return null;
+        };
+
         const { routed } = await tryRouteToAgent({
           thread,
           content: formatted,
           agents,
           sourceAgent: 'claude',
           state,
-          isTargetAvailable: () => {
-            const codexSession = codexSessionManager.getSession(agents.codex!);
-            return !!(codexSession && codexSession.status !== 'ended');
-          },
-          sendToTarget: (msg) => codexSessionManager.sendInput(agents.codex!, msg),
+          resolveTarget,
+          isTargetAvailable: () => false,
+          sendToTarget: () => false,
         });
         if (routed) return;
       }

@@ -29,18 +29,18 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
 export const MODEL_REGISTRY: ModelDefinition[] = [
   {
     alias: 'gemma4',
-    apiId: 'google/gemma-4-27b-it',
-    displayName: 'Gemma 4',
+    apiId: 'google/gemma-4-31b-it',
+    displayName: 'Gemma 4 31B',
     provider: 'openrouter',
-    contextWindow: 131_072,
-    pricing: { inputPerMTok: 0.08, outputPerMTok: 0.35 },
+    contextWindow: 262_144,
+    pricing: { inputPerMTok: 0.13, outputPerMTok: 0.38 },
   },
   {
     alias: 'glm5',
     apiId: 'z-ai/glm-5',
     displayName: 'GLM-5',
     provider: 'openrouter',
-    contextWindow: 131_072,
+    contextWindow: 80_000,
     pricing: { inputPerMTok: 0.72, outputPerMTok: 2.30 },
   },
   {
@@ -48,7 +48,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     apiId: 'z-ai/glm-5.1',
     displayName: 'GLM-5.1',
     provider: 'openrouter',
-    contextWindow: 131_072,
+    contextWindow: 202_752,
     pricing: { inputPerMTok: 0.95, outputPerMTok: 3.15 },
   },
   {
@@ -57,7 +57,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     displayName: 'Qwen3 Coder',
     provider: 'openrouter',
     contextWindow: 262_144,
-    pricing: { inputPerMTok: 0, outputPerMTok: 0 },  // free tier
+    pricing: { inputPerMTok: 0.22, outputPerMTok: 1.00 },
   },
 ];
 
