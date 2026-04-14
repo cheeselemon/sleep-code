@@ -149,6 +149,15 @@ export async function discordRun(): Promise<void> {
   if (process.env.DISCORD_BOT_TOKEN) config.DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
   if (process.env.DISCORD_USER_ID) config.DISCORD_USER_ID = process.env.DISCORD_USER_ID;
 
+  // discord.env의 모든 키를 process.env에 전파
+  // (OPENROUTER_API_KEY, DEEPINFRA_API_KEY, OPENAI_API_KEY 등
+  //  하위 모듈이 process.env에서 참조하는 키들)
+  for (const [key, value] of Object.entries(config)) {
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+
   // Validate required config
   const required = ['DISCORD_BOT_TOKEN', 'DISCORD_USER_ID'];
   const missing = required.filter((key) => !config[key]);
