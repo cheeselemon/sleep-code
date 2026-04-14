@@ -981,6 +981,7 @@ export class ChannelManager {
       threadId,
       channelId: channel.id,
       cwd,
+      modelAlias,
     });
 
     log.info({ sessionId, threadId, model: modelAlias }, 'Agent session mapping stored');

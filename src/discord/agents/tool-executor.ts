@@ -1,5 +1,5 @@
 import { getToolByName, type ToolResult } from './tool-definitions.js';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, realpathSync } from 'fs';
 import { join, resolve, relative, isAbsolute } from 'path';
 import { homedir } from 'os';
 
@@ -81,14 +81,37 @@ function containsPathTraversal(p: string): boolean {
   return /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(p);
 }
 
+/**
+ * 경로가 CWD 안에 있는지 판정 (Claude Code 패턴)
+ * 1. 상대경로는 세션 cwd 기준으로 resolve
+ * 2. symlink가 있으면 실제 대상도 체크 (둘 다 CWD 안이어야 허용)
+ */
 function pathInCwd(targetPath: string, cwd: string): boolean {
-  const absTarget = normalizeMacOS(resolve(targetPath));
+  // 상대경로를 세션 cwd 기준으로 resolve (봇 프로세스 cwd가 아닌)
+  const absTarget = normalizeMacOS(
+    isAbsolute(targetPath) ? resolve(targetPath) : resolve(cwd, targetPath)
+  );
   const absCwd = normalizeMacOS(resolve(cwd));
 
-  const rel = relative(absCwd, absTarget);
-  if (rel === '') return true;                  // same path
-  if (containsPathTraversal(rel)) return false; // goes up
-  return !isAbsolute(rel);                      // inside CWD
+  // lexical check
+  const checkPath = (p: string): boolean => {
+    const rel = relative(absCwd, p);
+    if (rel === '') return true;
+    if (containsPathTraversal(rel)) return false;
+    return !isAbsolute(rel);
+  };
+
+  if (!checkPath(absTarget)) return false;
+
+  // symlink 실제 대상도 체크 (존재하는 경우에만)
+  try {
+    if (existsSync(absTarget)) {
+      const realTarget = normalizeMacOS(realpathSync(absTarget));
+      if (!checkPath(realTarget)) return false;
+    }
+  } catch { /* 파일이 없거나 접근 불가 — lexical check만으로 판단 */ }
+
+  return true;
 }
 
 /**

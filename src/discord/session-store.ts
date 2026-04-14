@@ -21,6 +21,7 @@ export interface PersistedMapping {
   cwd: string;
   codexThreadId?: string;   // Codex SDK thread ID for resumeThread()
   sdkSessionId?: string;    // Claude Agent SDK session ID for resume()
+  modelAlias?: string;      // Agent session model alias (e.g., 'gemma4', 'glm5')
 }
 
 export interface ChannelMapping {

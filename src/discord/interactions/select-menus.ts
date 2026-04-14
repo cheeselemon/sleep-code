@@ -428,7 +428,14 @@ export const handleAgentStartDirSelect: SelectMenuHandler = async (interaction, 
       return;
     }
 
-    const entry = await agentSessionManager.startSession(modelAlias, cwd, mapping.threadId, { sessionId });
+    let entry;
+    try {
+      entry = await agentSessionManager.startSession(modelAlias, cwd, mapping.threadId, { sessionId });
+    } catch (startErr) {
+      // startSession 실패 시 orphan mapping 정리
+      await channelManager.archiveAgentSession(sessionId);
+      throw startErr;
+    }
 
     await interaction.followUp({
       content: `✅ **${modelDef.displayName} session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,

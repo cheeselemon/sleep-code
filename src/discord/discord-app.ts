@@ -716,17 +716,17 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const agentMappings = channelManager.getPersistedAgentMappings();
       if (agentMappings.length > 0) {
         const restorable = agentMappings
-          .filter(m => m.cwd && m.threadId)
+          .filter(m => m.cwd && m.threadId && m.modelAlias)
           .map(m => ({
             sessionId: m.sessionId,
-            modelAlias: m.sessionId.split('-')[0] || 'gemma4', // fallback
+            modelAlias: m.modelAlias!,
             cwd: m.cwd!,
             discordThreadId: m.threadId,
           }));
 
         if (restorable.length > 0) {
-          // Agent sessions use lazy resume — just pre-load mappings, actual restore on first message
-          log.info({ count: restorable.length }, 'Agent session mappings available for lazy restore');
+          const restored = await agentSessionManager.restoreSessions(restorable);
+          log.info({ restored, total: restorable.length }, 'Agent session restoration complete');
         }
       }
     }

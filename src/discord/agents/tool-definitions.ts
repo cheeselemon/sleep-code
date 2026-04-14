@@ -37,9 +37,9 @@ const BashTool: ToolDefinition = {
     const timeout = Math.min((args.timeout as number) || 120_000, 600_000);
 
     return new Promise<ToolResult>((resolve) => {
-      // 민감 환경변수 필터링 — exact match + wildcard 패턴
-      // TOKEN, SECRET, KEY, PASSWORD, CREDENTIAL, AUTH 포함 키를 모두 차단
-      const SENSITIVE_PATTERNS = /(?:^(OPENROUTER_API_KEY|DEEPINFRA_API_KEY|OPENAI_API_KEY|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|TELEGRAM_BOT_TOKEN|ANTHROPIC_API_KEY|GITHUB_TOKEN|NPM_TOKEN)$)|(?:_(?:TOKEN|SECRET|KEY|PASSWORD|CREDENTIAL|AUTH)$)|(?:^(?:AWS_|GCP_|AZURE_|GOOGLE_))/i;
+      // 민감 환경변수 필터링 — exact match + wildcard 패턴 + 부분 매칭
+      // TOKEN, SECRET, KEY, PASSWORD, CREDENTIAL, AUTH를 어디서든 포함하면 차단
+      const SENSITIVE_PATTERNS = /(?:TOKEN|SECRET|_KEY|PASSWORD|CREDENTIAL|AUTH|PRIVATE|DATABASE_URL|CONNECTION_STRING)|(?:^(?:AWS_|GCP_|AZURE_|GOOGLE_|HEROKU_|VERCEL_|NETLIFY_|FIREBASE_|SUPABASE_|NPM_CONFIG_))/i;
       const safeEnv: Record<string, string> = {};
       for (const [key, value] of Object.entries(process.env)) {
         if (!SENSITIVE_PATTERNS.test(key) && value !== undefined) {
