@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { randomUUID } from 'crypto';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
 import { discordLogger as log } from '../../utils/logger.js';
 import {
   getModelByAlias, getProviderConfig,
@@ -10,6 +12,41 @@ import { TOOL_SCHEMAS } from './tool-definitions.js';
 import { ToolExecutor } from './tool-executor.js';
 import { appendToHistory, loadHistory } from './session-history.js';
 import { autoCompact } from './compaction.js';
+
+// ── AGENTS.md 자동 로딩 (Claude Code 패턴) ──────────────────────
+// CWD에서 상위 디렉토리로 올라가며 AGENTS.md를 탐색
+// 발견하면 system prompt에 주입 (프로젝트 컨텍스트 제공)
+
+function findAgentsMd(cwd: string): string | null {
+  let dir = cwd;
+  for (let depth = 0; depth < 20; depth++) {
+    const candidate = join(dir, 'AGENTS.md');
+    if (existsSync(candidate)) {
+      try {
+        const content = readFileSync(candidate, 'utf-8').trim();
+        if (content) {
+          log.info({ path: candidate }, 'Found AGENTS.md');
+          return content;
+        }
+      } catch { /* 읽기 실패 시 무시 */ }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break; // root 도달
+    dir = parent;
+  }
+  return null;
+}
+
+function buildSystemPrompt(cwd: string): string {
+  const parts = [SYSTEM_PROMPT];
+
+  const agentsMd = findAgentsMd(cwd);
+  if (agentsMd) {
+    parts.push(`\n## Project Context (AGENTS.md)\n\nThe following project instructions were loaded from AGENTS.md. Follow these instructions:\n\n${agentsMd}`);
+  }
+
+  return parts.join('\n');
+}
 
 export interface AgentSessionEntry {
   id: string;
@@ -145,7 +182,7 @@ export class AgentSessionManager {
       log.info({ sessionId: id, restored: conversationHistory.length }, 'Restored conversation history');
     }
     if (conversationHistory.length === 0) {
-      conversationHistory = [{ role: 'system', content: SYSTEM_PROMPT }];
+      conversationHistory = [{ role: 'system', content: buildSystemPrompt(cwd) }];
     }
 
     const toolExecutor = new ToolExecutor({
