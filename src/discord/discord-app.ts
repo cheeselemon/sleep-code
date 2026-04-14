@@ -99,6 +99,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
   const claudeSdkSessionManagerRef: { current: ClaudeSdkSessionManager | undefined } = { current: undefined };
+  const codexSessionManagerRef: { current: CodexSessionManager | undefined } = { current: undefined };
   const agentSessionManagerRef: { current: AgentSessionManager | undefined } = { current: undefined };
 
   // Initialize Codex session manager if enabled
@@ -117,6 +118,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         channelManager.setCodexThreadId(sessionId, codexThreadId);
       },
     });
+    codexSessionManagerRef.current = codexSessionManager;
     log.info('Codex session manager initialized');
   }
 
@@ -130,6 +132,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       state,
       sessionManagerRef,
       claudeSdkSessionManagerRef,
+      codexSessionManagerRef,
       agentSessionManagerRef,
       memoryCollector: options?.memoryCollector,
     });
@@ -137,8 +140,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       isYolo: (threadId: string) => {
         // Check if any session in this thread has YOLO enabled
         const agents = channelManager.getAgentsInThread(threadId);
-        for (const sessionId of Object.values(agents)) {
-          if (sessionId && state.yoloSessions.has(sessionId)) return true;
+        const sessionIds = [agents.claude, agents.codex, agents.agent].filter(Boolean) as string[];
+        for (const sessionId of sessionIds) {
+          if (state.yoloSessions.has(sessionId)) return true;
         }
         return false;
       },
@@ -297,10 +301,17 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     if (!claudeSessionId && !codexSessionId && !agentSession) return;
 
-    // Use first message for routing (determines @claude vs @codex)
+    // Build agent presence map for routing context
+    const hasAgents = new Map<string, boolean>();
+    for (const [alias] of agents.agentAliases) {
+      hasAgents.set(alias, true);
+    }
+
+    // Use first message for routing (determines @claude vs @codex vs @gemma4 etc.)
     const directive = parseRoutingDirective(firstMessage.content, {
       hasClaude: !!claudeSessionId,
       hasCodex: !!codexSessionId,
+      hasAgents,
       lastActive: state.lastActiveAgent.get(threadId),
     });
     const { target, invalidMention } = directive;
@@ -311,6 +322,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const d = parseRoutingDirective(msg.content, {
         hasClaude: !!claudeSessionId,
         hasCodex: !!codexSessionId,
+        hasAgents,
         lastActive: state.lastActiveAgent.get(threadId),
       });
       allContents.push(d.cleanContent);
@@ -474,6 +486,23 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       const sent = await agentSessionManager.sendInput(agentSession.id, agentInput);
       if (!sent) {
         await firstMessage.reply('⚠️ Failed to send input to agent - session busy or ended.');
+      }
+      return;
+    }
+
+    // Route to generic agent if target is a model alias
+    if (target !== 'claude' && target !== 'codex' && hasAgents.has(target)) {
+      const targetSessionId = agents.agentAliases.get(target);
+      const targetSession = targetSessionId ? agentSessionManager?.getSession(targetSessionId) : null;
+      if (targetSession && agentSessionManager) {
+        const agentInput = `${displayName}: ${inputText}`;
+        const sent = await agentSessionManager.sendInput(targetSession.id, agentInput);
+        if (!sent) {
+          await firstMessage.reply(`⚠️ Failed to send input to ${target} — session busy or ended.`);
+        }
+        state.lastActiveAgent.set(threadId, target);
+      } else {
+        await firstMessage.reply(`⚠️ @${target} session is not active in this thread.`);
       }
       return;
     }

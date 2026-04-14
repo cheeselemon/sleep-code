@@ -44,6 +44,49 @@
 | `/codex stop` | Stop a running Codex session |
 | `/codex status` | Show all Codex sessions |
 
+### Generic Agents (OpenRouter / DeepInfra)
+
+| Command | Description |
+|---------|-------------|
+| `/chat start` | Start a new agent session (select model → directory) |
+| `/chat stop` | Stop current thread's agent session |
+| `/chat status` | Show all active agent sessions |
+| `/chat models` | Show available models with pricing |
+
+**Available Models:**
+
+| Alias | Model | Context | Pricing (in/out per 1M) |
+|-------|-------|---------|------------------------|
+| `gemma4` | Gemma 4 27B | 131K | $0.08 / $0.35 |
+| `glm5` | GLM-5 | 131K | $0.72 / $2.30 |
+| `glm51` | GLM-5.1 | 131K | $0.95 / $3.15 |
+| `qwen3-coder` | Qwen3 Coder | 262K | Free tier |
+
+### Generic Agent Setup
+
+1. Get an API key from [OpenRouter](https://openrouter.ai) or [DeepInfra](https://deepinfra.com).
+2. Add to `~/.sleep-code/discord.env`:
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-xxxxx
+# Optional: DEEPINFRA_API_KEY=xxxxx
+```
+
+3. Restart the bot:
+
+```bash
+pm2 restart sleep-discord
+```
+
+4. Verify:
+
+```bash
+pm2 logs sleep-discord --lines 5 --nostream
+# Expected: {"level":"info","msg":"AgentSessionManager initialized"}
+```
+
+> **Note:** Generic agents share the same tool set (Bash, Read, Write, Edit, Grep, Glob) with CWD-based path restriction and deny rules from `~/.claude/settings.json`.
+
 ### Memory
 
 | Command | Description |
@@ -79,15 +122,19 @@
 
 ## Multi-Agent Message Routing (Discord)
 
-When both Claude and Codex are in the same thread, use prefixes to route messages:
+When multiple agents are in the same thread, use `@mention` or prefixes to route messages:
 
 | Prefix | Target | Example |
 |--------|--------|---------|
+| `@claude` | Claude | `@claude explain this code` |
+| `@codex` or `x:` | Codex | `@codex run the tests` |
+| `@gemma4` | Gemma 4 | `@gemma4 what do you think?` |
+| `@glm5` / `@glm51` | GLM-5 / 5.1 | `@glm5 review this` |
+| `@qwen3-coder` | Qwen3 Coder | `@qwen3-coder optimize this` |
 | `c:` or `claude:` | Claude | `c: explain this code` |
-| `x:` or `codex:` | Codex | `x: run the tests` |
 | (none) | Last active agent | `fix the bug` |
 
-Using `x:` in a Claude-only thread will auto-create a Codex session in the same directory.
+> **Note:** Agent aliases are auto-detected from the model registry. New models added to `model-registry.ts` are automatically routable.
 
 ## Memory CLI
 

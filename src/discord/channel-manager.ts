@@ -1055,11 +1055,25 @@ export class ChannelManager {
   /**
    * Get which agents are active in a thread
    */
-  getAgentsInThread(threadId: string): { claude?: string; codex?: string; agent?: string } {
+  getAgentsInThread(threadId: string): {
+    claude?: string;
+    codex?: string;
+    agent?: string;
+    /** alias → sessionId for all generic agent sessions in this thread */
+    agentAliases: Map<string, string>;
+  } {
+    const agentSessionId = this.agentStore.getByThread(threadId);
+    const agentAliases = new Map<string, string>();
+    if (agentSessionId) {
+      const persisted = this.agentStore.getPersisted(agentSessionId);
+      const alias = persisted?.modelAlias || 'agent';
+      agentAliases.set(alias, agentSessionId);
+    }
     return {
       claude: this.ptyStore.getByThread(threadId) || this.sdkStore.getByThread(threadId),
       codex: this.codexStore.getByThread(threadId),
-      agent: this.agentStore.getByThread(threadId),
+      agent: agentSessionId,
+      agentAliases,
     };
   }
 }

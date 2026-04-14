@@ -304,6 +304,21 @@ Long context (3+ lines) between agents **must be shared via files** due to Disco
 - 문서 작성/수정 시 `/write-docs` 스킬을 사용하여 `docs/writing-guide.md`의 5원칙을 적용
 - 정본(canonical) 위치: 아키텍처는 `CLAUDE.md`, 커맨드는 `docs/commands.md`, 메모리는 `docs/memory.md`
 
+## Skills (Slash Commands)
+
+스킬 파일은 3곳에 존재하며 **수정 시 반드시 3곳 동기화**:
+
+| 역할 | 위치 | 설명 |
+|------|------|------|
+| 정본 (Source) | `docs/skills/*.md` | 레포에 커밋되는 원본 |
+| 설치 스킬 | `.claude/commands/sc-install.md` | 정본을 `~/.claude/commands/`로 복사하는 스킬 |
+| 설치된 사본 | `~/.claude/commands/sc-*.md` | 실제 실행되는 사본 (레포 밖) |
+
+스킬 내용을 수정할 때:
+1. `docs/skills/` 정본을 먼저 수정
+2. `~/.claude/commands/sc-*` 사본에 동일 내용 반영
+3. `.claude/commands/sc-install.md` 안내 문구도 맞춰 수정
+
 ## Code Style
 
 - TypeScript with ES modules

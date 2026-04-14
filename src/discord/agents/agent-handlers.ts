@@ -16,6 +16,7 @@ import type { AgentEvents, AgentSessionManager } from './agent-session-manager.j
 import type { MemoryCollector } from '../../memory/memory-collector.js';
 import { basename } from 'path';
 import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
+import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 
 interface AgentHandlerContext {
   client: Client;
@@ -23,6 +24,7 @@ interface AgentHandlerContext {
   state: DiscordState;
   sessionManagerRef: { current: SessionManager | null };
   claudeSdkSessionManagerRef?: { current: ClaudeSdkSessionManager | undefined };
+  codexSessionManagerRef?: { current: CodexSessionManager | undefined };
   agentSessionManagerRef: { current: AgentSessionManager | undefined };
   memoryCollector?: MemoryCollector;
 }
@@ -126,40 +128,59 @@ export function createAgentEvents(context: AgentHandlerContext): AgentEvents {
         }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
-      // Multi-agent routing: detect @claude or @codex in output
+      // Multi-agent routing: detect @claude, @codex, @gemma4, etc. in output
       const agents = channelManager.getAgentsInThread(thread.id);
-      const hasOtherAgent = !!(agents.claude || agents.codex);
+      const hasOtherAgent = !!(agents.claude || agents.codex || agents.agentAliases.size > 1
+        || (agents.agentAliases.size === 1 && !agents.agentAliases.has(modelAlias)));
       if (hasOtherAgent) {
         const sessionManager = context.sessionManagerRef.current;
         const claudeSdkSessionManager = context.claudeSdkSessionManagerRef?.current;
+        const codexSessionManager = context.codexSessionManagerRef?.current;
 
-        // Try route to Claude
-        if (agents.claude) {
-          const sdkSession = claudeSdkSessionManager?.getSession(agents.claude);
-          const targetAvailable = sdkSession
-            ? sdkSession.status !== 'ended'
-            : !!sessionManager;
-          const sendToClaude = sdkSession
-            ? (msg: string) => claudeSdkSessionManager!.sendInput(agents.claude!, msg)
-            : (msg: string) => sessionManager!.sendInput(agents.claude!, msg);
-          const { routed } = await tryRouteToAgent({
-            thread,
-            content,
-            agents,
-            sourceAgent: modelAlias as any,
-            state,
-            target: {
-              agent: 'claude',
-              transportType: sdkSession ? 'sdk' : 'pty',
-              isAvailable: () => targetAvailable,
-              send: sendToClaude,
-            },
-            isTargetAvailable: () => targetAvailable,
-            sendToTarget: sendToClaude,
-            onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
-          });
-          if (routed) return;
-        }
+        // resolveTarget: dynamically find send function for any agent
+        const resolveTarget = (targetName: string) => {
+          if (targetName === 'claude' && agents.claude) {
+            const sdkSession = claudeSdkSessionManager?.getSession(agents.claude);
+            const available = sdkSession ? sdkSession.status !== 'ended' : !!sessionManager;
+            const send = sdkSession
+              ? (msg: string) => claudeSdkSessionManager!.sendInput(agents.claude!, msg)
+              : (msg: string) => sessionManager!.sendInput(agents.claude!, msg);
+            return { agent: 'claude', transportType: (sdkSession ? 'sdk' : 'pty') as any, isAvailable: () => available, send };
+          }
+          if (targetName === 'codex' && agents.codex && codexSessionManager) {
+            const codexSession = codexSessionManager.getSession(agents.codex);
+            return {
+              agent: 'codex',
+              isAvailable: () => !!codexSession && codexSession.status === 'running',
+              send: (msg: string) => codexSessionManager.sendInput(agents.codex!, msg),
+            };
+          }
+          // Generic agent target
+          const targetSessionId = agents.agentAliases.get(targetName);
+          if (targetSessionId && context.agentSessionManagerRef?.current) {
+            const agentMgr = context.agentSessionManagerRef.current;
+            const targetSession = agentMgr.getSession(targetSessionId);
+            return {
+              agent: targetName,
+              isAvailable: () => !!targetSession && targetSession.status !== 'ended',
+              send: (msg: string) => agentMgr.sendInput(targetSessionId, msg),
+            };
+          }
+          return null;
+        };
+
+        const { routed } = await tryRouteToAgent({
+          thread,
+          content,
+          agents,
+          sourceAgent: modelAlias,
+          state,
+          resolveTarget,
+          isTargetAvailable: () => false,
+          sendToTarget: () => false,
+          onBeforeSend: (msg) => state.discordSentMessages.add(msg.trim()),
+        });
+        if (routed) return;
       }
 
       const prefix = hasOtherAgent ? `**${displayName}:** ` : '';

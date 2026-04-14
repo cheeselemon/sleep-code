@@ -79,12 +79,13 @@ src/
 
 ## Multi-Agent Workflow
 
-This project uses a **Claude + Codex collaboration** model:
+This project uses a **Claude + Codex + Generic agent** collaboration model:
 
 ### Roles
 
 - **Claude (Architect)** — Plans features, reviews code, makes architectural decisions
 - **Codex (Implementer)** — Implements code based on plan files, executes tasks
+- **Generic Agents** — Lightweight models for review, brainstorming, secondary opinions (Gemma 4, GLM-5, GLM-5.1, Qwen3 Coder via OpenRouter/DeepInfra)
 - **CEO (Human)** — Final approval on plans and completed work
 
 ### Process
@@ -100,14 +101,18 @@ This project uses a **Claude + Codex collaboration** model:
 
 - `CEO → Claude`: no prefix (regular message)
 - `CEO → Codex`: starts with `@codex`
+- `CEO → Generic`: starts with `@gemma4`, `@glm5`, `@glm51`, or `@qwen3-coder`
 - `Claude → Codex`: starts with `@codex`
 - `Codex → Claude`: starts with `@claude`
+- `Agent → Agent`: include `@target_name` in output
+
+Supported mentions: `@claude`, `@codex`, `@gemma4`, `@glm5`, `@glm51`, `@qwen3-coder`
 
 **`@` Mention Rules (Critical — prevents infinite loops):**
-- `@mention` = immediate delivery + the other agent starts working
+- `@mention` = immediate delivery + the target agent starts working
 - **Use `@mention` only when you have a concrete request, question, or task** for the other agent
 - Acknowledgments, status updates, and completion reports go to the human (CEO) only (no `@mention`)
-- When referring to the other agent without routing, omit `@` (write "codex", "claude")
+- When referring to another agent without routing, omit `@` (write "codex", "claude", "gemma4")
   - OK: "incorporated codex's feedback"
   - BAD: "incorporated @codex's feedback" — this triggers routing
 

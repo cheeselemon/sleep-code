@@ -29,11 +29,11 @@ The user may provide a project path. If not, use the current working directory.
 ✓ Installed sleep-code skills to ~/.claude/commands/
 
 Available commands (use in any project):
-  /sc-setup-multi-agent        — Add multi-agent (Claude+Codex) protocol to CLAUDE.md
+  /sc-setup-multi-agent        — Add multi-agent (Claude+Codex+Generic) protocol to CLAUDE.md
   /sc-setup-memory-knowledge   — Add memory & knowledge system docs to CLAUDE.md
 
 Usage:
   1. Open any project in Claude Code
   2. Run /sc-setup-memory-knowledge to enable memory recall for that project
-  3. Run /sc-setup-multi-agent if using Claude+Codex collaboration
+  3. Run /sc-setup-multi-agent if using Claude+Codex+Generic agent collaboration
 ```

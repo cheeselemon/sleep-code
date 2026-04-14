@@ -179,7 +179,7 @@ function extractBodyMentionTarget(text: string, exclude?: AgentType): AgentType 
 
 export function parseRoutingDirective(
   content: string,
-  context: { hasClaude: boolean; hasCodex: boolean; lastActive?: AgentType }
+  context: { hasClaude: boolean; hasCodex: boolean; hasAgents?: Map<string, boolean>; lastActive?: AgentType }
 ): RoutingDirective {
   const trimmed = normalizeInvisible(content).trimStart();
 
@@ -208,12 +208,16 @@ export function parseRoutingDirective(
   const bodyMentionTarget = extractBodyMentionTarget(content, context.lastActive);
   const invalidMention = bodyMentionTarget !== undefined;
 
-  // Default routing: single agent → that agent, both → always claude
-  // Use explicit @codex prefix to route to Codex
+  // Default routing:
+  //   single agent → that agent
+  //   multiple agents → claude (if present), else first agent
   let target: AgentType;
-  if (context.hasClaude && !context.hasCodex) target = 'claude';
-  else if (context.hasCodex && !context.hasClaude) target = 'codex';
-  else target = 'claude';
+  if (context.hasClaude && !context.hasCodex && !(context.hasAgents?.size)) target = 'claude';
+  else if (context.hasCodex && !context.hasClaude && !(context.hasAgents?.size)) target = 'codex';
+  else if (!context.hasClaude && !context.hasCodex && context.hasAgents?.size === 1) {
+    // Only one generic agent — route to it
+    target = context.hasAgents.keys().next().value!;
+  } else target = context.lastActive ?? 'claude';
 
   return { target, cleanContent: content, explicit: false, invalidMention, bodyMentionTarget };
 }
