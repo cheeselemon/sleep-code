@@ -12,6 +12,7 @@ import { handleBackground, handleInterrupt, handleMode, handleCompact, handleMod
 import { handleYoloSleep, handlePanel } from './yolo.js';
 import { handleClaude } from './claude.js';
 import { handleCodex } from './codex.js';
+import { handleChat } from './chat.js';
 import { handleStatus } from './status.js';
 import { handleMemory, type MemoryCommandContext } from './memory.js';
 import { handleSettings } from './settings.js';
@@ -111,6 +112,25 @@ export const commands = [
     .addSubcommand(sub =>
       sub.setName('status')
         .setDescription('Show all Codex sessions')),
+  new SlashCommandBuilder()
+    .setName('chat')
+    .setDescription('Manage agent sessions (Gemma, GLM, Qwen, etc.)')
+    .addSubcommand(sub =>
+      sub.setName('start')
+        .setDescription('Start a new agent session')
+        .addStringOption(opt =>
+          opt.setName('model')
+            .setDescription('Model alias (gemma4, glm5, glm51, qwen3-coder)')
+            .setRequired(false)))
+    .addSubcommand(sub =>
+      sub.setName('stop')
+        .setDescription('Stop agent session in this thread'))
+    .addSubcommand(sub =>
+      sub.setName('status')
+        .setDescription('Show all active agent sessions'))
+    .addSubcommand(sub =>
+      sub.setName('models')
+        .setDescription('Show available models and pricing')),
   new SlashCommandBuilder()
     .setName('settings')
     .setDescription('Show current settings with tips to change them'),
@@ -216,6 +236,9 @@ export async function handleCommand(
       break;
     case 'codex':
       await handleCodex(interaction, context);
+      break;
+    case 'chat':
+      await handleChat(interaction, context);
       break;
     case 'settings':
       await handleSettings(interaction, context);

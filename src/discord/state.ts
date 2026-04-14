@@ -89,7 +89,7 @@ export interface DiscordState {
   fullResultsCleanupInterval: NodeJS.Timeout | null;
 
   // Track which agent was last active in each thread (for default routing)
-  lastActiveAgent: Map<string, 'claude' | 'codex'>; // threadId -> agent type
+  lastActiveAgent: Map<string, string>; // threadId -> agent type (claude, codex, gemma4, etc.)
 
   // Track consecutive agent-to-agent routing count (reset on user message)
   agentRoutingCount: Map<string, number>; // threadId -> count

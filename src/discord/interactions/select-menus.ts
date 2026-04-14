@@ -1,14 +1,22 @@
 /**
- * Select menu handlers for /claude commands
+ * Select menu handlers for /claude, /codex, /chat commands
  * - claude_start_dir
  * - claude_stop_session
  * - claude_remove_dir
  * - claude_set_terminal
+ * - chat_start_model
+ * - chat_start_dir:{model}
  */
 
 import { basename } from 'path';
 import { randomUUID } from 'crypto';
+import {
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+} from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
+import { getModelByAlias } from '../agents/model-registry.js';
 import type { SelectMenuHandler } from './types.js';
 
 /**
@@ -321,6 +329,115 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
     log.error({ err, cwd }, 'Failed to start Claude SDK session');
     await interaction.followUp({
       content: `❌ Failed to start Claude SDK session: ${(err as Error).message}`,
+      ephemeral: true,
+    });
+  }
+};
+
+// ── Agent (OpenRouter/DeepInfra) select menu handlers ─────────────
+
+/**
+ * Handle model selection for /chat start — then show directory picker
+ */
+export const handleAgentStartModelSelect: SelectMenuHandler = async (interaction, context) => {
+  const { settingsManager } = context;
+
+  if (!settingsManager) {
+    await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+    return;
+  }
+
+  const modelAlias = interaction.values[0];
+  const modelDef = getModelByAlias(modelAlias);
+  if (!modelDef) {
+    await interaction.update({ content: `❌ Unknown model: ${modelAlias}`, components: [] });
+    return;
+  }
+
+  const dirs = settingsManager.getAllowedDirectories();
+  if (dirs.length === 0) {
+    await interaction.update({
+      content: '⚠️ No directories configured. Use `/claude add-dir` first.',
+      components: [],
+    });
+    return;
+  }
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`chat_start_dir:${modelAlias}`)
+    .setPlaceholder('Select a directory...');
+
+  for (const dir of dirs.slice(0, 25)) {
+    selectMenu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(basename(dir))
+        .setDescription(dir.slice(0, 100))
+        .setValue(dir)
+    );
+  }
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+  await interaction.update({
+    content: `🤖 **Start ${modelDef.displayName} Session**\nSelect a directory:`,
+    components: [row],
+  });
+};
+
+/**
+ * Handle directory selection for /chat start — actually start the agent session
+ */
+export const handleAgentStartDirSelect: SelectMenuHandler = async (interaction, context) => {
+  const { agentSessionManager, channelManager, settingsManager } = context;
+
+  if (!agentSessionManager || !settingsManager) {
+    await interaction.reply({ content: '⚠️ Agent system is not enabled.', ephemeral: true });
+    return;
+  }
+
+  // customId format: chat_start_dir:{modelAlias}
+  const modelAlias = interaction.customId.split(':')[1];
+  const cwd = interaction.values[0];
+
+  if (!settingsManager.isDirectoryAllowed(cwd)) {
+    await interaction.update({
+      content: `❌ Directory \`${cwd}\` is no longer in the whitelist.`,
+      components: [],
+    });
+    return;
+  }
+
+  const modelDef = getModelByAlias(modelAlias);
+  if (!modelDef) {
+    await interaction.update({ content: `❌ Unknown model: ${modelAlias}`, components: [] });
+    return;
+  }
+
+  try {
+    await interaction.update({
+      content: `🚀 Starting ${modelDef.displayName} session in \`${cwd}\`...`,
+      components: [],
+    });
+
+    // Create thread via channelManager (reuse SDK session pattern)
+    const sessionId = randomUUID();
+    const sessionName = `${modelAlias}-${basename(cwd)}`;
+    const mapping = await channelManager.createSdkSession(sessionId, sessionName, cwd);
+    if (!mapping) {
+      await interaction.followUp({ content: '❌ Failed to create thread.', ephemeral: true });
+      return;
+    }
+
+    const entry = await agentSessionManager.startSession(modelAlias, cwd, mapping.threadId, { sessionId });
+
+    await interaction.followUp({
+      content: `✅ **${modelDef.displayName} session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      ephemeral: true,
+    });
+  } catch (err) {
+    log.error({ err, cwd, modelAlias }, 'Failed to start agent session');
+    await interaction.followUp({
+      content: `❌ Failed to start agent session: ${(err as Error).message}`,
       ephemeral: true,
     });
   }

@@ -57,6 +57,7 @@
     "discord.js": "^14.25.1",
     "grammy": "^1.35.0",
     "node-pty": "^1.0.0",
+    "openai": "^6.34.0",
     "pino": "^10.3.0",
     "rotating-file-stream": "^3.2.7",
     "stream-json": "^1.9.1",

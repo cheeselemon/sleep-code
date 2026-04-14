@@ -113,7 +113,9 @@ export function getInstalledTerminals(): { terminal: boolean; iterm2: boolean } 
 /**
  * Parse agent prefix from message content for routing
  */
-export type AgentType = 'claude' | 'codex';
+import { getAllAliases } from './agents/model-registry.js';
+
+export type AgentType = string;
 
 export interface RoutingDirective {
   target: AgentType;
@@ -121,6 +123,26 @@ export interface RoutingDirective {
   explicit: boolean;         // true = first token is @codex/@claude or legacy prefix
   invalidMention: boolean;   // true = @codex/@claude found mid-body (not in code blocks)
   bodyMentionTarget?: AgentType; // which agent was @mentioned mid-body (for fallback routing)
+}
+
+/**
+ * Build dynamic regex for all known agent names (claude, codex, + model aliases)
+ */
+function buildAgentNames(): string[] {
+  return ['claude', 'codex', ...getAllAliases()];
+}
+
+function buildAgentRegex(): RegExp {
+  const allNames = buildAgentNames();
+  const pattern = allNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`(?<![\\p{L}\\p{N}._%+-])@(${pattern})(?![\\p{L}\\p{N}_-])`, 'giu');
+}
+
+function buildAgentPrefixRegex(): Array<{ name: string; regex: RegExp }> {
+  return buildAgentNames().map(name => ({
+    name,
+    regex: new RegExp(`^@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[:\\s]|$)[:\\s]*`, 'i'),
+  }));
 }
 
 /**
@@ -145,9 +167,8 @@ function normalizeInvisible(text: string): string {
  */
 function extractBodyMentionTarget(text: string, exclude?: AgentType): AgentType | undefined {
   const stripped = normalizeInvisible(stripCodeBlocks(text));
-  // Negative lookbehind: not preceded by word/identifier chars (blocks foo@codex, @codextra)
-  // Negative lookahead: not followed by word/identifier chars (blocks @codex-foo, @codex_bar)
-  const regex = /(?<![\p{L}\p{N}._%+-])@(codex|claude)(?![\p{L}\p{N}_-])/giu;
+  // Dynamic regex: matches @claude, @codex, @gemma4, @glm5, @qwen3-coder, etc.
+  const regex = buildAgentRegex();
   let match: RegExpExecArray | null;
   while ((match = regex.exec(stripped)) !== null) {
     const agent = match[1].toLowerCase() as AgentType;
@@ -162,18 +183,13 @@ export function parseRoutingDirective(
 ): RoutingDirective {
   const trimmed = normalizeInvisible(content).trimStart();
 
-  // Check @mention style: @codex or @claude (with optional colon/space after)
-  // Use lookahead to prevent matching @codex-foo or @claude-bar
-  const codexMention = /^@codex(?=[:\s]|$)[:\s]*/i;
-  const claudeMention = /^@claude(?=[:\s]|$)[:\s]*/i;
-
-  if (codexMention.test(trimmed)) {
-    const cleanContent = trimmed.replace(codexMention, '').trimStart();
-    return { target: 'codex', cleanContent, explicit: true, invalidMention: false };
-  }
-  if (claudeMention.test(trimmed)) {
-    const cleanContent = trimmed.replace(claudeMention, '').trimStart();
-    return { target: 'claude', cleanContent, explicit: true, invalidMention: false };
+  // Check @mention style: @codex, @claude, @gemma4, @glm5, @qwen3-coder, etc.
+  // Dynamic regex built from model registry
+  for (const { name, regex } of buildAgentPrefixRegex()) {
+    if (regex.test(trimmed)) {
+      const cleanContent = trimmed.replace(regex, '').trimStart();
+      return { target: name, cleanContent, explicit: true, invalidMention: false };
+    }
   }
 
   // Legacy prefix support: x:/c:/codex:/claude:

@@ -28,6 +28,8 @@ import { createCodexEvents } from './codex/codex-handlers.js';
 import { CODEX_MODEL } from './codex/codex-session-manager.js';
 import { ClaudeSdkSessionManager, type ClaudeSdkSessionEntry } from './claude-sdk/claude-sdk-session-manager.js';
 import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
+import { AgentSessionManager } from './agents/agent-session-manager.js';
+import { createAgentEvents } from './agents/agent-handlers.js';
 import { ControlPanel } from './control-panel.js';
 
 // Import state management
@@ -97,6 +99,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   // Create a ref for lazy sessionManager access (needed for circular dependency)
   const sessionManagerRef: SessionManagerRef = { current: null };
   const claudeSdkSessionManagerRef: { current: ClaudeSdkSessionManager | undefined } = { current: undefined };
+  const agentSessionManagerRef: { current: AgentSessionManager | undefined } = { current: undefined };
 
   // Initialize Codex session manager if enabled
   let codexSessionManager: CodexSessionManager | undefined;
@@ -115,6 +118,40 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       },
     });
     log.info('Codex session manager initialized');
+  }
+
+  // Initialize Agent session manager (OpenRouter/DeepInfra models)
+  const enableAgents = !!(process.env.OPENROUTER_API_KEY || process.env.DEEPINFRA_API_KEY);
+  let agentSessionManager: AgentSessionManager | undefined;
+  if (enableAgents) {
+    const agentEvents = createAgentEvents({
+      client,
+      channelManager,
+      state,
+      sessionManagerRef,
+      claudeSdkSessionManagerRef,
+      agentSessionManagerRef,
+      memoryCollector: options?.memoryCollector,
+    });
+    agentSessionManager = new AgentSessionManager(agentEvents, {
+      isYolo: (threadId: string) => {
+        // Check if any session in this thread has YOLO enabled
+        const agents = channelManager.getAgentsInThread(threadId);
+        for (const sessionId of Object.values(agents)) {
+          if (sessionId && state.yoloSessions.has(sessionId)) return true;
+        }
+        return false;
+      },
+      // #4: maxConcurrentSessions — count other session types
+      maxConcurrentSessions: settingsManager?.getMaxSessions(),
+      getActiveCounts: () => {
+        const sdkCount = claudeSdkSessionManagerRef.current?.getAllSessions().filter(s => s.status !== 'ended').length ?? 0;
+        const codexCount = codexSessionManager?.getAllSessions().filter(s => s.status !== 'ended').length ?? 0;
+        return sdkCount + codexCount;
+      },
+    });
+    agentSessionManagerRef.current = agentSessionManager;
+    log.info('Agent session manager initialized (OpenRouter/DeepInfra)');
   }
 
   // Single-flight map to prevent duplicate lazy resume attempts for the same session
@@ -160,6 +197,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     settingsManager,
     codexSessionManager,
     claudeSdkSessionManager,
+    agentSessionManager,
     state,
     get batchDistillRunner() { return batchDistillRunner; },
     get dailyDigestRunner() { return dailyDigestRunner; },
@@ -202,9 +240,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     const threadId = message.channelId;
 
-    // Check which agents are active in this thread
+    // Check which agents are active in this thread (includes agent sessions)
     const agents = channelManager.getAgentsInThread(threadId);
-    if (!agents.claude && !agents.codex) return;
+    const hasAgentSession = !!agentSessionManager?.getSessionByDiscordThread(threadId);
+    if (!agents.claude && !agents.codex && !hasAgentSession) return;
 
     // Quick interrupt commands bypass debounce
     const INTERRUPT_COMMANDS = new Set(['!중지', '!halt', '!잠깐']);
@@ -242,11 +281,15 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     const threadId = firstMessage.channelId;
 
     // Check which agents are active in this thread
+    // Agent 세션 우선 체크 — createSdkSession으로 등록되었더라도 실제 agent 세션이면
+    // Claude로 오인하지 않도록 처리
+    const agentSession = agentSessionManager?.getSessionByDiscordThread(threadId);
     const agents = channelManager.getAgentsInThread(threadId);
-    const claudeSessionId = agents.claude;
+    // Agent 세션이 sdkStore에도 등록되어 agents.claude로 잡히므로, agent 세션의 ID와 같으면 제외
+    const claudeSessionId = (agentSession && agents.claude === agentSession.id) ? undefined : agents.claude;
     const codexSessionId = agents.codex;
 
-    if (!claudeSessionId && !codexSessionId) return;
+    if (!claudeSessionId && !codexSessionId && !agentSession) return;
 
     // Use first message for routing (determines @claude vs @codex)
     const directive = parseRoutingDirective(firstMessage.content, {
@@ -394,6 +437,14 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
+      // Try Agent session (OpenRouter/DeepInfra models)
+      if (!interrupted && agentSession && agentSessionManager) {
+        if (agentSession.status === 'running') {
+          agentSessionManager.interruptSession(agentSession.id);
+          interrupted = true;
+        }
+      }
+
       // Try PTY (send Escape x2)
       if (!interrupted && claudeSessionId) {
         const channel = channelManager.getSession(claudeSessionId);
@@ -407,6 +458,16 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         await firstMessage.react('🛑');
       } else {
         await firstMessage.reply('⚠️ No active session to interrupt.');
+      }
+      return;
+    }
+
+    // Route to agent session if it's the only session in this thread (no claude/codex)
+    if (!claudeSessionId && !codexSessionId && agentSession && agentSessionManager) {
+      const agentInput = `${displayName}: ${inputText}`;
+      const sent = await agentSessionManager.sendInput(agentSession.id, agentInput);
+      if (!sent) {
+        await firstMessage.reply('⚠️ Failed to send input to agent - session busy or ended.');
       }
       return;
     }

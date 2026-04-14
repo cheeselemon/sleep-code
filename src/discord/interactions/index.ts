@@ -35,6 +35,8 @@ import {
   handleCodexStartDirSelect,
   handleCodexStopSessionSelect,
   handleSdkStartDirSelect,
+  handleAgentStartModelSelect,
+  handleAgentStartDirSelect,
 } from './select-menus.js';
 import type { InteractionContext } from './types.js';
 
@@ -208,6 +210,18 @@ export async function handleSelectMenu(
   // Codex stop session selection
   if (customId === 'codex_stop_session') {
     await handleCodexStopSessionSelect(interaction, context);
+    return;
+  }
+
+  // Agent model selection for /chat start
+  if (customId === 'chat_start_model') {
+    await handleAgentStartModelSelect(interaction, context);
+    return;
+  }
+
+  // Agent directory selection for /chat start (customId: chat_start_dir:{model})
+  if (customId.startsWith('chat_start_dir:')) {
+    await handleAgentStartDirSelect(interaction, context);
     return;
   }
 
