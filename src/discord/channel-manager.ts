@@ -1008,6 +1008,58 @@ export class ChannelManager {
     log.info({ sessionId: persisted.sessionId, threadId: persisted.threadId }, 'Restored agent session mapping');
   }
 
+  /**
+   * Add a generic agent session to an EXISTING thread (for @mention auto-create).
+   * Unlike createAgentSession which creates a new thread.
+   */
+  async addAgentToExistingThread(
+    sessionId: string,
+    threadId: string,
+    cwd: string,
+    modelAlias: string,
+  ): Promise<ChannelMapping | null> {
+    if (!this.initialized) {
+      const ready = await this.waitForInit();
+      if (!ready) return null;
+    }
+
+    // Find the channel from the thread
+    let channelId = '';
+    try {
+      const thread = await this.client.channels.fetch(threadId);
+      if (thread?.isThread() && thread.parentId) {
+        channelId = thread.parentId;
+      }
+    } catch {
+      log.error({ threadId }, 'Failed to fetch thread for agent auto-create');
+      return null;
+    }
+
+    const mapping: ChannelMapping = {
+      sessionId,
+      channelId,
+      threadId,
+      channelName: '',
+      threadName: '',
+      sessionName: `agent-${modelAlias}`,
+      cwd,
+      status: 'idle',
+      createdAt: new Date(),
+    };
+
+    this.agentStore.set(sessionId, mapping);
+    await this.agentStore.persistAndSave(sessionId, {
+      sessionId,
+      threadId,
+      channelId,
+      cwd,
+      modelAlias,
+    });
+
+    log.info({ sessionId, threadId, model: modelAlias }, 'Agent added to existing thread');
+    return mapping;
+  }
+
   getAgentSession(sessionId: string): ChannelMapping | undefined {
     return this.agentStore.get(sessionId);
   }
@@ -1062,17 +1114,21 @@ export class ChannelManager {
     /** alias → sessionId for all generic agent sessions in this thread */
     agentAliases: Map<string, string>;
   } {
-    const agentSessionId = this.agentStore.getByThread(threadId);
+    // Scan ALL agent sessions for this thread (supports multiple agents per thread)
     const agentAliases = new Map<string, string>();
-    if (agentSessionId) {
-      const persisted = this.agentStore.getPersisted(agentSessionId);
-      const alias = persisted?.modelAlias || 'agent';
-      agentAliases.set(alias, agentSessionId);
+    let firstAgentSessionId: string | undefined;
+    for (const [sid, mapping] of this.agentStore.entries()) {
+      if (mapping.threadId === threadId && mapping.status !== 'ended') {
+        const persisted = this.agentStore.getPersisted(sid);
+        const alias = persisted?.modelAlias || 'agent';
+        agentAliases.set(alias, sid);
+        if (!firstAgentSessionId) firstAgentSessionId = sid;
+      }
     }
     return {
       claude: this.ptyStore.getByThread(threadId) || this.sdkStore.getByThread(threadId),
       codex: this.codexStore.getByThread(threadId),
-      agent: agentSessionId,
+      agent: firstAgentSessionId,
       agentAliases,
     };
   }

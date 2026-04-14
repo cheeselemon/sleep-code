@@ -30,6 +30,7 @@ import { ClaudeSdkSessionManager, type ClaudeSdkSessionEntry } from './claude-sd
 import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
 import { AgentSessionManager } from './agents/agent-session-manager.js';
 import { createAgentEvents } from './agents/agent-handlers.js';
+import { getModelByAlias, getProviderConfig } from './agents/model-registry.js';
 import { ControlPanel } from './control-panel.js';
 
 // Import state management
@@ -490,20 +491,94 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       return;
     }
 
-    // Route to generic agent if target is a model alias
-    if (target !== 'claude' && target !== 'codex' && hasAgents.has(target)) {
-      const targetSessionId = agents.agentAliases.get(target);
-      const targetSession = targetSessionId ? agentSessionManager?.getSession(targetSessionId) : null;
-      if (targetSession && agentSessionManager) {
-        const agentInput = `${displayName}: ${inputText}`;
-        const sent = await agentSessionManager.sendInput(targetSession.id, agentInput);
-        if (!sent) {
-          await firstMessage.reply(`⚠️ Failed to send input to ${target} — session busy or ended.`);
-        }
-        state.lastActiveAgent.set(threadId, target);
-      } else {
-        await firstMessage.reply(`⚠️ @${target} session is not active in this thread.`);
+    // Route to generic agent if target is a model alias (existing or auto-create)
+    if (target !== 'claude' && target !== 'codex' && (hasAgents.has(target) || getModelByAlias(target))) {
+      if (!agentSessionManager) {
+        await firstMessage.reply('⚠️ Agent system is not enabled. Set `OPENROUTER_API_KEY` or `DEEPINFRA_API_KEY` in `~/.sleep-code/discord.env`.');
+        return;
       }
+
+      // Find existing session
+      let targetSessionId = agents.agentAliases.get(target);
+      let targetSession = targetSessionId ? agentSessionManager.getSession(targetSessionId) : null;
+
+      // Auto-create if no existing session (like Codex auto-create)
+      if (!targetSession) {
+        const modelDef = getModelByAlias(target);
+        if (!modelDef) {
+          await firstMessage.reply(`⚠️ Unknown model: \`${target}\`. Use \`/chat models\` to see available models.`);
+          return;
+        }
+
+        const provider = getProviderConfig(modelDef.provider);
+        if (!provider) {
+          await firstMessage.reply(`⚠️ Provider \`${modelDef.provider}\` not configured.`);
+          return;
+        }
+
+        const apiKey = process.env[provider.apiKeyEnv];
+        if (!apiKey) {
+          await firstMessage.reply(`⚠️ \`${provider.apiKeyEnv}\` is not set. Add it to \`~/.sleep-code/discord.env\`.`);
+          return;
+        }
+
+        // Get CWD from existing session in this thread
+        const existingCwd = (() => {
+          if (claudeSessionId) {
+            const m = channelManager.getSession(claudeSessionId) ?? channelManager.getSdkSession(claudeSessionId);
+            if (m) return m.cwd;
+          }
+          if (codexSessionId) {
+            const c = codexSessionManager?.getSession(codexSessionId);
+            if (c) return c.cwd;
+          }
+          // Check other agent sessions in thread
+          for (const [, sid] of agents.agentAliases) {
+            const s = agentSessionManager.getSession(sid);
+            if (s) return s.cwd;
+          }
+          return null;
+        })();
+
+        if (!existingCwd) {
+          await firstMessage.reply(`⚠️ Cannot determine working directory. Start a session with \`/claude start\` or \`/chat start\` first.`);
+          return;
+        }
+
+        try {
+          // Start agent session first (validates API key, model, etc.)
+          const entry = await agentSessionManager.startSession(target, existingCwd, threadId);
+
+          // Add to existing thread mapping (unlike createAgentSession which makes a new thread)
+          const mapping = await channelManager.addAgentToExistingThread(entry.id, threadId, existingCwd, target);
+          if (!mapping) {
+            // Rollback: stop the session if mapping fails
+            await agentSessionManager.stopSession(entry.id);
+            await firstMessage.reply(`⚠️ Failed to create ${target} session mapping.`);
+            return;
+          }
+          targetSession = entry;
+          targetSessionId = entry.id;
+
+          log.info({ sessionId: entry.id, model: target, cwd: existingCwd, threadId }, 'Auto-created agent session via @mention');
+
+          try {
+            const thread = firstMessage.channel;
+            await thread.send(`**${modelDef.displayName} joined this thread.** Model: \`${modelDef.apiId}\`. Messages are prefixed with agent names.`);
+          } catch { /* ignore */ }
+        } catch (err) {
+          log.error({ err, model: target }, 'Failed to auto-create agent session');
+          await firstMessage.reply(`⚠️ Failed to start ${target}: ${(err as Error).message}`);
+          return;
+        }
+      }
+
+      const agentInput = `${displayName}: ${inputText}`;
+      const sent = await agentSessionManager.sendInput(targetSession.id, agentInput);
+      if (!sent) {
+        await firstMessage.reply(`⚠️ Failed to send input to ${target} — session busy or ended.`);
+      }
+      state.lastActiveAgent.set(threadId, target);
       return;
     }
 
