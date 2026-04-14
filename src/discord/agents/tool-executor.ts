@@ -195,12 +195,12 @@ export class ToolExecutor {
       const toolPath = extractPathFromArgs(toolName, args);
       const isOutsideCwd = toolPath ? !pathInCwd(toolPath, this.cwd) : false;
 
-      // 3. 퍼미션 판단: 읽기 전용 도구는 CWD 안이면 무조건 허용
-      const readOnlyTools = ['Read', 'Grep', 'Glob'];
-      const isReadOnly = readOnlyTools.includes(toolName);
-      const needsPermission = isReadOnly
-        ? isOutsideCwd                         // 읽기 도구: CWD 밖이면 퍼미션
-        : (isOutsideCwd || !isReadOnly);       // 쓰기 도구: 항상 퍼미션 (YOLO 제외)
+      // 3. 퍼미션 판단
+      //   읽기 전용 도구 (Read/Grep/Glob): CWD 안 = 허용, CWD 밖 = 퍼미션
+      //   쓰기 도구 (Bash/Write/Edit):      항상 퍼미션 (YOLO 제외)
+      const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+      const isReadOnly = READ_ONLY_TOOLS.has(toolName);
+      const needsPermission = isReadOnly ? isOutsideCwd : true;
 
       // 4. YOLO 체크 또는 퍼미션 요청
       if (needsPermission && !this.isYolo()) {

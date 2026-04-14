@@ -30,7 +30,9 @@ export const handleStatus: CommandHandler = async (interaction, context) => {
   const threadId = interaction.channelId;
   const agents = channelManager.getAgentsInThread(threadId);
 
-  if (!agents.claude && !agents.codex) {
+  const agentSession = context.agentSessionManager?.getSessionByDiscordThread(threadId);
+
+  if (!agents.claude && !agents.codex && !agentSession) {
     await interaction.reply({ content: 'No active session in this thread.', ephemeral: true });
     return;
   }
@@ -74,8 +76,24 @@ export const handleStatus: CommandHandler = async (interaction, context) => {
     lines.push('');
   }
 
+  // Agent (OpenRouter/DeepInfra) info
+  if (agentSession) {
+    const status = agentSession.status ?? 'unknown';
+    const emoji = STATUS_EMOJI[status] ?? '❓';
+    const model = agentSession.modelDef.displayName;
+    const cwd = agentSession.cwd ? basename(agentSession.cwd) : '—';
+    const cost = `$${agentSession.totalCostUSD.toFixed(4)}`;
+
+    lines.push(`**${model}** ${emoji} ${status}`);
+    lines.push(`  Session: \`${agentSession.id.slice(0, 8)}\``);
+    lines.push(`  Directory: \`${cwd}\``);
+    lines.push(`  Turns: ${agentSession.turnCount}  Cost: ${cost}`);
+    lines.push('');
+  }
+
   // Common state
-  const yolo = agents.claude && state.yoloSessions.has(agents.claude);
+  const yolo = (agents.claude && state.yoloSessions.has(agents.claude))
+    || (agentSession && state.yoloSessions.has(agentSession.id));
   const lastActive = state.lastActiveAgent.get(threadId) ?? '—';
   const routingCount = state.agentRoutingCount.get(threadId) ?? 0;
 
