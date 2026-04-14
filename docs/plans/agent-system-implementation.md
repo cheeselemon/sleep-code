@@ -1371,13 +1371,66 @@ if (rawCost) {
 
 ## 참고 파일
 
-구현 시 참고할 기존 코드:
+### sleep-code 기존 코드
 - `src/discord/codex/codex-session-manager.ts` — 세션 매니저 패턴 (365줄)
 - `src/discord/codex/codex-handlers.ts` — 이벤트 핸들러 패턴 (303줄)
-- `src/discord/claude-sdk/claude-sdk-session-manager.ts` — 퍼미션 + YOLO 처리
+- `src/discord/claude-sdk/claude-sdk-session-manager.ts` — 퍼미션 + YOLO + 인터럽트 처리
 - `src/discord/agent-routing.ts` — 에이전트 간 라우팅 (123줄)
 - `src/discord/utils.ts` — parseRoutingDirective (203줄)
 - `src/discord/channel-manager.ts` — SessionStore 패턴
 - `src/discord/state.ts` — DiscordState 타입
-- `claude-code-ts/src/utils/permissions/permissions.ts` — deny 룰 참고
-- `claude-code-ts/src/services/compact/compact.ts` — compaction 참고
+
+### Claude Code 소스코드 (도구/퍼미션/compaction 참고)
+위치: `/Users/cheeselemon/Documents/GitHub/cheeselemon/claude-code-ts/src`
+
+**도구 시스템:**
+- `Tool.ts` — Tool 인터페이스 정의 (inputSchema, call, prompt 등)
+- `tools.ts` — 전체 도구 목록 import/export
+- `tools/BashTool/BashTool.tsx` — Bash 도구 구현 (스키마 + 실행)
+- `tools/FileReadTool/FileReadTool.ts` — Read 도구 구현
+- `tools/FileWriteTool/FileWriteTool.ts` — Write 도구 구현
+- `tools/FileEditTool/FileEditTool.ts` — Edit 도구 구현
+- `tools/GrepTool/GrepTool.ts` — Grep 도구 구현
+- `tools/GlobTool/GlobTool.ts` — Glob 도구 구현
+- `tools/WebFetchTool/WebFetchTool.ts` — WebFetch 도구 구현
+- `tools/WebSearchTool/WebSearchTool.ts` — WebSearch 도구 구현
+- `tools/AgentTool/AgentTool.ts` — Agent(서브에이전트) 도구
+- `tools/AskUserQuestionTool/AskUserQuestionTool.ts` — AskUserQuestion 도구
+
+**도구 → API 스키마 변환:**
+- `utils/api.ts` (119-266줄) — `toolToAPISchema()`: Zod → JSON Schema 변환, cache_control 등
+
+**도구 실행 루프:**
+- `query.ts` (659-863줄) — 메인 쿼리 루프, 도구 실행 흐름
+- `services/api/claude.ts` (1235-1396줄) — API 호출 + 도구 스키마 전달
+- `services/tools/toolExecution.ts` — 도구 실행 + 결과 매핑
+- `services/tools/StreamingToolExecutor.ts` — 동시 도구 실행 관리
+- `utils/sideQuery.ts` (182-198줄) — 실제 API 호출
+
+**퍼미션/보안:**
+- `utils/permissions/permissions.ts` — 핵심 퍼미션 평가 (`hasPermissionsToUseTool`, ~900줄)
+  - deny 룰은 YOLO보다 먼저 평가 → 절대 우회 불가
+  - 3단계: allow → deny → ask
+- `utils/permissions/PermissionRule.ts` — 퍼미션 룰 타입 정의
+- `utils/permissions/permissionsLoader.ts` — settings.json에서 룰 로드
+- `utils/permissions/permissionValidation.ts` — 룰 유효성 검증
+- `utils/shell/readOnlyCommandValidation.ts` — 안전한 명령어 화이트리스트 (~1650줄)
+  - GIT_READ_ONLY_COMMANDS, GH_READ_ONLY_COMMANDS, DOCKER_READ_ONLY_COMMANDS 등
+
+**Compaction:**
+- `services/compact/compact.ts` — 메인 compaction 엔진 (~900줄)
+  - 메시지를 API 라운드별 그룹화 → LLM 요약 → 오래된 메시지 교체
+  - prompt-too-long 재시도: `truncateHeadForPTLRetry()` (20%씩 드롭)
+- `services/compact/autoCompact.ts` — 자동 트리거 임계값
+  - `AUTOCOMPACT_BUFFER_TOKENS = 13_000`
+  - `MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3` (circuit breaker)
+- `services/compact/microCompact.ts` — 단일 메시지 초과 시 증분 요약
+- `services/compact/postCompactCleanup.ts` — compaction 후 최근 수정 파일 5개 재주입
+- `utils/context.ts` — 컨텍스트 윈도우 크기 + 토큰 예산 설정
+
+**병렬 에이전트:**
+- `tools/shared/spawnMultiAgent.ts` — 에이전트 스폰
+- `tools/AgentTool/runAgent.ts` — 에이전트 실행 컨텍스트, MCP 초기화
+- `utils/swarm/inProcessRunner.ts` — 인프로세스 에이전트 실행 (AsyncLocalStorage 격리)
+- `utils/swarm/permissionSync.ts` — leader↔worker 퍼미션 동기화
+- `utils/worktree.ts` — git worktree 격리 (`validateWorktreeSlug`, `getOrCreateWorktree`)

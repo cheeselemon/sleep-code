@@ -78,6 +78,9 @@ export function createAgentEvents(context: AgentHandlerContext): AgentEvents {
         clearInterval(interval);
         state.typingIntervals.delete(`agent:${sessionId}`);
       }
+      // Clean up channelManager agent mapping (prevent orphan)
+      channelManager.archiveAgentSession(sessionId).catch(err =>
+        log.error({ sessionId, err }, 'Failed to archive agent session'));
     },
 
     onSessionStatus: (sessionId, status) => {
@@ -257,13 +260,33 @@ export function createAgentEvents(context: AgentHandlerContext): AgentEvents {
       if (!result) return false;
       const { thread } = result;
 
+      const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000; // 5분 타임아웃
+
       return new Promise<boolean>((resolve) => {
+        let resolved = false;
+        const safeResolve = (value: boolean) => {
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          state.pendingPermissions.delete(permId);
+          resolve(value);
+        };
+
+        // 타임아웃 — 5분 내 응답 없으면 자동 거부
+        const timer = setTimeout(() => {
+          if (!resolved) {
+            log.warn({ sessionId, reqId, toolName }, 'Permission request timed out (5m)');
+            safeResolve(false);
+            thread.send('⏰ Permission request timed out — auto-denied').catch(() => {});
+          }
+        }, PERMISSION_TIMEOUT_MS);
+
         // 기존 perm:{requestId}:{decision} 패턴 재활용 (interactions/permissions.ts)
         const permId = `agent_${reqId}`;
         state.pendingPermissions.set(permId, {
           requestId: permId,
           sessionId,
-          resolve: (decision) => resolve(decision.behavior === 'allow'),
+          resolve: (decision) => safeResolve(decision.behavior === 'allow'),
         });
 
         // Format permission request
@@ -292,7 +315,7 @@ export function createAgentEvents(context: AgentHandlerContext): AgentEvents {
             .setStyle(ButtonStyle.Danger),
         );
         thread.send({ content: text.slice(0, DISCORD_SAFE_CONTENT_LIMIT), components: [row] }).catch(() => {
-          resolve(false);
+          safeResolve(false);
         });
       });
     },

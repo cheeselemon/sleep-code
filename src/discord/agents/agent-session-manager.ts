@@ -213,11 +213,18 @@ export class AgentSessionManager {
       session.activeTurnAbort = null;
     }
     session.status = 'ended';
+    // Resolve any pending permission promises (prevents Promise leak)
+    if (this.pendingPermissionCleanup) {
+      this.pendingPermissionCleanup(sessionId);
+    }
     this.sessions.delete(sessionId);
     this.events.onSessionEnd(sessionId);
     log.info({ sessionId }, 'Agent session stopped');
     return true;
   }
+
+  /** Hook for cleaning up pending permission promises on stop */
+  pendingPermissionCleanup?: (sessionId: string) => void;
 
   getSession(sessionId: string): AgentSessionEntry | undefined {
     return this.sessions.get(sessionId);

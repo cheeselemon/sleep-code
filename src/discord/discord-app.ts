@@ -151,6 +151,15 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       },
     });
     agentSessionManagerRef.current = agentSessionManager;
+    // Stop 시 pending permission promise 정리 (Promise leak 방지)
+    agentSessionManager.pendingPermissionCleanup = (sessionId: string) => {
+      for (const [permId, pending] of state.pendingPermissions) {
+        if (pending.sessionId === sessionId) {
+          pending.resolve({ behavior: 'deny', message: 'Session stopped' });
+          state.pendingPermissions.delete(permId);
+        }
+      }
+    };
     log.info('Agent session manager initialized (OpenRouter/DeepInfra)');
   }
 
@@ -281,12 +290,9 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     const threadId = firstMessage.channelId;
 
     // Check which agents are active in this thread
-    // Agent 세션 우선 체크 — createSdkSession으로 등록되었더라도 실제 agent 세션이면
-    // Claude로 오인하지 않도록 처리
     const agentSession = agentSessionManager?.getSessionByDiscordThread(threadId);
     const agents = channelManager.getAgentsInThread(threadId);
-    // Agent 세션이 sdkStore에도 등록되어 agents.claude로 잡히므로, agent 세션의 ID와 같으면 제외
-    const claudeSessionId = (agentSession && agents.claude === agentSession.id) ? undefined : agents.claude;
+    const claudeSessionId = agents.claude;
     const codexSessionId = agents.codex;
 
     if (!claudeSessionId && !codexSessionId && !agentSession) return;
@@ -702,6 +708,26 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           }
         }
         log.info({ restored, total: restorable.length }, 'Codex session restoration complete');
+      }
+    }
+
+    // Restore agent sessions (generic agents) from persisted mappings
+    if (agentSessionManager) {
+      const agentMappings = channelManager.getPersistedAgentMappings();
+      if (agentMappings.length > 0) {
+        const restorable = agentMappings
+          .filter(m => m.cwd && m.threadId)
+          .map(m => ({
+            sessionId: m.sessionId,
+            modelAlias: m.sessionId.split('-')[0] || 'gemma4', // fallback
+            cwd: m.cwd!,
+            discordThreadId: m.threadId,
+          }));
+
+        if (restorable.length > 0) {
+          // Agent sessions use lazy resume — just pre-load mappings, actual restore on first message
+          log.info({ count: restorable.length }, 'Agent session mappings available for lazy restore');
+        }
       }
     }
 

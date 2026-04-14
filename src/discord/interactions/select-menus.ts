@@ -419,10 +419,10 @@ export const handleAgentStartDirSelect: SelectMenuHandler = async (interaction, 
       components: [],
     });
 
-    // Create thread via channelManager (reuse SDK session pattern)
+    // Create thread via channelManager (dedicated agent store — NOT sdkStore)
     const sessionId = randomUUID();
     const sessionName = `${modelAlias}-${basename(cwd)}`;
-    const mapping = await channelManager.createSdkSession(sessionId, sessionName, cwd);
+    const mapping = await channelManager.createAgentSession(sessionId, sessionName, cwd, modelAlias, modelDef.displayName);
     if (!mapping) {
       await interaction.followUp({ content: '❌ Failed to create thread.', ephemeral: true });
       return;

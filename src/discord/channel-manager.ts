@@ -14,6 +14,7 @@ const MAPPINGS_DIR = join(homedir(), '.sleep-code');
 const MAPPINGS_FILE = join(MAPPINGS_DIR, 'session-mappings.json');
 const CODEX_MAPPINGS_FILE = join(MAPPINGS_DIR, 'codex-session-mappings.json');
 const SDK_MAPPINGS_FILE = join(MAPPINGS_DIR, 'sdk-session-mappings.json');
+const AGENT_MAPPINGS_FILE = join(MAPPINGS_DIR, 'agent-session-mappings.json');
 
 /**
  * Sanitize a string for use as a Discord channel name.
@@ -49,10 +50,11 @@ function buildTopic(cwd: string): string {
 }
 
 export class ChannelManager {
-  // Three session stores replace the 9 Maps + 6 save/load methods
+  // Four session stores — one per session type
   private ptyStore = new SessionStore(MAPPINGS_FILE, 'session');
   private codexStore = new SessionStore(CODEX_MAPPINGS_FILE, 'Codex');
   private sdkStore = new SessionStore(SDK_MAPPINGS_FILE, 'SDK');
+  private agentStore = new SessionStore(AGENT_MAPPINGS_FILE, 'Agent');
 
   // Shared: cwd → channelId (one channel per project, shared across session types)
   private cwdToChannel = new Map<string, string>();
@@ -108,6 +110,7 @@ export class ChannelManager {
     await this.ptyStore.load();
     await this.codexStore.load();
     await this.loadSdkMappings(); // SDK has custom dedup/cleanup logic
+    await this.agentStore.load();
 
     // Find the first guild the bot is in
     const guilds = await this.client.guilds.fetch();
@@ -912,15 +915,130 @@ export class ChannelManager {
     return valid;
   }
 
+  // ── Agent session store (generic agents: Gemma, GLM, Qwen, etc.) ──
+
+  async createAgentSession(
+    sessionId: string,
+    sessionName: string,
+    cwd: string,
+    modelAlias: string,
+    modelDisplayName: string,
+  ): Promise<ChannelMapping | null> {
+    if (!this.initialized) {
+      const ready = await this.waitForInit();
+      if (!ready) return null;
+    }
+
+    if (this.agentStore.has(sessionId)) {
+      return this.agentStore.get(sessionId)!;
+    }
+
+    const channel = await this.getOrCreateChannel(cwd);
+    if (!channel) return null;
+
+    const timestamp = new Date().toLocaleString('ko-KR', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    const name = `${modelAlias}-${sessionId.slice(0, 8)} - ${timestamp}`;
+
+    let threadId = '';
+    try {
+      const thread = await channel.threads.create({
+        name: name.slice(0, 100),
+        autoArchiveDuration: 10080,
+        reason: `Agent session ${sessionId} (${modelDisplayName})`,
+      });
+      threadId = thread.id;
+
+      if (this.userId) {
+        await thread.members.add(this.userId).catch(() => {});
+      }
+
+      const startMsg = await thread.send(
+        `🤖 **${modelDisplayName} Session Starting**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+      );
+      await startMsg.pin().catch(() => {});
+    } catch (err: any) {
+      log.error({ err: err.message }, 'Failed to create agent thread');
+      return null;
+    }
+
+    const mapping: ChannelMapping = {
+      sessionId,
+      channelId: channel.id,
+      threadId,
+      channelName: channel.name,
+      threadName: name,
+      sessionName,
+      cwd,
+      status: 'idle',
+      createdAt: new Date(),
+    };
+
+    this.agentStore.set(sessionId, mapping);
+    await this.agentStore.persistAndSave(sessionId, {
+      sessionId,
+      threadId,
+      channelId: channel.id,
+      cwd,
+    });
+
+    log.info({ sessionId, threadId, model: modelAlias }, 'Agent session mapping stored');
+    return mapping;
+  }
+
+  getAgentSession(sessionId: string): ChannelMapping | undefined {
+    return this.agentStore.get(sessionId);
+  }
+
+  getAgentSessionByThread(threadId: string): string | undefined {
+    return this.agentStore.getByThread(threadId);
+  }
+
+  updateAgentStatus(sessionId: string, status: 'running' | 'idle' | 'ended'): void {
+    this.agentStore.updateStatus(sessionId, status);
+  }
+
+  async archiveAgentSession(sessionId: string): Promise<boolean> {
+    const mapping = this.agentStore.get(sessionId);
+    if (!mapping) return false;
+
+    mapping.status = 'ended';
+    this.agentStore.deletePersisted(sessionId);
+    await this.agentStore.save();
+    this.agentStore.delete(sessionId);
+
+    // Archive thread if no other sessions use it
+    try {
+      const thread = await this.client.channels.fetch(mapping.threadId);
+      if (thread?.isThread()) {
+        const hasOthers = this.ptyStore.getByThread(mapping.threadId)
+          || this.sdkStore.getByThread(mapping.threadId)
+          || this.codexStore.getByThread(mapping.threadId);
+        if (!hasOthers) {
+          await thread.setArchived(true);
+        }
+      }
+    } catch { /* ignore */ }
+
+    log.info({ sessionId }, 'Agent session archived');
+    return true;
+  }
+
+  getPersistedAgentMappings(): PersistedMapping[] {
+    return this.agentStore.getAllPersisted();
+  }
+
   // ── Cross-store helpers ───────────────────────────────
 
   /**
    * Get which agents are active in a thread
    */
-  getAgentsInThread(threadId: string): { claude?: string; codex?: string } {
+  getAgentsInThread(threadId: string): { claude?: string; codex?: string; agent?: string } {
     return {
       claude: this.ptyStore.getByThread(threadId) || this.sdkStore.getByThread(threadId),
       codex: this.codexStore.getByThread(threadId),
+      agent: this.agentStore.getByThread(threadId),
     };
   }
 }
