@@ -11,6 +11,21 @@ export interface ModelDefinition {
   provider: string;
   contextWindow: number;
   pricing: { inputPerMTok: number; outputPerMTok: number };
+  emoji?: string;
+}
+
+/** Well-known agent emojis (claude, codex, and fallback) */
+export const AGENT_EMOJI: Record<string, string> = {
+  claude: '🟣',
+  codex: '🟢',
+  default: '🤖',
+};
+
+/** Get emoji for any agent by alias */
+export function getAgentEmoji(alias: string): string {
+  const model = getModelByAlias(alias);
+  if (model?.emoji) return model.emoji;
+  return AGENT_EMOJI[alias] ?? AGENT_EMOJI.default;
 }
 
 export const PROVIDERS: Record<string, ProviderConfig> = {
@@ -34,6 +49,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     provider: 'openrouter',
     contextWindow: 262_144,
     pricing: { inputPerMTok: 0.13, outputPerMTok: 0.38 },
+    emoji: '💎',
   },
   {
     alias: 'glm5',
@@ -42,6 +58,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     provider: 'openrouter',
     contextWindow: 80_000,
     pricing: { inputPerMTok: 0.72, outputPerMTok: 2.30 },
+    emoji: '🧊',
   },
   {
     alias: 'glm51',
@@ -50,6 +67,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     provider: 'openrouter',
     contextWindow: 202_752,
     pricing: { inputPerMTok: 0.95, outputPerMTok: 3.15 },
+    emoji: '🧊',
   },
   {
     alias: 'qwen3-coder',
@@ -58,6 +76,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     provider: 'openrouter',
     contextWindow: 262_144,
     pricing: { inputPerMTok: 0.22, outputPerMTok: 1.00 },
+    emoji: '🌀',
   },
 ];
 

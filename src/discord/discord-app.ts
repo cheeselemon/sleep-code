@@ -567,7 +567,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
           try {
             const thread = firstMessage.channel;
-            await thread.send(`**${modelDef.displayName} joined this thread.** Model: \`${modelDef.apiId}\`. Messages are prefixed with agent names.`);
+            await thread.send(`**${modelDef.displayName} joined this thread.**\nModel: \`${modelDef.apiId}\` · CWD: \`${existingCwd}\``);
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err, model: target }, 'Failed to auto-create agent session');

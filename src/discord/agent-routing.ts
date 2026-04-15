@@ -10,6 +10,10 @@ import { MAX_AGENT_ROUTING } from './state.js';
 import type { DiscordState } from './state.js';
 import { DISCORD_SAFE_CONTENT_LIMIT } from './constants.js';
 import type { ClaudeTransport } from './claude-transport.js';
+import { getAgentEmoji } from './agents/model-registry.js';
+
+/** Terminal patterns that indicate a final answer — skip routing when no explicit @mention */
+const TERMINAL_PATTERN = /(?:완료|종료|마칩니다|마쳤습니다|끝났습니다|보고드립니다|done|finished|completed)\s*[.!]?\s*$/i;
 
 export interface AgentRouteTarget {
   agent: string;
@@ -58,12 +62,20 @@ export async function tryRouteToAgent(params: RouteParams): Promise<RouteResult>
     lastActive: sourceAgent,
   });
 
-  // Determine target from directive
+  // Determine target from directive (3-tier priority)
   let targetAgent: string | undefined;
   if (directive.explicit && directive.target !== sourceAgent) {
+    // Tier 1: Explicit @mention → always route
     targetAgent = directive.target;
-  } else if (!directive.explicit && directive.invalidMention && directive.bodyMentionTarget && directive.bodyMentionTarget !== sourceAgent) {
+  } else if (!directive.explicit && directive.bodyMentionTarget && directive.bodyMentionTarget !== sourceAgent) {
+    // Tier 2: Body mention found — but check terminal pattern first
     targetAgent = directive.bodyMentionTarget;
+  } else if (!directive.explicit) {
+    // Tier 3: No mention at all — check terminal pattern before default routing
+    if (TERMINAL_PATTERN.test(content.trimEnd())) {
+      log.info({ sourceAgent, preview: content.slice(-60) }, 'Terminal pattern detected, skipping routing');
+      return { routed: false };
+    }
   }
 
   if (!targetAgent) return { routed: false };
@@ -141,10 +153,14 @@ async function executeRoute(
   log.info({ from: sourceAgent, to: targetAgent, count: routingCount + 1, fallback: isFallback, preview: routeContent.slice(0, 50) }, 'Agent-to-agent routing');
 
   try {
-    await thread.send(`**${routeLabel}:** ${routeContent.slice(0, DISCORD_SAFE_CONTENT_LIMIT)}`);
+    const sentMsg = await thread.send(`**${routeLabel}:** ${routeContent.slice(0, DISCORD_SAFE_CONTENT_LIMIT)}`);
+    try {
+      const emoji = getAgentEmoji(targetAgent);
+      await sentMsg.react(emoji);
+    } catch { /* rate limit or emoji error — non-critical */ }
   } catch { /* ignore */ }
 
-  const messageForTarget = `${sourceLabel}: ${routeContent}\n\n(Start with @${sourceAgent} to reply)`;
+  const messageForTarget = `[Route: @${sourceAgent} → @${targetAgent}]\n${routeContent}\n\n(Start with @${sourceAgent} to reply)`;
 
   if (onBeforeSend) {
     onBeforeSend(messageForTarget);
