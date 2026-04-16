@@ -27,8 +27,10 @@ Wait for user response before proceeding.
 Based on user's choice:
 
 ### Option 1: Auto-find
-- Search for `CLAUDE.md` files in the current directory and up to 2 levels deep
+- Search for `CLAUDE.md` files in the current directory and up to 3 levels deep
 - Also check common locations: `~/Documents/GitHub/`, `~/projects/`, `~/dev/`
+- **탐색 위치**: 프로젝트 루트의 `CLAUDE.md` 뿐 아니라 `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`도 함께 탐색
+- 같은 프로젝트 루트에 여러 파일이 있으면 하나의 프로젝트로 묶어서 표시
 - Present found projects as a numbered list
 - Let the user pick one (or multiple)
 
@@ -43,10 +45,12 @@ Based on user's choice:
 
 For the selected project path:
 
-1. Check if `CLAUDE.md` exists → read its content
-2. Check if `AGENTS.md` exists → read its content
+1. Check all possible locations for each file:
+   - `CLAUDE.md` → check `{project_root}/CLAUDE.md` and `{project_root}/.claude/CLAUDE.md`
+   - `AGENTS.md` → check `{project_root}/AGENTS.md` and `{project_root}/.claude/AGENTS.md`
+2. Read found files' content
 3. Detect which sections are already present:
-   - `## Multi-Agent Communication Protocol` — multi-agent protocol
+   - `## Multi-Agent Communication Protocol` (or legacy `## Multi-Agent Workflow`) — multi-agent protocol
    - `## Memory & Knowledge System` — memory system
 
 Report status:
@@ -54,14 +58,16 @@ Report status:
 ```
 프로젝트: {project_name} ({project_path})
 
-CLAUDE.md: {exists/missing}
-  - Multi-Agent Protocol: {installed/missing}
-  - Memory & Knowledge:   {installed/missing}
+CLAUDE.md: {path} / missing
+  - Multi-Agent Protocol: {installed/outdated/missing}
+  - Memory & Knowledge:   {installed/outdated/missing}
 
-AGENTS.md: {exists/missing}
-  - Multi-Agent Protocol: {installed/missing}
-  - Memory & Knowledge:   {installed/missing}
+AGENTS.md: {path} / missing
+  - Multi-Agent Protocol: {installed/outdated/missing}
+  - Memory & Knowledge:   {installed/outdated/missing}
 ```
+
+Note: "outdated" = section exists but uses legacy heading (e.g., `## Multi-Agent Workflow`) or lacks latest fields (e.g., missing Generic agents, missing 1-mention rule).
 
 Ask user which sections to install/update. If a section already exists, offer to **replace** it with the latest template (user must confirm).
 
@@ -150,6 +156,9 @@ All messages have a sender prefix:
 
 - `@mention` = immediate delivery + the target agent starts working
 - **Use `@mention` only when you have a concrete request, question, or task** for the other agent
+- **한 메시지에 `@mention`은 반드시 1개만 사용** — 여러 에이전트에게 보내려면 각각 별도 메시지로 전송
+  - OK: "@codex review this" → (별도 메시지) "@gemma4 what do you think?"
+  - BAD: "@codex review this and @gemma4 check that" (동시 전달로 혼선 발생)
 - Acknowledgments, status updates, and completion reports go to the human (CEO) only (no `@mention`)
 - When referring to another agent without routing, omit `@` (write "codex", "claude", "gemma4")
   - OK: "incorporated codex's feedback"

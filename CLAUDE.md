@@ -279,6 +279,9 @@ All messages have a sender prefix:
 
 - `@mention` = immediate delivery + the target agent starts working
 - **Use `@mention` only when you have a concrete request, question, or task** for the other agent
+- **한 메시지에 `@mention`은 반드시 1개만 사용** — 여러 에이전트에게 보내려면 각각 별도 메시지로 전송
+  - OK: "@codex review this" → (별도 메시지) "@gemma4 what do you think?"
+  - BAD: "@codex review this and @gemma4 check that" (하나의 메시지가 두 에이전트에게 동시 전달되어 혼선 발생)
 - Acknowledgments, status updates, and completion reports go to the human (CEO) only (no `@mention`)
 - When referring to another agent without routing, omit `@` (write "codex", "claude", "gemma4")
   - OK: "incorporated codex's feedback"
