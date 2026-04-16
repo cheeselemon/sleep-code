@@ -176,13 +176,28 @@ export class AgentSessionManager {
     });
 
     // 대화 히스토리 — 복원 또는 새로 시작
+    const systemPrompt = buildSystemPrompt(cwd);
     let conversationHistory: ChatCompletionMessageParam[] = [];
     if (options?.restore) {
       conversationHistory = await loadHistory(id);
       log.info({ sessionId: id, restored: conversationHistory.length }, 'Restored conversation history');
+      // 복원 시에도 시스템 프롬프트를 최신으로 교체 (AGENTS.md 변경 반영)
+      if (conversationHistory.length > 0 && conversationHistory[0].role === 'system') {
+        conversationHistory[0] = { role: 'system', content: systemPrompt };
+        log.info({ sessionId: id }, 'Replaced system prompt with latest version on restore');
+      } else if (conversationHistory.length > 0) {
+        // 히스토리에 시스템 프롬프트가 없는 경우 앞에 삽입
+        conversationHistory.unshift({ role: 'system', content: systemPrompt });
+        log.info({ sessionId: id }, 'Injected system prompt into restored history (was missing)');
+      }
     }
     if (conversationHistory.length === 0) {
-      conversationHistory = [{ role: 'system', content: buildSystemPrompt(cwd) }];
+      conversationHistory = [{ role: 'system', content: systemPrompt }];
+    }
+
+    // 신규 세션일 때 시스템 프롬프트를 JSONL에 저장 (restore 시 누락 방지)
+    if (!options?.restore) {
+      await appendToHistory(id, { role: 'system', content: systemPrompt }, 'system');
     }
 
     const toolExecutor = new ToolExecutor({
