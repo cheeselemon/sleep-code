@@ -48,7 +48,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.80",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.114",
     "@lancedb/lancedb": "^0.26.2",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@openai/codex-sdk": "^0.114.0",
