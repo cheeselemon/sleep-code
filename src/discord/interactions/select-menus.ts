@@ -283,18 +283,34 @@ export const handleCodexStopSessionSelect: SelectMenuHandler = async (interactio
   }
 };
 
-/** SDK model display names */
+/**
+ * SDK model display labels. Keys use Claude Code's model identifier format:
+ *   `<model-id>` → 200K context
+ *   `<model-id>[1m]` → 1M context variant
+ */
 const SDK_MODEL_DISPLAY: Record<string, string> = {
-  'claude-opus-4-7': 'Opus 4.7',
-  'claude-opus-4-6': 'Opus 4.6',
-  'claude-sonnet-4-6': 'Sonnet 4.6',
-  'claude-haiku-4-5': 'Haiku 4.5',
+  'claude-opus-4-7[1m]': 'Opus 4.7 (1M)',
+  'claude-opus-4-7': 'Opus 4.7 (200K)',
+  'claude-opus-4-6[1m]': 'Opus 4.6 (1M)',
+  'claude-opus-4-6': 'Opus 4.6 (200K)',
+  'claude-sonnet-4-6[1m]': 'Sonnet 4.6 (1M)',
+  'claude-sonnet-4-6': 'Sonnet 4.6 (200K)',
+  'claude-haiku-4-5': 'Haiku 4.5 (200K)',
 };
 
 /**
- * Handle model+context selection for starting a Claude SDK session
- * Shows directory picker after selection
- * value format: "claude-opus-4-7:200k" or "claude-sonnet-4-6:1m"
+ * customId encoding: `sonnet[1m]` contains brackets which Discord allows
+ * but colons are our delimiter, so we base64-encode model IDs for safety.
+ */
+function encodeModelId(model: string): string {
+  return Buffer.from(model, 'utf8').toString('base64url');
+}
+function decodeModelId(encoded: string): string {
+  return Buffer.from(encoded, 'base64url').toString('utf8');
+}
+
+/**
+ * Step 1: User picks a model variant. We then show the directory picker.
  */
 export const handleSdkStartConfigSelect: SelectMenuHandler = async (interaction, context) => {
   const { settingsManager } = context;
@@ -304,13 +320,10 @@ export const handleSdkStartConfigSelect: SelectMenuHandler = async (interaction,
     return;
   }
 
-  const raw = interaction.values[0];
-  // Split on last colon to separate model ID from context size
-  const lastColon = raw.lastIndexOf(':');
-  const modelId = raw.slice(0, lastColon);
-  const contextSize = raw.slice(lastColon + 1);
+  const modelId = interaction.values[0];
+  const displayName = SDK_MODEL_DISPLAY[modelId];
 
-  if (!SDK_MODEL_DISPLAY[modelId]) {
+  if (!displayName) {
     await interaction.update({ content: `❌ Unknown model: ${modelId}`, components: [] });
     return;
   }
@@ -324,10 +337,8 @@ export const handleSdkStartConfigSelect: SelectMenuHandler = async (interaction,
     return;
   }
 
-  // Embed model + context in customId for next step
-  // Use | as separator since model IDs contain colons... actually they don't, they use hyphens
   const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId(`claude_sdk_start_dir:${modelId}:${contextSize}`)
+    .setCustomId(`claude_sdk_start_dir:${encodeModelId(modelId)}`)
     .setPlaceholder('Select a directory...');
 
   for (const dir of dirs.slice(0, 25)) {
@@ -340,18 +351,16 @@ export const handleSdkStartConfigSelect: SelectMenuHandler = async (interaction,
   }
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-  const ctxLabel = contextSize === '1m' ? '1M' : '200K';
 
   await interaction.update({
-    content: `📡 **Start Claude SDK Session** — ${SDK_MODEL_DISPLAY[modelId]} (${ctxLabel})\nSelect a directory:`,
+    content: `📡 **Start Claude SDK Session** — ${displayName}\nSelect a directory:`,
     components: [row],
   });
 };
 
 /**
- * Handle directory selection for starting a Claude SDK session
- * customId format: claude_sdk_start_dir:{modelId}:{context}
- * e.g. claude_sdk_start_dir:claude-opus-4-7:1m
+ * Step 2: User picks a directory. Start the session with the selected model.
+ * customId format: `claude_sdk_start_dir:<base64url(modelId)>`
  */
 export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, context) => {
   const { claudeSdkSessionManager, channelManager, settingsManager } = context;
@@ -361,14 +370,8 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
     return;
   }
 
-  // customId: "claude_sdk_start_dir:claude-opus-4-7:1m"
-  // Split: ["claude_sdk_start_dir", "claude-opus-4-7", "1m"]
-  // But model IDs contain hyphens, so use known prefix + last segment
-  const withoutPrefix = interaction.customId.slice('claude_sdk_start_dir:'.length); // "claude-opus-4-7:1m"
-  const lastColon = withoutPrefix.lastIndexOf(':');
-  const modelId = lastColon > 0 ? withoutPrefix.slice(0, lastColon) : 'claude-opus-4-7';
-  const contextSize = lastColon > 0 ? withoutPrefix.slice(lastColon + 1) : '200k';
-  const betas: string[] = contextSize === '1m' ? ['context-1m-2025-08-07'] : [];
+  const encoded = interaction.customId.slice('claude_sdk_start_dir:'.length);
+  const modelId = encoded ? decodeModelId(encoded) : 'claude-opus-4-7[1m]';
   const displayName = SDK_MODEL_DISPLAY[modelId] || modelId;
 
   const cwd = interaction.values[0];
@@ -381,11 +384,9 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
     return;
   }
 
-  const ctxLabel = contextSize === '1m' ? '1M' : '200K';
-
   try {
     await interaction.update({
-      content: `📡 Starting Claude SDK session in \`${cwd}\` — ${displayName} (${ctxLabel})...`,
+      content: `📡 Starting Claude SDK session in \`${cwd}\` — ${displayName}...`,
       components: [],
     });
 
@@ -397,15 +398,15 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
       return;
     }
 
-    const entry = await claudeSdkSessionManager.startSession(cwd, mapping.threadId, { sessionId, model: modelId, betas });
+    const entry = await claudeSdkSessionManager.startSession(cwd, mapping.threadId, { sessionId, model: modelId });
     channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
 
     await interaction.followUp({
-      content: `✅ **Claude SDK session started**\nModel: **${displayName}** (${ctxLabel})\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      content: `✅ **Claude SDK session started**\nModel: **${displayName}**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
       ephemeral: true,
     });
   } catch (err) {
-    log.error({ err, cwd }, 'Failed to start Claude SDK session');
+    log.error({ err, cwd, modelId }, 'Failed to start Claude SDK session');
     await interaction.followUp({
       content: `❌ Failed to start Claude SDK session: ${(err as Error).message}`,
       ephemeral: true,

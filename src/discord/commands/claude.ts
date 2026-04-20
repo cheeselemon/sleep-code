@@ -81,35 +81,38 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       .setCustomId('claude_sdk_start_config')
       .setPlaceholder('Select model & context window...');
 
+    // Model values use Claude Code's model identifier format:
+    //   `<model-id>` for 200K context, `<model-id>[1m]` for 1M context.
+    //   Verified via `/model <value>` in Claude Code CLI.
     selectMenu.addOptions(
       new StringSelectMenuOptionBuilder()
-        .setLabel('Opus 4.7 (200K)')
-        .setDescription('claude-opus-4-7 · Latest · 128k output')
-        .setValue('claude-opus-4-7:200k'),
-      new StringSelectMenuOptionBuilder()
         .setLabel('Opus 4.7 (1M)')
-        .setDescription('claude-opus-4-7 · Latest · 1M extended context')
-        .setValue('claude-opus-4-7:1m'),
+        .setDescription('Latest · 1M context · Most capable')
+        .setValue('claude-opus-4-7[1m]'),
       new StringSelectMenuOptionBuilder()
-        .setLabel('Opus 4.6 (200K)')
-        .setDescription('claude-opus-4-6 · 128k output')
-        .setValue('claude-opus-4-6:200k'),
+        .setLabel('Opus 4.7 (200K)')
+        .setDescription('Latest · 200K context')
+        .setValue('claude-opus-4-7'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Opus 4.6 (1M)')
-        .setDescription('claude-opus-4-6 · 1M extended context')
-        .setValue('claude-opus-4-6:1m'),
+        .setDescription('Previous gen · 1M context')
+        .setValue('claude-opus-4-6[1m]'),
       new StringSelectMenuOptionBuilder()
-        .setLabel('Sonnet 4.6 (200K)')
-        .setDescription('claude-sonnet-4-6 · Fast · 64k output')
-        .setValue('claude-sonnet-4-6:200k'),
+        .setLabel('Opus 4.6 (200K)')
+        .setDescription('Previous gen · 200K context')
+        .setValue('claude-opus-4-6'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Sonnet 4.6 (1M)')
-        .setDescription('claude-sonnet-4-6 · Fast · 1M extended context')
-        .setValue('claude-sonnet-4-6:1m'),
+        .setDescription('Fast · 1M context · Extra billing')
+        .setValue('claude-sonnet-4-6[1m]'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Sonnet 4.6 (200K)')
+        .setDescription('Fast · 200K context')
+        .setValue('claude-sonnet-4-6'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Haiku 4.5 (200K)')
-        .setDescription('claude-haiku-4-5 · Fastest · 64k output')
-        .setValue('claude-haiku-4-5:200k'),
+        .setDescription('Fastest · 200K context')
+        .setValue('claude-haiku-4-5'),
     );
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
