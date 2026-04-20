@@ -484,19 +484,29 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
 
       const bar = pct >= 90 ? '🔴' : pct >= 70 ? '🟡' : '🟢';
 
-      // Show model name only on first turn
-      const modelTag = usage.numTurns <= 1 ? ` · 🤖 ${usage.model}` : '';
-
-      const line = [
+      const line1 = [
         `${bar} **${pct}%** ctx`,
         ` (${formatTokens(usage.inputTokens)}/${formatTokens(usage.contextWindow)})`,
         ` · $${usage.totalCostUSD.toFixed(4)}`,
         ` · turn ${usage.numTurns}`,
-        modelTag,
       ].join('');
 
+      // Per-model breakdown: "🤖 claude-opus-4-7: 28.4k · claude-haiku-4-5: 2.1k"
+      // Sum tokens per model from the breakdown (already sorted by usage desc)
+      let line2 = '';
+      if (usage.models && usage.models.length > 0) {
+        const parts = usage.models
+          .map(m => {
+            const total = m.inputTokens + m.outputTokens + m.cacheReadTokens + m.cacheCreationTokens;
+            return `${m.model}: ${formatTokens(total)}`;
+          });
+        line2 = `\n🤖 ${parts.join(' · ')}`;
+      } else if (usage.model) {
+        line2 = `\n🤖 ${usage.model}`;
+      }
+
       try {
-        await thread.send(line);
+        await thread.send(line1 + line2);
       } catch { /* ignore */ }
     },
 

@@ -48,7 +48,18 @@ export interface ClaudeSdkToolResultInfo {
   toolUseIds: string[];
 }
 
+export interface ClaudeSdkModelBreakdown {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUSD: number;
+  contextWindow: number;
+}
+
 export interface ClaudeSdkTurnUsage {
+  /** Primary (highest token usage) model — kept for backward compatibility */
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -58,6 +69,8 @@ export interface ClaudeSdkTurnUsage {
   totalCostUSD: number;
   contextWindow: number;
   numTurns: number;
+  /** All models used this turn, sorted by token count desc */
+  models: ClaudeSdkModelBreakdown[];
 }
 
 export interface ClaudeSdkEvents {
@@ -697,28 +710,48 @@ export class ClaudeSdkSessionManager {
 
     // Use per-API-call usage from the last assistant message (accurate context %)
     // modelUsage is cumulative across the session — not suitable for context window %
+    //
+    // modelUsage may contain multiple entries when the SDK uses sidecar models
+    // (e.g. Haiku for compaction/summarization). We build a full breakdown and
+    // pick the highest-token model as primary (the one answering the user).
     const lastUsage = session.lastAssistantUsage;
-    const modelEntries = Object.values(message.modelUsage || {});
-    const primary = modelEntries[0];
+    const modelMap = message.modelUsage || {};
+
+    const breakdown: ClaudeSdkModelBreakdown[] = Object.entries(modelMap)
+      .map(([name, entry]) => ({
+        model: name,
+        inputTokens: entry.inputTokens || 0,
+        outputTokens: entry.outputTokens || 0,
+        cacheReadTokens: entry.cacheReadInputTokens || 0,
+        cacheCreationTokens: entry.cacheCreationInputTokens || 0,
+        costUSD: entry.costUSD || 0,
+        contextWindow: entry.contextWindow || 0,
+      }))
+      .sort((a, b) => {
+        const ta = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheCreationTokens;
+        const tb = b.inputTokens + b.outputTokens + b.cacheReadTokens + b.cacheCreationTokens;
+        return tb - ta;
+      });
+
+    const primary = breakdown[0];
 
     if (lastUsage && primary) {
       const contextUsed = (lastUsage.input_tokens || 0)
         + (lastUsage.cache_read_input_tokens || 0)
         + (lastUsage.cache_creation_input_tokens || 0);
-      const modelNames = Object.keys(message.modelUsage || {});
 
       log.info({
         sessionId: session.id,
-        model: modelNames[0] || 'unknown',
+        model: primary.model,
+        allModels: breakdown.map(b => b.model),
         perCall: { input: lastUsage.input_tokens, cacheRead: lastUsage.cache_read_input_tokens, cacheCreation: lastUsage.cache_creation_input_tokens, contextUsed },
         contextWindow: primary.contextWindow,
         totalCost: message.total_cost_usd,
         numTurns: message.num_turns,
       }, 'SDK turn usage');
 
-      const modelName = modelNames[0] || 'unknown';
       await this.events.onTurnComplete?.(session.id, {
-        model: modelName,
+        model: primary.model,
         inputTokens: contextUsed,
         outputTokens: lastUsage.output_tokens || 0,
         cacheReadTokens: lastUsage.cache_read_input_tokens || 0,
@@ -727,6 +760,7 @@ export class ClaudeSdkSessionManager {
         totalCostUSD: message.total_cost_usd,
         contextWindow: primary.contextWindow,
         numTurns: message.num_turns,
+        models: breakdown,
       });
 
       session.lastAssistantUsage = null;
