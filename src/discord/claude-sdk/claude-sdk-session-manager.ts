@@ -11,6 +11,8 @@ import { discordLogger as log } from '../../utils/logger.js';
 import type { ClaudeTransport } from '../claude-transport.js';
 import type { DiscordState } from '../state.js';
 
+export const DEFAULT_SDK_MODEL = 'opus';
+
 const END_SENTINEL = Symbol('claude-sdk-end');
 type EndSentinel = typeof END_SENTINEL;
 
@@ -97,7 +99,7 @@ export class ClaudeSdkSessionManager {
   async startSession(
     cwd: string,
     discordThreadId: string,
-    options?: { model?: string; sessionId?: string; resume?: string },
+    options?: { model?: string; sessionId?: string; resume?: string; betas?: string[] },
   ): Promise<ClaudeSdkSessionEntry> {
     const id = options?.sessionId ?? randomUUID();
 
@@ -137,6 +139,7 @@ export class ClaudeSdkSessionManager {
     this.processQueryStream(entry, {
       model: options?.model,
       resume: options?.resume,
+      betas: options?.betas,
     }).catch(async (err) => {
       log.error({ sessionId: id, err }, 'Claude SDK session stream failed');
       await this.events.onError(id, err as Error);
@@ -478,7 +481,7 @@ export class ClaudeSdkSessionManager {
 
   private async processQueryStream(
     session: ClaudeSdkSessionEntry,
-    options?: { model?: string; resume?: string },
+    options?: { model?: string; resume?: string; betas?: string[] },
   ): Promise<void> {
     log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId, threadId: session.discordThreadId, resume: options?.resume, pid: process.pid }, 'processQueryStream: starting');
 
@@ -489,18 +492,25 @@ export class ClaudeSdkSessionManager {
       ? { resume: options.resume }
       : { sessionId: session.sdkSessionId };
 
+    const queryOptions: Record<string, unknown> = {
+      ...sessionOrResume,
+      cwd: session.cwd,
+      model: options?.model ?? DEFAULT_SDK_MODEL,
+      includePartialMessages: false,
+      settingSources: ['user', 'project', 'local'],
+      canUseTool: async (toolName: string, input: unknown) => {
+        return this.handleCanUseTool(session, toolName, input as Record<string, unknown>);
+      },
+    };
+
+    // Enable 1M context window beta if requested
+    if (options?.betas && options.betas.length > 0) {
+      queryOptions.betas = options.betas;
+    }
+
     const queryHandle = query({
       prompt: this.createPromptGenerator(session),
-      options: {
-        ...sessionOrResume,
-        cwd: session.cwd,
-        model: options?.model,
-        includePartialMessages: false,
-        settingSources: ['user', 'project', 'local'],
-        canUseTool: async (toolName, input) => {
-          return this.handleCanUseTool(session, toolName, input as Record<string, unknown>);
-        },
-      },
+      options: queryOptions as Parameters<typeof query>[0]['options'],
     });
 
     session.activeQuery = queryHandle;

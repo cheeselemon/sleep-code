@@ -57,7 +57,7 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  // /claude start-sdk - show directory selection
+  // /claude start-sdk - show model/context selection first, then directory
   if (subcommand === 'start-sdk') {
     if (!claudeSdkSessionManager || !settingsManager) {
       await interaction.reply({
@@ -76,23 +76,46 @@ export const handleClaude: CommandHandler = async (interaction, context) => {
       return;
     }
 
+    // Model + context window selection
     const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId('claude_sdk_start_dir')
-      .setPlaceholder('Select a directory...');
+      .setCustomId('claude_sdk_start_config')
+      .setPlaceholder('Select model & context window...');
 
-    for (const dir of dirs.slice(0, 25)) {
-      selectMenu.addOptions(
-        new StringSelectMenuOptionBuilder()
-          .setLabel(basename(dir))
-          .setDescription(dir.slice(0, 100))
-          .setValue(dir)
-      );
-    }
+    selectMenu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Opus 4.7 (200K)')
+        .setDescription('claude-opus-4-7 · Latest · 128k output')
+        .setValue('claude-opus-4-7:200k'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Opus 4.7 (1M)')
+        .setDescription('claude-opus-4-7 · Latest · 1M extended context')
+        .setValue('claude-opus-4-7:1m'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Opus 4.6 (200K)')
+        .setDescription('claude-opus-4-6 · 128k output')
+        .setValue('claude-opus-4-6:200k'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Opus 4.6 (1M)')
+        .setDescription('claude-opus-4-6 · 1M extended context')
+        .setValue('claude-opus-4-6:1m'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Sonnet 4.6 (200K)')
+        .setDescription('claude-sonnet-4-6 · Fast · 64k output')
+        .setValue('claude-sonnet-4-6:200k'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Sonnet 4.6 (1M)')
+        .setDescription('claude-sonnet-4-6 · Fast · 1M extended context')
+        .setValue('claude-sonnet-4-6:1m'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Haiku 4.5 (200K)')
+        .setDescription('claude-haiku-4-5 · Fastest · 64k output')
+        .setValue('claude-haiku-4-5:200k'),
+    );
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
     await interaction.reply({
-      content: '📡 **Start Claude SDK Session**\nSelect a directory:',
+      content: '📡 **Start Claude SDK Session**\nSelect model & context window:',
       components: [row],
       ephemeral: true,
     });

@@ -283,8 +283,75 @@ export const handleCodexStopSessionSelect: SelectMenuHandler = async (interactio
   }
 };
 
+/** SDK model display names */
+const SDK_MODEL_DISPLAY: Record<string, string> = {
+  'claude-opus-4-7': 'Opus 4.7',
+  'claude-opus-4-6': 'Opus 4.6',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-haiku-4-5': 'Haiku 4.5',
+};
+
+/**
+ * Handle model+context selection for starting a Claude SDK session
+ * Shows directory picker after selection
+ * value format: "claude-opus-4-7:200k" or "claude-sonnet-4-6:1m"
+ */
+export const handleSdkStartConfigSelect: SelectMenuHandler = async (interaction, context) => {
+  const { settingsManager } = context;
+
+  if (!settingsManager) {
+    await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+    return;
+  }
+
+  const raw = interaction.values[0];
+  // Split on last colon to separate model ID from context size
+  const lastColon = raw.lastIndexOf(':');
+  const modelId = raw.slice(0, lastColon);
+  const contextSize = raw.slice(lastColon + 1);
+
+  if (!SDK_MODEL_DISPLAY[modelId]) {
+    await interaction.update({ content: `❌ Unknown model: ${modelId}`, components: [] });
+    return;
+  }
+
+  const dirs = settingsManager.getAllowedDirectories();
+  if (dirs.length === 0) {
+    await interaction.update({
+      content: '⚠️ No directories configured. Use `/claude add-dir` first.',
+      components: [],
+    });
+    return;
+  }
+
+  // Embed model + context in customId for next step
+  // Use | as separator since model IDs contain colons... actually they don't, they use hyphens
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`claude_sdk_start_dir:${modelId}:${contextSize}`)
+    .setPlaceholder('Select a directory...');
+
+  for (const dir of dirs.slice(0, 25)) {
+    selectMenu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(basename(dir))
+        .setDescription(dir.slice(0, 100))
+        .setValue(dir)
+    );
+  }
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+  const ctxLabel = contextSize === '1m' ? '1M' : '200K';
+
+  await interaction.update({
+    content: `📡 **Start Claude SDK Session** — ${SDK_MODEL_DISPLAY[modelId]} (${ctxLabel})\nSelect a directory:`,
+    components: [row],
+  });
+};
+
 /**
  * Handle directory selection for starting a Claude SDK session
+ * customId format: claude_sdk_start_dir:{modelId}:{context}
+ * e.g. claude_sdk_start_dir:claude-opus-4-7:1m
  */
 export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, context) => {
   const { claudeSdkSessionManager, channelManager, settingsManager } = context;
@@ -293,6 +360,16 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
     await interaction.reply({ content: '⚠️ Claude SDK is not enabled.', ephemeral: true });
     return;
   }
+
+  // customId: "claude_sdk_start_dir:claude-opus-4-7:1m"
+  // Split: ["claude_sdk_start_dir", "claude-opus-4-7", "1m"]
+  // But model IDs contain hyphens, so use known prefix + last segment
+  const withoutPrefix = interaction.customId.slice('claude_sdk_start_dir:'.length); // "claude-opus-4-7:1m"
+  const lastColon = withoutPrefix.lastIndexOf(':');
+  const modelId = lastColon > 0 ? withoutPrefix.slice(0, lastColon) : 'claude-opus-4-7';
+  const contextSize = lastColon > 0 ? withoutPrefix.slice(lastColon + 1) : '200k';
+  const betas: string[] = contextSize === '1m' ? ['context-1m-2025-08-07'] : [];
+  const displayName = SDK_MODEL_DISPLAY[modelId] || modelId;
 
   const cwd = interaction.values[0];
 
@@ -304,9 +381,11 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
     return;
   }
 
+  const ctxLabel = contextSize === '1m' ? '1M' : '200K';
+
   try {
     await interaction.update({
-      content: `📡 Starting Claude SDK session in \`${cwd}\`...`,
+      content: `📡 Starting Claude SDK session in \`${cwd}\` — ${displayName} (${ctxLabel})...`,
       components: [],
     });
 
@@ -318,11 +397,11 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
       return;
     }
 
-    const entry = await claudeSdkSessionManager.startSession(cwd, mapping.threadId, { sessionId });
+    const entry = await claudeSdkSessionManager.startSession(cwd, mapping.threadId, { sessionId, model: modelId, betas });
     channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
 
     await interaction.followUp({
-      content: `✅ **Claude SDK session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      content: `✅ **Claude SDK session started**\nModel: **${displayName}** (${ctxLabel})\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
       ephemeral: true,
     });
   } catch (err) {

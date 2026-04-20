@@ -34,6 +34,7 @@ import {
   handleSetTerminalSelect,
   handleCodexStartDirSelect,
   handleCodexStopSessionSelect,
+  handleSdkStartConfigSelect,
   handleSdkStartDirSelect,
   handleAgentStartModelSelect,
   handleAgentStartDirSelect,
@@ -177,8 +178,14 @@ export async function handleSelectMenu(
     return;
   }
 
-  // Claude SDK start directory selection
-  if (customId === 'claude_sdk_start_dir') {
+  // Claude SDK model+context selection (step 1)
+  if (customId === 'claude_sdk_start_config') {
+    await handleSdkStartConfigSelect(interaction, context);
+    return;
+  }
+
+  // Claude SDK directory selection (step 2, customId: claude_sdk_start_dir:{model}:{context})
+  if (customId.startsWith('claude_sdk_start_dir:')) {
     await handleSdkStartDirSelect(interaction, context);
     return;
   }
