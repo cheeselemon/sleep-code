@@ -192,7 +192,7 @@ Context window usage is displayed after each turn:
 - **ctx %**: Per-API-call `input_tokens + cache_read + cache_creation` divided by the current `contextWindow`
 - **$**: Cumulative session cost
 - **turn**: Current turn number
-- **primary model**: The model with the highest token usage for that turn, not simply the first key in `modelUsage`
+- **primary model**: The model selected at `/claude start-sdk` time (pinned across turns and always rendered first in the breakdown). Falls back to the highest-token model only when the selected one isn't present in a given turn's `modelUsage`.
 
 > **Note:** It is normal to see `claude-haiku-4-5` in the breakdown even when the main reply came from Opus or Sonnet. The SDK may use Haiku as a sidecar model for compaction or summarization.
 

@@ -210,7 +210,7 @@ Discord-only. Handles:
 - Lazy resume: auto-resumes on first message after bot restart (no liveness check deadlock)
 - Duplicate session guards (by ID and by thread)
 - Graceful shutdown: preserves SDK mappings for lazy resume on restart
-- Per-turn token usage tracking and cost reporting with primary model (max token usage) + full model breakdown
+- Per-turn token usage tracking and cost reporting with primary model pinned to the user's `/claude start-sdk` selection (falls back to highest-token model only if the selected one is absent that turn) + full breakdown
 - Loads CLAUDE.md and user/project settings via `settingSources: ['user', 'project', 'local']`
 
 ### CodexSessionManager (`src/discord/codex/codex-session-manager.ts`)

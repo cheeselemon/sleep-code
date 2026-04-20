@@ -35,6 +35,12 @@ export interface ClaudeSdkSessionEntry {
   interruptTimeoutHandle: ReturnType<typeof setTimeout> | null;
   transport: ClaudeTransport;
   lastAssistantUsage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null;
+  /**
+   * Model the user picked at /claude start-sdk time (e.g. `claude-opus-4-7[1m]`).
+   * Used to keep the per-turn display pinned to the chosen model even when
+   * sidecar models (e.g. Haiku for compaction) use more tokens in a given turn.
+   */
+  selectedModel?: string;
 }
 
 export interface ClaudeSdkToolCallInfo {
@@ -131,6 +137,10 @@ export class ClaudeSdkSessionManager {
     }
 
     const entry = this.createEntry(id, cwd, discordThreadId);
+
+    // Pin the user's /claude start-sdk selection so the per-turn display
+    // stays on the chosen model even when sidecar models take more tokens.
+    entry.selectedModel = options?.model;
 
     // When resuming, sdkSessionId must match the SDK session we're resuming
     // so query() sends the correct sessionId that Claude Code recognises.
@@ -713,7 +723,8 @@ export class ClaudeSdkSessionManager {
     //
     // modelUsage may contain multiple entries when the SDK uses sidecar models
     // (e.g. Haiku for compaction/summarization). We build a full breakdown and
-    // pick the highest-token model as primary (the one answering the user).
+    // prefer the model the user selected at /claude start-sdk — falling back to
+    // the highest-token model only when the selected one isn't in this turn.
     const lastUsage = session.lastAssistantUsage;
     const modelMap = message.modelUsage || {};
 
@@ -733,7 +744,18 @@ export class ClaudeSdkSessionManager {
         return tb - ta;
       });
 
-    const primary = breakdown[0];
+    const selectedMatch = session.selectedModel
+      ? breakdown.find(b => b.model === session.selectedModel)
+      : undefined;
+    const primary = selectedMatch ?? breakdown[0];
+
+    // Pin the primary to the first slot in the breakdown so the rendered
+    // "🤖 <primary>: … · <rest>: …" line leads with the user's chosen model.
+    if (primary && breakdown[0] !== primary) {
+      const rest = breakdown.filter(b => b !== primary);
+      breakdown.length = 0;
+      breakdown.push(primary, ...rest);
+    }
 
     if (lastUsage && primary) {
       const contextUsed = (lastUsage.input_tokens || 0)
