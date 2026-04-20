@@ -92,7 +92,7 @@ Discord-only. Spawns Claude sessions (background or terminal app), tracks proces
 Discord-only. Creates dedicated channels per project CWD (`sleep-{foldername}`) inside "Sleep Code Sessions" category. Manages threads for each session, persists mappings to disk for bot restart recovery.
 
 ### ClaudeSdkSessionManager (`src/discord/claude-sdk/`)
-Runs Claude Code via the Agent SDK `query()` API — no terminal window needed. Async generator prompt input, `canUseTool` callback for permission handling, session resume from JSONL history.
+Runs Claude Code via the Agent SDK `query()` API — no terminal window needed. Async generator prompt input, `canUseTool` callback for permission handling, session resume from JSONL history, and model + context window selection persisted for restart.
 
 ### BatchDistillRunner (`src/memory/batch-distill-runner.ts`)
 Queues messages and processes them in batches via a persistent Claude SDK session. Handles batch timer, session refresh, consolidation scheduling, opt-out tracking, and config hot-reload.

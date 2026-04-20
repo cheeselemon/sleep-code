@@ -7,13 +7,15 @@
 | Command | Description |
 |---------|-------------|
 | `/claude start` | Start a new Claude session via PTY (select directory) |
-| `/claude start-sdk` | Start a new Claude session via Agent SDK (select directory) |
+| `/claude start-sdk` | Start a new Claude session via Agent SDK (select model & context → directory) |
 | `/claude stop` | Stop a running session (PTY or SDK) |
 | `/claude status` | Show all managed sessions (🔧 PTY / 📡 SDK) |
 | `/claude restore` | Restore a dead session in the current thread (resumes conversation history) |
 | `/sessions` | List active sessions |
 
 > **PTY vs SDK**: PTY supports terminal controls (`/background`, `/mode`, `/compact`), while SDK receives structured tool call/result directly. See [SDK Session Guide](sdk-session.md) for a detailed comparison.
+>
+> **Model selection:** `/claude start-sdk` first asks for model + context window, then directory. See [Model Selection](sdk-session.md#model-selection).
 
 ### In-Session Controls
 

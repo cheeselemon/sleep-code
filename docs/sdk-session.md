@@ -48,9 +48,11 @@ In Discord:
 /claude start-sdk
 ```
 
-→ A directory selection dropdown appears (from your whitelisted directories).
+→ Step 1: Select a model + context window.
 
-After selecting a directory, an SDK session starts in that thread:
+→ Step 2: Select a directory from your whitelisted directories.
+
+After both steps, an SDK session starts in that thread:
 
 ```
 📡 Claude SDK ready
@@ -73,6 +75,36 @@ Claude: (responds with previous context preserved)
 ```
 /claude stop
 ```
+
+---
+
+## Model Selection
+
+`/claude start-sdk` uses a 2-step picker:
+
+1. Select the model + context window.
+2. Select the directory.
+
+### Available Models
+
+| Model | 200K | 1M |
+|-------|:----:|:--:|
+| Claude Opus 4.7 | ✅ | ✅ |
+| Claude Opus 4.6 | ✅ | ✅ |
+| Claude Sonnet 4.6 | ✅ | ✅ |
+| Claude Haiku 4.5 | ✅ | ❌ |
+
+### 1M Context Rule
+
+- Use the Claude Code model ID with a `[1m]` suffix, for example `claude-opus-4-7[1m]`.
+- This matches the Claude Code CLI `/model` format.
+- 1M context is enabled by the model ID itself, not by a `betas` flag.
+
+### Notes
+
+- Haiku 4.5 does not have a 1M variant.
+- Opus and Sonnet 1M variants may have separate billing.
+- Full slash command reference remains in [Commands Reference](commands.md).
 
 ---
 
@@ -145,9 +177,8 @@ PASS src/index.test.ts
 Context window usage is displayed after each turn:
 
 ```
-🟢 16% ctx (164.1k/1.0M) · $1.1423 · turn 2
-🟡 72% ctx (720.5k/1.0M) · $3.4521 · turn 15
-🔴 91% ctx (910.2k/1.0M) · $5.1234 · turn 28
+🟢 14% ctx (28.4k/1.0M) · $0.1790 · turn 1
+🤖 claude-opus-4-7[1m]: 28.4k · claude-haiku-4-5: 2.1k
 ```
 
 | Icon | Meaning |
@@ -156,11 +187,14 @@ Context window usage is displayed after each turn:
 | 🟡 | 70–89% — caution |
 | 🔴 | 90%+ — compaction needed soon |
 
-- **ctx %**: Context window usage (per-API-call `input_tokens + cache_read + cache_creation` / `contextWindow`)
+- **Line 1**: Current turn context usage, cumulative session cost, and turn number
+- **Line 2**: Per-model token breakdown for that turn
+- **ctx %**: Per-API-call `input_tokens + cache_read + cache_creation` divided by the current `contextWindow`
 - **$**: Cumulative session cost
 - **turn**: Current turn number
+- **primary model**: The model with the highest token usage for that turn, not simply the first key in `modelUsage`
 
-> **Note**: Claude Opus 4.6 uses a 1M token context window. When usage is high, the SDK may perform automatic compaction.
+> **Note:** It is normal to see `claude-haiku-4-5` in the breakdown even when the main reply came from Opus or Sonnet. The SDK may use Haiku as a sidecar model for compaction or summarization.
 
 ---
 
@@ -190,6 +224,8 @@ Context window usage is displayed after each turn:
 | `/model` | ⚠️ | Applied from next turn |
 
 > **Note:** SDK sessions start with `settingSources: ['user', 'project', 'local']`, auto-loading CLAUDE.md, `~/.claude/settings.json`, and project `.claude/` settings.
+>
+> Canonical command descriptions live in [Commands Reference](commands.md).
 
 ### Interrupt vs Stop
 
@@ -229,27 +265,11 @@ Claude responses from SDK sessions are automatically collected into the memory p
 
 ## Configuration
 
-`~/.sleep-code/settings.json`:
+Canonical config and environment variable reference lives in [CLAUDE.md](../CLAUDE.md).
 
-```json
-{
-  "sdkDefaultModel": "sonnet",
-  "sdkPermissionTimeoutMs": 300000,
-  "sdkStreamingEnabled": false
-}
-```
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `sdkDefaultModel` | `"sonnet"` | Default model for SDK sessions |
-| `sdkPermissionTimeoutMs` | `0` (no timeout) | Permission request timeout (0 = wait indefinitely) |
-| `sdkStreamingEnabled` | `false` | Enable streaming (experimental) |
-
-Environment variables:
-
-```bash
-DISABLE_SDK_SESSIONS=1    # Disable SDK session functionality
-```
+- `sdkDefaultModel` is the default SDK model when no explicit session selection overrides it.
+- In `/claude start-sdk`, Step 1 model selection overrides `sdkDefaultModel` for that session.
+- The selected model ID is persisted as `sdkModel` in the session mapping so lazy resume can restore the same model + context window later.
 
 ---
 
@@ -273,6 +293,13 @@ SDK sessions **auto-recover without any command** after a bot restart.
 | `sdkSessionId` | Claude Agent SDK (used in `query({ resume })`) | `995b99cd-...` |
 
 These IDs are separate. `sdkSessionId` is used by the SDK as the JSONL filename and must be passed for resume.
+
+### Model Persistence
+
+- Lazy resume also restores the selected model variant from the persisted `sdkModel` mapping.
+- If a session was started with `claude-opus-4-7[1m]`, the same `claude-opus-4-7[1m]` model is sent again after bot restart.
+- Sessions started before patch `9a2be38` do not have `sdkModel` stored in the persisted mapping.
+- Those older sessions fall back to the 200K variant after restart and must be restarted with `/claude start-sdk`.
 
 ### Resume Failure
 
@@ -308,6 +335,12 @@ These commands are PTY-only. They are not supported in SDK sessions.
 2. Check logs: `pm2 logs sleep-discord --lines 30 --nostream`
 3. If you see `Lazy-resuming SDK session` — normal (SDK is loading)
 4. If you see `Fresh start also failed` — start a new session with `/claude start-sdk`
+
+### Context Fell Back to 200K After Bot Restart
+
+Cause: the session was started before patch `9a2be38`, so its persisted mapping does not contain `sdkModel`.
+
+Fix: start a new SDK session with `/claude start-sdk` and choose the desired 1M variant again.
 
 ### Session Ended Unexpectedly
 

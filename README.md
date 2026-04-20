@@ -27,6 +27,7 @@ Sleep Code bridges Claude Code (and Codex) with your chat platform. Start a codi
 - **YOLO mode** — auto-approve all permissions (use with caution)
 - **Session management** — start, stop, restore sessions from Discord
 - **Claude Agent SDK** — run sessions without a terminal via SDK `query()`
+- **Model & context selection** — choose Opus 4.7/4.6, Sonnet 4.6, or Haiku 4.5 with supported 200K or 1M context options at session start
 - **Codex integration** — run OpenAI Codex alongside Claude in the same thread
 - **Semantic memory** — auto-distill conversations → local vector DB, daily digest briefings
 - **Multi-platform** — Discord (full features), Slack, Telegram
