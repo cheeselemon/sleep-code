@@ -392,7 +392,7 @@ export const handleSdkStartDirSelect: SelectMenuHandler = async (interaction, co
 
     const sessionId = randomUUID();
     const sessionName = `claude-sdk-${basename(cwd)}`;
-    const mapping = await channelManager.createSdkSession(sessionId, sessionName, cwd);
+    const mapping = await channelManager.createSdkSession(sessionId, sessionName, cwd, undefined, undefined, modelId);
     if (!mapping) {
       await interaction.followUp({ content: '❌ Failed to create SDK thread.', ephemeral: true });
       return;

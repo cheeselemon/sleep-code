@@ -696,11 +696,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
               const canResume = persisted.sdkSessionId && persisted.sdkSessionId !== persisted.sessionId;
 
               if (canResume) {
-                log.info({ sessionId: effectiveClaudeSessionId, sdkSessionId: persisted.sdkSessionId, cwd: persisted.cwd, pid: process.pid }, 'Lazy-resuming SDK session after bot restart');
+                log.info({ sessionId: effectiveClaudeSessionId, sdkSessionId: persisted.sdkSessionId, cwd: persisted.cwd, sdkModel: persisted.sdkModel, pid: process.pid }, 'Lazy-resuming SDK session after bot restart');
                 try {
                   const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
                     sessionId: persisted.sessionId,
                     resume: persisted.sdkSessionId,
+                    model: persisted.sdkModel,
                   });
                   channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
                   return entry;
@@ -709,6 +710,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
                   try {
                     const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
                       sessionId: persisted.sessionId,
+                      model: persisted.sdkModel,
                     });
                     channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
                     return entry;
@@ -722,6 +724,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
                 try {
                   const entry = await claudeSdkSessionManager.startSession(persisted.cwd, persisted.threadId!, {
                     sessionId: persisted.sessionId,
+                    model: persisted.sdkModel,
                   });
                   channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
                   return entry;

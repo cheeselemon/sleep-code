@@ -479,6 +479,7 @@ export class ChannelManager {
     cwd: string,
     existingThreadId?: string,
     sdkSessionId?: string,
+    sdkModel?: string,
   ): Promise<ChannelMapping | null> {
     if (!this.initialized) {
       const ready = await this.waitForInit();
@@ -565,9 +566,10 @@ export class ChannelManager {
       threadId,
       channelId,
       cwd,
+      sdkModel,
     });
 
-    log.info({ sessionId, threadId }, 'Claude SDK session mapping stored');
+    log.info({ sessionId, threadId, sdkModel }, 'Claude SDK session mapping stored');
     return mapping;
   }
 
