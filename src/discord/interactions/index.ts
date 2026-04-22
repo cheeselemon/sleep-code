@@ -25,6 +25,7 @@ import {
 } from './sdk-ask-question.js';
 import { handleInterruptButton, handleYoloButton } from './panel.js';
 import { handleFullResultButton } from './full-result.js';
+import { handleAttachButton } from './attach-button.js';
 import { handleRestoreButton, handleDismissRestoreButton, handleRestoreSdkButton, handleDismissSdkButton } from './restore.js';
 import { handleKillAllButton } from '../control-panel.js';
 import {
@@ -77,6 +78,12 @@ export async function handleButton(
   // View Full button for truncated results
   if (customId.startsWith('fullresult:')) {
     await handleFullResultButton(interaction, context);
+    return;
+  }
+
+  // File attachment delivery button
+  if (customId.startsWith('attach:')) {
+    await handleAttachButton(interaction, context);
     return;
   }
 

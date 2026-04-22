@@ -4,8 +4,8 @@
 
 import type { Attachment, Client, ThreadChannel } from 'discord.js';
 import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync, realpathSync, statSync } from 'fs';
+import { isAbsolute, join, resolve, sep } from 'path';
 import { tmpdir } from 'os';
 import { discordLogger as log } from '../utils/logger.js';
 import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS, MAX_TEXT_FILE_SIZE } from './state.js';
@@ -253,4 +253,60 @@ export async function getThread(
     log.debug({ threadId: session.threadId, err }, 'getThread: Failed to fetch thread');
   }
   return null;
+}
+
+export const DISCORD_ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024; // 25MB
+
+export interface AttachmentPathValidationResult {
+  ok: boolean;
+  normalizedPath?: string;
+  realPath?: string;
+  size?: number;
+  error?: 'not_absolute' | 'outside_cwd' | 'missing' | 'stat_failed';
+}
+
+function isWithinRoot(candidatePath: string, rootPath: string): boolean {
+  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${sep}`);
+}
+
+export function validateAttachmentPath(
+  filePath: string,
+  cwd: string,
+  options?: { requireExists?: boolean },
+): AttachmentPathValidationResult {
+  if (!isAbsolute(filePath)) {
+    return { ok: false, error: 'not_absolute' };
+  }
+
+  const normalizedPath = resolve(filePath);
+  const normalizedCwd = resolve(cwd);
+  if (!isWithinRoot(normalizedPath, normalizedCwd)) {
+    return { ok: false, error: 'outside_cwd' };
+  }
+
+  const requireExists = options?.requireExists ?? true;
+  if (!requireExists && !existsSync(normalizedPath)) {
+    return { ok: true, normalizedPath };
+  }
+
+  try {
+    const realCwd = realpathSync(normalizedCwd);
+    const realPath = realpathSync(normalizedPath);
+    if (!isWithinRoot(realPath, realCwd)) {
+      return { ok: false, error: 'outside_cwd' };
+    }
+
+    const size = statSync(realPath).size;
+    return { ok: true, normalizedPath, realPath, size };
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return { ok: false, error: 'missing', normalizedPath };
+    }
+    log.warn({ err, filePath, cwd }, 'Failed to validate attachment path');
+    return { ok: false, error: 'stat_failed', normalizedPath };
+  }
+}
+
+export function formatAttachmentSizeMB(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
 }

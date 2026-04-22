@@ -32,6 +32,7 @@ import { AgentSessionManager } from './agents/agent-session-manager.js';
 import { createAgentEvents } from './agents/agent-handlers.js';
 import { getModelByAlias, getProviderConfig } from './agents/model-registry.js';
 import { ControlPanel } from './control-panel.js';
+import { AttachStore } from './attach-store.js';
 
 // Import state management
 import { createState, cleanupState } from './state.js';
@@ -88,6 +89,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
   const channelManager = new ChannelManager(client, config.userId);
   const state = createState();
+  const attachStore = new AttachStore();
 
   // Memory system references (initialized after bot is ready)
   let memoryReporter: MemoryReporter | undefined;
@@ -176,6 +178,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     client,
     channelManager,
     state,
+    attachStore,
     codexSessionManager,
     agentSessionManagerRef,
     memoryCollector: options?.memoryCollector,
@@ -215,6 +218,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     codexSessionManager,
     claudeSdkSessionManager,
     agentSessionManager,
+    attachStore,
     state,
     get batchDistillRunner() { return batchDistillRunner; },
     get dailyDigestRunner() { return dailyDigestRunner; },
@@ -845,6 +849,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
       }
     }
 
+    try {
+      await attachStore.load(client);
+    } catch (err) {
+      log.error({ err }, 'Failed to restore attach button state');
+    }
+
     // Register slash commands
     try {
       const rest = new REST({ version: '10' }).setToken(config.botToken);
@@ -959,6 +969,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
   // Cleanup function for intervals
   const cleanup = async () => {
+    attachStore.dispose();
     cleanupState(state);
     if (batchDistillRunner) {
       await batchDistillRunner.stop();

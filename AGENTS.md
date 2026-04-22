@@ -337,6 +337,25 @@ Plan files under `docs/plans/` should include:
 
 Receiving agent workflow: plan filename + "implement this plan" instruction → read the file, implement, append report section at the bottom or create `<feature>-report.md` alongside.
 
+## File Delivery via `<attach>` Marker
+
+In Claude SDK sessions, an AI agent can offer a file for manual delivery by including an XML marker in its response:
+
+```xml
+<attach>/absolute/path/to/file.pdf</attach>
+```
+
+Rules:
+- SDK sessions only. PTY Claude sessions and Codex sessions do not render attach buttons in the current implementation.
+- Use an absolute path only.
+- The file must stay inside the session CWD after `path.resolve()` and `fs.realpathSync()` validation.
+- Up to 5 markers per response are rendered as Discord buttons.
+- The user must click the button to receive the file. The bot does not auto-upload from path mentions alone.
+- Buttons expire after 1 hour.
+- Re-clicking an already delivered file returns the existing upload link instead of uploading again.
+- Files larger than 25MB are rejected at click time.
+- Prefer adding a short human explanation next to the marker so the user knows what the file is.
+
 ## Memory & Knowledge System
 
 Conversations in this project are automatically remembered by the sleep-code memory pipeline.

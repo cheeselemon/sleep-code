@@ -1,9 +1,11 @@
 import type { Client, ThreadChannel } from 'discord.js';
 import { basename } from 'path';
+import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
 import { chunkMessage } from '../../slack/message-formatter.js';
 import { DISCORD_SAFE_CONTENT_LIMIT } from '../constants.js';
 import type { ChannelManager } from '../channel-manager.js';
+import type { AttachStore } from '../attach-store.js';
 import type {
   ClaudeSdkEvents,
   ClaudeSdkToolResultInfo,
@@ -23,15 +25,20 @@ import { tryRouteToAgent } from '../agent-routing.js';
 import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 import type { AgentSessionManager } from '../agents/agent-session-manager.js';
 import type { MemoryCollector } from '../../memory/memory-collector.js';
+import { validateAttachmentPath } from '../utils.js';
 
 interface ClaudeSdkHandlerContext {
   client: Client;
   channelManager: ChannelManager;
   state: DiscordState;
+  attachStore?: AttachStore;
   codexSessionManager?: CodexSessionManager;
   agentSessionManagerRef?: { current: AgentSessionManager | undefined };
   memoryCollector?: MemoryCollector;
 }
+
+const ATTACH_MARKER_REGEX = /<attach>([^<]+)<\/attach>/g;
+const MAX_ATTACH_BUTTONS = 5;
 
 async function getClaudeSdkThread(
   client: Client,
@@ -63,8 +70,96 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function extractAttachMarkers(content: string): {
+  cleanedContent: string;
+  filePaths: string[];
+  overflowCount: number;
+} {
+  const filePaths: string[] = [];
+  let seen = 0;
+
+  const cleanedContent = content
+    .replace(ATTACH_MARKER_REGEX, (_, rawPath: string) => {
+      const filePath = rawPath.trim();
+      if (filePath && filePaths.length < MAX_ATTACH_BUTTONS) {
+        filePaths.push(filePath);
+      }
+      seen += 1;
+      return '';
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return {
+    cleanedContent,
+    filePaths,
+    overflowCount: Math.max(0, seen - MAX_ATTACH_BUTTONS),
+  };
+}
+
+async function sendAttachButtons(
+  client: Client,
+  thread: ThreadChannel,
+  attachStore: AttachStore | undefined,
+  sessionId: string,
+  cwd: string | undefined,
+  filePaths: string[],
+) {
+  if (!attachStore || !cwd || filePaths.length === 0) {
+    return;
+  }
+
+  const buttons: Array<{
+    customId: string;
+    sessionId: string;
+    threadId: string;
+    filePath: string;
+    cwd: string;
+  }> = [];
+
+  for (const filePath of filePaths) {
+    const validation = validateAttachmentPath(filePath, cwd, { requireExists: true });
+    if (!validation.ok) {
+      log.warn({ sessionId, filePath, cwd, error: validation.error }, 'Skipping invalid attach marker');
+      continue;
+    }
+
+    buttons.push({
+      customId: `attach:${randomUUID()}`,
+      sessionId,
+      threadId: thread.id,
+      filePath: validation.normalizedPath ?? filePath,
+      cwd,
+    });
+  }
+
+  if (buttons.length === 0) {
+    return;
+  }
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    ...buttons.map(button =>
+      new ButtonBuilder()
+        .setCustomId(button.customId)
+        .setLabel(`📎 ${basename(button.filePath)}`.slice(0, 80))
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  );
+
+  const message = await thread.send({
+    content: '📎 **첨부 파일**\n클릭해서 받기',
+    components: [row],
+  });
+
+  await attachStore.registerButtons(client, buttons.map(button => ({
+    ...button,
+    messageId: message.id,
+  })));
+}
+
 export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): ClaudeSdkEvents {
   const {
+    attachStore,
     channelManager,
     client,
     codexSessionManager,
@@ -140,6 +235,16 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         return;
       }
 
+      const mapping = channelManager.getSdkSession(sessionId);
+      const {
+        cleanedContent,
+        filePaths,
+        overflowCount,
+      } = extractAttachMarkers(content);
+      if (overflowCount > 0) {
+        log.warn({ sessionId, overflowCount }, 'Too many attach markers; only first 5 were rendered');
+      }
+
       const agents = channelManager.getAgentsInThread(thread.id);
       const multiAgent = !!(agents.codex || agents.agentAliases.size > 0);
 
@@ -169,7 +274,7 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
 
         const { routed } = await tryRouteToAgent({
           thread,
-          content,
+          content: cleanedContent,
           agents,
           sourceAgent: 'claude',
           state,
@@ -183,28 +288,29 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
         }
       }
 
-      if (memoryCollector && content.trim()) {
-        const mapping = channelManager.getSdkSession(sessionId);
+      if (memoryCollector && cleanedContent.trim()) {
         const project = mapping?.cwd ? basename(mapping.cwd) : undefined;
         memoryCollector.onMessage({
           speaker: 'claude',
           displayName: 'Claude',
-          content,
+          content: cleanedContent,
           channelId: thread.id,
           threadId: thread.id,
           project,
         }).catch(err => log.error({ err }, 'Memory collect failed'));
       }
 
-      log.info({ sessionId, threadId: thread.id, contentPreview: content.slice(0, 50), pid: process.pid }, 'SDK onMessage: sending to Discord');
+      log.info({ sessionId, threadId: thread.id, contentPreview: cleanedContent.slice(0, 50), pid: process.pid }, 'SDK onMessage: sending to Discord');
 
       const prefix = multiAgent ? '**Claude:** ' : '';
       const maxLen = DISCORD_SAFE_CONTENT_LIMIT - prefix.length;
-      const chunks = chunkMessage(content, maxLen);
+      const chunks = cleanedContent ? chunkMessage(cleanedContent, maxLen) : [];
 
       for (const chunk of chunks) {
         await thread.send(`${prefix}${chunk}`);
       }
+
+      await sendAttachButtons(client, thread, attachStore, sessionId, mapping?.cwd, filePaths);
 
       state.lastActiveAgent.set(thread.id, 'claude');
     },

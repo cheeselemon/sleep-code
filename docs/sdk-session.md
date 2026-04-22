@@ -149,6 +149,8 @@ By default, permission requests wait indefinitely (no timeout). To enable auto-d
 
 SDK sessions display tool calls and results in a structured format.
 
+SDK responses can also render click-to-upload file buttons when the assistant emits `<attach>/absolute/path</attach>` for a file inside the session CWD.
+
 ### Tool Call
 
 ```

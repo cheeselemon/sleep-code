@@ -1,11 +1,11 @@
 ---
 name: sc-install
-description: "Install sleep-code multi-agent protocol and memory system to a project's CLAUDE.md/AGENTS.md. Interactive setup with auto-find or manual path."
+description: "Install sleep-code multi-agent protocol, file delivery marker rules, and memory system to a project's CLAUDE.md/AGENTS.md. Interactive setup with auto-find or manual path."
 ---
 
 # Sleep Code Installer
 
-Set up the sleep-code multi-agent protocol and memory system for a project.
+Set up the sleep-code multi-agent protocol, file delivery marker rules, and memory system for a project.
 Handles CLAUDE.md, AGENTS.md, and skill file installation in one step.
 
 ## Step 1: Ask Installation Target
@@ -51,6 +51,7 @@ For the selected project path:
 2. Read found files' content
 3. Detect which sections are already present:
    - `## Multi-Agent Communication Protocol` (or legacy `## Multi-Agent Workflow`) — multi-agent protocol
+   - `## File Delivery via \`<attach>\` Marker` — file delivery marker rules
    - `## Memory & Knowledge System` — memory system
 
 Report status:
@@ -60,14 +61,16 @@ Report status:
 
 CLAUDE.md: {path} / missing
   - Multi-Agent Protocol: {installed/outdated/missing}
+  - File Delivery:        {installed/outdated/missing}
   - Memory & Knowledge:   {installed/outdated/missing}
 
 AGENTS.md: {path} / missing
   - Multi-Agent Protocol: {installed/outdated/missing}
+  - File Delivery:        {installed/outdated/missing}
   - Memory & Knowledge:   {installed/outdated/missing}
 ```
 
-Note: "outdated" = section exists but uses legacy heading (e.g., `## Multi-Agent Workflow`) or lacks latest fields (e.g., missing Generic agents, missing 1-mention rule).
+Note: "outdated" = section exists but uses legacy heading (e.g., `## Multi-Agent Workflow`) or lacks latest fields (e.g., missing Generic agents, missing 1-mention rule, missing `<attach>` rules).
 
 Ask user which sections to install/update. If a section already exists, offer to **replace** it with the latest template (user must confirm).
 
@@ -171,6 +174,29 @@ Long context (3+ lines) between agents must be shared via files:
 - Send only **file path + 1-2 line summary** to the other agent
 ```
 
+### Template: File Delivery via `<attach>` Marker
+
+````markdown
+## File Delivery via `<attach>` Marker
+
+In SDK-backed chat sessions, an AI agent can offer a file for manual delivery by including an XML marker in its response:
+
+```xml
+<attach>/absolute/path/to/file.pdf</attach>
+```
+
+Rules:
+- SDK-backed sessions only. Other session types may ignore this marker.
+- Use an absolute path only.
+- The file must stay inside the session CWD after `path.resolve()` and `fs.realpathSync()` validation.
+- Up to 5 markers per response are rendered as file buttons.
+- The user must click the button to receive the file. Path mentions alone do not trigger auto-upload.
+- Buttons expire after 1 hour.
+- Re-clicking an already delivered file returns the existing upload link instead of uploading again.
+- Files larger than 25MB are rejected at click time.
+- Prefer adding a short human explanation near the marker so the user knows what the file is.
+````
+
 ### Template: Memory & Knowledge System
 
 Replace `{PROJECT_NAME}` with the last directory component of the project path (e.g., `/Users/foo/projects/my-app` → `my-app`).
@@ -211,7 +237,7 @@ Each memory is tagged with project, speaker, priority (0-10), and topicKey.
 After project setup, also install the slash command skills to `~/.claude/commands/`:
 
 - `docs/skills/setup-multi-agent.md` → `~/.claude/commands/sc-setup-multi-agent.md`
-- `docs/skills/setup-memory-knowledge.md` ��� `~/.claude/commands/sc-setup-memory-knowledge.md`
+- `docs/skills/setup-memory-knowledge.md` → `~/.claude/commands/sc-setup-memory-knowledge.md`
 
 The sleep-code repo is at: `/Users/cheeselemon/Documents/GitHub/cheeselemon/sleep-code`
 
@@ -228,10 +254,12 @@ Print a summary:
 
 CLAUDE.md:
   - Multi-Agent Protocol: {installed/updated/already up-to-date}
+  - File Delivery:        {installed/updated/already up-to-date}
   - Memory & Knowledge:   {installed/updated/already up-to-date}
 
 AGENTS.md:
   - Multi-Agent Protocol: {installed/updated/already up-to-date}
+  - File Delivery:        {installed/updated/already up-to-date}
   - Memory & Knowledge:   {installed/updated/already up-to-date}
 
 스킬 파일:

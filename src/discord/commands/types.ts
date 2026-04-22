@@ -12,6 +12,7 @@ import type { CodexSessionManager } from '../codex/codex-session-manager.js';
 import type { ClaudeSdkSessionManager } from '../claude-sdk/claude-sdk-session-manager.js';
 import type { MemoryAuthorityClient } from '../../memory/memory-authority-client.js';
 import type { AgentSessionManager } from '../agents/agent-session-manager.js';
+import type { AttachStore } from '../attach-store.js';
 
 export interface CommandContext {
   client: Client;
@@ -23,6 +24,7 @@ export interface CommandContext {
   claudeSdkSessionManager?: ClaudeSdkSessionManager;
   agentSessionManager?: AgentSessionManager;
   memoryClient?: MemoryAuthorityClient;
+  attachStore?: AttachStore;
   state: DiscordState;
 }
 
