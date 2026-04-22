@@ -36,14 +36,18 @@ Based on user's choice. **In every option, the resolved path must be shown back 
 - **DO NOT** restrict to current directory or to a fixed depth — scan the whole `$HOME` tree
 - 같은 프로젝트 루트에 여러 파일(`CLAUDE.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`)이 있으면 **하나의 프로젝트로 묶어서** 표시
 - 결과가 많으면 절대 경로 알파벳 순 정렬 후 모두 보여주기 (자르지 말 것)
-- Present found projects as a numbered list with their absolute paths
+- **사전 내용 검사 (필수)**: 목록을 보여주기 전에, 각 프로젝트의 발견된 모든 파일을 실제로 읽어서 sleep-code 섹션 존재 여부를 판정한다.
+  - 검사 대상 섹션: `## Multi-Agent Communication Protocol` (또는 레거시 `## Multi-Agent Workflow`), `## File Delivery via \`<attach>\` Marker`, `## Memory & Knowledge System`
+  - 셋 중 **하나라도 있으면** `[업데이트]`로 태깅
+  - 셋 다 없으면 `[신규 설치]`로 태깅
+- Present found projects as a numbered list with their absolute paths AND the [업데이트]/[신규 설치] tag
 - Ask the user to pick one (or multiple). Example prompt:
 
 ```
 탐색 결과 — 설치/업데이트할 프로젝트 번호를 골라주세요 (쉼표로 구분):
-  1. {project_name}  ({absolute_path})
-  2. {project_name}  ({absolute_path})
-  ...
+   1. {project_name}  ({absolute_path})  [업데이트]   {discovered files}
+   2. {project_name}  ({absolute_path})  [신규 설치]  {discovered files}
+   ...
 
 선택:
 ```
