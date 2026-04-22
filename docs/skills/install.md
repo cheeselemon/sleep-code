@@ -24,22 +24,53 @@ Wait for user response before proceeding.
 
 ## Step 2: Resolve Project Path
 
-Based on user's choice:
+Based on user's choice. **In every option, the resolved path must be shown back to the user and confirmed before moving on to Step 3 — never auto-proceed.**
 
 ### Option 1: Auto-find
 - Search for `CLAUDE.md` files in the current directory and up to 3 levels deep
 - Also check common locations: `~/Documents/GitHub/`, `~/projects/`, `~/dev/`
 - **탐색 위치**: 프로젝트 루트의 `CLAUDE.md` 뿐 아니라 `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`도 함께 탐색
 - 같은 프로젝트 루트에 여러 파일이 있으면 하나의 프로젝트로 묶어서 표시
-- Present found projects as a numbered list
-- Let the user pick one (or multiple)
+- Present found projects as a numbered list with their absolute paths
+- Ask the user to pick one (or multiple). Example prompt:
+
+```
+탐색 결과 — 설치할 프로젝트 번호를 골라주세요 (쉼표로 구분):
+  1. {project_name}  ({absolute_path})
+  2. {project_name}  ({absolute_path})
+  ...
+
+선택:
+```
+
+- After the user picks, **echo the chosen project(s) back and ask for final confirmation**:
+
+```
+선택한 프로젝트:
+  - {project_name}  ({absolute_path})
+
+이 경로에 sleep-code를 설치할까요? (y/n)
+```
+
+- Only proceed to Step 3 after `y`.
 
 ### Option 2: Manual path
 - Ask for the absolute path to the project root
-- Validate the path exists
+- Validate the path exists (and is a directory)
+- **Echo the resolved path back and ask for confirmation** before proceeding:
+
+```
+입력하신 경로: {absolute_path}
+디렉토리 확인: ✅ 존재함 / ❌ 존재하지 않음
+
+이 경로에 sleep-code를 설치할까요? (y/n)
+```
+
+- Only proceed to Step 3 after `y`. If `n`, return to the path prompt.
 
 ### Option 3: Current project
 - Use the current working directory
+- This option is treated as "user already confirmed by choosing 3" — no extra confirmation, but still print the CWD before Step 3 so the user can interrupt if it's wrong.
 
 ## Step 3: Check Existing Files
 
