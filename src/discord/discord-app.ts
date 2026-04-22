@@ -623,7 +623,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd, sandboxMode: isYolo ? 'workspace-write' : 'read-only' }, 'Auto-created Codex session in existing thread');
 
           // Notify Discord thread only — no PTY injection to avoid prompt injection suspicion
-          // Claude learns about Codex via CLAUDE.md protocol (set up with /setup-multi-agent)
+          // Claude learns about Codex via CLAUDE.md protocol (set up with /sc-install)
           try {
             await firstMessage.channel.send(`**Codex joined this thread.** Model: \`${CODEX_MODEL}\`. Messages are prefixed with agent names.`);
           } catch { /* ignore */ }

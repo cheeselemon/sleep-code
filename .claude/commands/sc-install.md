@@ -72,9 +72,54 @@ AGENTS.md: {path} / missing
 
 Note: "outdated" = section exists but uses legacy heading (e.g., `## Multi-Agent Workflow`) or lacks latest fields (e.g., missing Generic agents, missing 1-mention rule, missing `<attach>` rules).
 
-Ask user which sections to install/update. If a section already exists, offer to **replace** it with the latest template (user must confirm).
+## Step 4: Ask What To Do (Update vs Install)
 
-## Step 4: Install / Update
+Based on the Step 3 detection, ask the user in **two passes**, **already-installed sections first**:
+
+### Pass 1 — Already installed (update candidates)
+
+If any sections are already present (`installed` or `outdated`), list them first and ask:
+
+```
+이미 설치된 섹션 (업데이트할 항목을 골라주세요):
+  1. CLAUDE.md > Multi-Agent Protocol  ({installed/outdated})
+  2. AGENTS.md > File Delivery         ({installed/outdated})
+  ...
+
+업데이트할 번호 (쉼표로 구분, 'all' / 'none'):
+```
+
+Default to **all already-installed sections** when the user types `all` or just presses Enter. `outdated` items should be highlighted (e.g., with `⚠️`) so the user notices them.
+
+### Pass 2 — Missing (new install candidates)
+
+Then list missing sections and ask:
+
+```
+설치되지 않은 섹션 (새로 설치할 항목을 골라주세요):
+  1. CLAUDE.md > File Delivery
+  2. AGENTS.md > Memory & Knowledge
+  ...
+
+설치할 번호 (쉼표로 구분, 'all' / 'none'):
+```
+
+If no sections fall into a pass, skip that pass and continue.
+
+### Confirmation
+
+Print the combined plan and ask for final confirmation before any file write:
+
+```
+적용할 작업:
+  - CLAUDE.md > Multi-Agent Protocol  → 업데이트
+  - AGENTS.md > File Delivery         → 새로 설치
+  ...
+
+진행할까요? (y/n)
+```
+
+## Step 5: Install / Update
 
 ### If file is missing
 Create `CLAUDE.md` and/or `AGENTS.md` with the selected sections.
@@ -232,17 +277,6 @@ Each memory is tagged with project, speaker, priority (0-10), and topicKey.
 - Search example: `sc_memory_search(query="...", project="{PROJECT_NAME}")`
 ```
 
-## Step 5: Install Skill Files
-
-After project setup, also install the slash command skills to `~/.claude/commands/`:
-
-- `docs/skills/setup-multi-agent.md` → `~/.claude/commands/sc-setup-multi-agent.md`
-- `docs/skills/setup-memory-knowledge.md` → `~/.claude/commands/sc-setup-memory-knowledge.md`
-
-The sleep-code repo is at: `/Users/cheeselemon/Documents/GitHub/cheeselemon/sleep-code`
-
-Read each source file and write it to the destination. Do NOT modify the content.
-
 ## Step 6: Report
 
 Print a summary:
@@ -262,13 +296,7 @@ AGENTS.md:
   - File Delivery:        {installed/updated/already up-to-date}
   - Memory & Knowledge:   {installed/updated/already up-to-date}
 
-스킬 파일:
-  - ~/.claude/commands/sc-setup-multi-agent.md:      {installed/updated}
-  - ~/.claude/commands/sc-setup-memory-knowledge.md: {installed/updated}
-
-개별 업데이트가 필요할 때:
-  /sc-setup-multi-agent        — Multi-Agent Protocol만 추가/업데이트
-  /sc-setup-memory-knowledge   — Memory & Knowledge만 추가/업데이트
+개별 업데이트가 필요할 때 /sc-install 을 다시 실행해서 해당 섹션만 갱신.
 ```
 
 ## Rules
