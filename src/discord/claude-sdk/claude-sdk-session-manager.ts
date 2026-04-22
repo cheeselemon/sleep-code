@@ -11,6 +11,48 @@ import { discordLogger as log } from '../../utils/logger.js';
 import type { ClaudeTransport } from '../claude-transport.js';
 import type { DiscordState } from '../state.js';
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ *  Session lifecycle invariants — READ BEFORE MODIFYING THIS FILE
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Any code path that creates, restarts, or resumes a Claude SDK query MUST
+ * preserve the following per-session state. Forgetting any of these is how
+ * silent regressions happen (e.g. 1M context silently downgrading to 200K
+ * after an interrupt force-close). If you add a new lifecycle path, verify
+ * every item below.
+ *
+ *   1. selectedModel      — stored on `ClaudeSdkSessionEntry`. Determines
+ *                           model family AND context window (note the
+ *                           `[1m]` suffix, e.g. `claude-opus-4-6[1m]`).
+ *                           `processQueryStream` reads this directly — callers
+ *                           must NOT pass `model` as an option. Single source
+ *                           of truth lives on the session entry.
+ *   2. sdkSessionId       — required for `resume:` to hit the right SDK
+ *                           conversation. When starting fresh, passed as
+ *                           `sessionId` instead (mutually exclusive with
+ *                           `resume` per SDK constraint).
+ *   3. cwd                — working directory the tools operate in.
+ *   4. settingSources     — `['user', 'project', 'local']` loads CLAUDE.md +
+ *                           project settings. Drop this and the agent loses
+ *                           its instructions silently.
+ *   5. canUseTool         — permission + AskUserQuestion handler. Every new
+ *                           `query(...)` call must wire this up or tools run
+ *                           unchecked / custom answers get lost.
+ *
+ * Lifecycle touchpoints (grep-able list):
+ *   - `startSession`                        — fresh start / explicit resume
+ *   - `processQueryStream` (force-close)    — 5s interrupt-timeout fallback
+ *   - `processQueryStream` (auto-restart)   — conversation-gone / network err
+ *   - `discord-app.ts` lazy-resume          — bot restart → reuse persisted
+ *                                             `sdkModel` from mapping file
+ *
+ * When reviewing a PR that edits any of the above, explicitly confirm all
+ * five invariants are preserved. Implicit "it probably works" is what put
+ * the 1M downgrade bug into production.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 export const DEFAULT_SDK_MODEL = 'opus';
 
 const END_SENTINEL = Symbol('claude-sdk-end');
@@ -159,8 +201,11 @@ export class ClaudeSdkSessionManager {
     // SDK only produces messages after user input arrives via the prompt generator,
     // so we don't wait for a "first message" — just let it run.
     // Stream errors are caught here and forwarded to the error handler.
+    //
+    // NOTE: `model` is intentionally NOT passed — processQueryStream reads it
+    // from `session.selectedModel` (set above) so every lifecycle path
+    // (start, force-close restart, auto-restart) shares one source of truth.
     this.processQueryStream(entry, {
-      model: options?.model,
       resume: options?.resume,
     }).catch(async (err) => {
       log.error({ sessionId: id, err }, 'Claude SDK session stream failed');
@@ -503,9 +548,14 @@ export class ClaudeSdkSessionManager {
 
   private async processQueryStream(
     session: ClaudeSdkSessionEntry,
-    options?: { model?: string; resume?: string },
+    options?: { resume?: string },
   ): Promise<void> {
-    log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId, threadId: session.discordThreadId, resume: options?.resume, model: options?.model, pid: process.pid }, 'processQueryStream: starting');
+    // Invariant: model comes from session.selectedModel (set by startSession).
+    // Callers must NOT pass `model` here — that would be a second source of
+    // truth and reintroduce the 1M→200K downgrade class of bug.
+    const effectiveModel = session.selectedModel ?? DEFAULT_SDK_MODEL;
+
+    log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId, threadId: session.discordThreadId, resume: options?.resume, model: effectiveModel, pid: process.pid }, 'processQueryStream: starting');
 
     // SDK constraint: `sessionId` and `resume` are mutually exclusive
     // (unless `forkSession` is set). When resuming, pass only `resume`.
@@ -519,7 +569,7 @@ export class ClaudeSdkSessionManager {
       options: {
         ...sessionOrResume,
         cwd: session.cwd,
-        model: options?.model ?? DEFAULT_SDK_MODEL,
+        model: effectiveModel,
         includePartialMessages: false,
         settingSources: ['user', 'project', 'local'],
         canUseTool: async (toolName, input) => {
@@ -600,9 +650,13 @@ export class ClaudeSdkSessionManager {
         await this.events.onSessionStatus?.(session.id, 'idle');
 
         if (wasForceClose) {
-          // Force-close killed the query stream — restart with resume to keep context
-          log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId }, 'SDK session force-closed — restarting query stream via resume');
-          this.processQueryStream(session, { resume: session.sdkSessionId }).catch(async (err) => {
+          // Force-close killed the query stream — restart with resume to keep context.
+          // Model is read from session.selectedModel inside processQueryStream,
+          // so we do NOT pass it here (single source of truth invariant).
+          log.info({ sessionId: session.id, sdkSessionId: session.sdkSessionId, model: session.selectedModel }, 'SDK session force-closed — restarting query stream via resume');
+          this.processQueryStream(session, {
+            resume: session.sdkSessionId,
+          }).catch(async (err) => {
             log.error({ sessionId: session.id, err }, 'Failed to restart query stream after force-close');
             await this.events.onError(session.id, err as Error);
             await this.finalizeSession(session, true);
@@ -623,6 +677,9 @@ export class ClaudeSdkSessionManager {
         try {
           const freshEntry = await this.startSession(session.cwd, session.discordThreadId, {
             sessionId: session.id,
+            // Preserve the user's selected model (e.g. `claude-opus-4-6[1m]`) so
+            // the fresh session keeps the chosen context window.
+            model: session.selectedModel,
           });
           // Re-queue pending messages so user doesn't have to resend
           for (const msg of pendingInput) {
