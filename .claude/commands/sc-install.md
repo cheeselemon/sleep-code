@@ -1,23 +1,23 @@
 ---
 name: sc-install
-description: "Install sleep-code multi-agent protocol, file delivery marker rules, and memory system to a project's CLAUDE.md/AGENTS.md. Interactive setup with auto-find or manual path."
+description: "Install or update sleep-code multi-agent protocol, file delivery marker rules, and memory system in a project's CLAUDE.md/AGENTS.md. Interactive setup with system-wide auto-find or manual path."
 ---
 
-# Sleep Code Installer
+# Sleep Code Installer / Updater
 
-Set up the sleep-code multi-agent protocol, file delivery marker rules, and memory system for a project.
-Handles CLAUDE.md, AGENTS.md, and skill file installation in one step.
+Install or update the sleep-code multi-agent protocol, file delivery marker rules, and memory system for a project.
+Handles CLAUDE.md and AGENTS.md in one step.
 
 ## Step 1: Ask Installation Target
 
 Ask the user:
 
 ```
-Sleep Code 설치 대상 프로젝트를 선택해 주세요:
+Sleep Code 설치/업데이트 대상 프로젝트를 선택해 주세요:
 
-1. **자동 탐색** — 현재 디렉토리 및 하위에서 CLAUDE.md/AGENTS.md를 찾습니다
+1. **자동 탐색** — 전체 시스템(`$HOME` 이하)에서 CLAUDE.md/AGENTS.md를 모두 찾습니다
 2. **경로 직접 입력** — 프로젝트 루트 경로를 지정합니다
-3. **현재 프로젝트** — 현재 작업 디렉토리(CWD)에 설치합니다
+3. **현재 프로젝트** — 현재 작업 디렉토리(CWD)에 설치/업데이트합니다
 ```
 
 Wait for user response before proceeding.
@@ -26,16 +26,21 @@ Wait for user response before proceeding.
 
 Based on user's choice. **In every option, the resolved path must be shown back to the user and confirmed before moving on to Step 3 — never auto-proceed.**
 
-### Option 1: Auto-find
-- Search for `CLAUDE.md` files in the current directory and up to 3 levels deep
-- Also check common locations: `~/Documents/GitHub/`, `~/projects/`, `~/dev/`
-- **탐색 위치**: 프로젝트 루트의 `CLAUDE.md` 뿐 아니라 `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`도 함께 탐색
-- 같은 프로젝트 루트에 여러 파일이 있으면 하나의 프로젝트로 묶어서 표시
+### Option 1: Auto-find (system-wide)
+- Search the **entire user filesystem starting from `$HOME`** for `CLAUDE.md`, `AGENTS.md`, `.claude/CLAUDE.md`, `.claude/AGENTS.md`
+- Use a fast file finder. Recommended commands (any of these):
+  - `fd -HI -t f -E node_modules -E .git -E Library -E .Trash -E .cache -E .npm -E .cargo -E .rustup -E .pnpm -E .yarn -E Pictures -E Movies -E Music '^(CLAUDE|AGENTS)\.md$' "$HOME"`
+  - `rg --files -g 'CLAUDE.md' -g 'AGENTS.md' --hidden --no-ignore -g '!node_modules' -g '!.git' -g '!Library' -g '!.Trash' -g '!.cache' "$HOME"`
+  - `find "$HOME" \( -name node_modules -o -name .git -o -name Library -o -name .Trash -o -name .cache -o -name .npm -o -name .cargo -o -name .rustup \) -prune -o -type f \( -name CLAUDE.md -o -name AGENTS.md \) -print`
+- **Always exclude**: `node_modules`, `.git`, `~/Library`, `~/.Trash`, `~/.cache`, `~/.npm`, `~/.cargo`, `~/.rustup`, `~/.pnpm`, `~/.yarn`, system dirs (`/System`, `/usr`, `/bin`, `/sbin`, `/private`)
+- **DO NOT** restrict to current directory or to a fixed depth — scan the whole `$HOME` tree
+- 같은 프로젝트 루트에 여러 파일(`CLAUDE.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`)이 있으면 **하나의 프로젝트로 묶어서** 표시
+- 결과가 많으면 절대 경로 알파벳 순 정렬 후 모두 보여주기 (자르지 말 것)
 - Present found projects as a numbered list with their absolute paths
 - Ask the user to pick one (or multiple). Example prompt:
 
 ```
-탐색 결과 — 설치할 프로젝트 번호를 골라주세요 (쉼표로 구분):
+탐색 결과 — 설치/업데이트할 프로젝트 번호를 골라주세요 (쉼표로 구분):
   1. {project_name}  ({absolute_path})
   2. {project_name}  ({absolute_path})
   ...
@@ -49,7 +54,7 @@ Based on user's choice. **In every option, the resolved path must be shown back 
 선택한 프로젝트:
   - {project_name}  ({absolute_path})
 
-이 경로에 sleep-code를 설치할까요? (y/n)
+이 경로에 sleep-code를 설치/업데이트할까요? (y/n)
 ```
 
 - Only proceed to Step 3 after `y`.
@@ -63,7 +68,7 @@ Based on user's choice. **In every option, the resolved path must be shown back 
 입력하신 경로: {absolute_path}
 디렉토리 확인: ✅ 존재함 / ❌ 존재하지 않음
 
-이 경로에 sleep-code를 설치할까요? (y/n)
+이 경로에 sleep-code를 설치/업데이트할까요? (y/n)
 ```
 
 - Only proceed to Step 3 after `y`. If `n`, return to the path prompt.
@@ -313,7 +318,7 @@ Each memory is tagged with project, speaker, priority (0-10), and topicKey.
 Print a summary:
 
 ```
---- Sleep Code 설치 완료 ---
+--- Sleep Code 설치/업데이트 완료 ---
 
 프로젝트: {project_name} ({project_path})
 
@@ -327,7 +332,7 @@ AGENTS.md:
   - File Delivery:        {installed/updated/already up-to-date}
   - Memory & Knowledge:   {installed/updated/already up-to-date}
 
-개별 업데이트가 필요할 때 /sc-install 을 다시 실행해서 해당 섹션만 갱신.
+개별 섹션만 다시 손보고 싶으면 /sc-install 을 다시 실행해서 해당 항목만 선택.
 ```
 
 ## Rules
