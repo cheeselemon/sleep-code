@@ -823,6 +823,23 @@ export class ChannelManager {
     }
   }
 
+  /**
+   * Update the persisted reasoning effort for a Codex session so the change
+   * survives bot/PM2 restart (otherwise restoreSessions would revert to the
+   * effort saved at session start).
+   */
+  setCodexReasoningEffort(
+    sessionId: string,
+    effort: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh',
+  ): void {
+    const persisted = this.codexStore.getPersisted(sessionId);
+    if (persisted) {
+      persisted.codexModelReasoningEffort = effort;
+      this.codexStore.save();
+      log.info({ sessionId, effort }, 'Updated persisted Codex reasoning effort');
+    }
+  }
+
   getPersistedCodexMappings(): PersistedMapping[] {
     return this.codexStore.getAllPersisted();
   }

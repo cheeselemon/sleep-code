@@ -111,7 +111,10 @@ export const commands = [
         .setDescription('Stop a running Codex session'))
     .addSubcommand(sub =>
       sub.setName('status')
-        .setDescription('Show all Codex sessions')),
+        .setDescription('Show all Codex sessions'))
+    .addSubcommand(sub =>
+      sub.setName('intelligence')
+        .setDescription('Change reasoning effort of Codex session in this thread')),
   new SlashCommandBuilder()
     .setName('chat')
     .setDescription('Manage agent sessions (Gemma, GLM, Qwen, etc.)')

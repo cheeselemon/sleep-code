@@ -231,6 +231,50 @@ export class CodexSessionManager {
   }
 
   /**
+   * Switch reasoning effort on the fly without ending the session.
+   * Aborts the active turn (if any), then resumes (or recreates) the Codex
+   * thread with the new effort. Conversation context is preserved via
+   * resumeThread() once the first turn has assigned `codexThreadId`.
+   *
+   * Returns:
+   *   - true  if the switch succeeded (or was a no-op because already at newEffort)
+   *   - false if the session is missing or ended
+   */
+  async switchReasoningEffort(sessionId: string, newEffort: ModelReasoningEffort): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.status === 'ended') return false;
+    if (session.modelReasoningEffort === newEffort) return true; // No-op
+
+    // Abort active turn if running — same pattern as switchSandboxMode.
+    if (session.activeTurn) {
+      session.activeTurn.abort();
+      session.activeTurn = null;
+    }
+
+    const threadOptions = {
+      model: session.model,
+      modelReasoningEffort: newEffort,
+      workingDirectory: session.cwd,
+      sandboxMode: session.sandboxMode,
+      approvalPolicy: 'never' as const,
+      skipGitRepoCheck: true,
+    };
+
+    if (session.codexThreadId) {
+      // Resume existing thread with new reasoning effort
+      session.codexThread = this.codex.resumeThread(session.codexThreadId, threadOptions);
+    } else {
+      // No thread ID yet (pre-first-turn) — create a new thread
+      session.codexThread = this.codex.startThread(threadOptions);
+    }
+
+    session.modelReasoningEffort = newEffort;
+    session.status = 'idle';
+    log.info({ sessionId, newEffort, model: session.model, sandboxMode: session.sandboxMode }, 'Codex reasoning effort switched');
+    return true;
+  }
+
+  /**
    * Restore sessions from persisted mappings (after PM2 restart).
    * Preserves the user's selected model + reasoning effort when stored;
    * falls back to defaults for legacy mappings (pre-model-selection feature).

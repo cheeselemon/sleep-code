@@ -133,6 +133,59 @@ export const handleCodex: CommandHandler = async (interaction, context) => {
     return;
   }
 
+  // /codex intelligence - change reasoning effort of session in this thread
+  if (subcommand === 'intelligence') {
+    const session = codexSessionManager.getSessionByDiscordThread(interaction.channelId);
+    if (!session) {
+      await interaction.reply({
+        content: '⚠️ No Codex session in this thread. Start one with `/codex start`.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (session.status === 'ended') {
+      await interaction.reply({
+        content: '⚠️ This Codex session has ended.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Effort picker — current effort is marked as default in the menu
+    // so the user can see what's currently active without leaving the picker.
+    const effortOptions: Array<{ value: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'; label: string; description: string }> = [
+      { value: 'xhigh', label: 'xhigh', description: 'Extra high · deepest reasoning · slowest' },
+      { value: 'high', label: 'high', description: 'Strong reasoning · slower' },
+      { value: 'medium', label: 'medium', description: 'Balanced · default' },
+      { value: 'low', label: 'low', description: 'Light reasoning · faster' },
+      { value: 'minimal', label: 'minimal', description: 'Almost no reasoning · fastest' },
+    ];
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`codex_intelligence:${session.id}`)
+      .setPlaceholder(`Current: ${session.modelReasoningEffort} — pick a new level...`);
+
+    for (const opt of effortOptions) {
+      selectMenu.addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(opt.label)
+          .setDescription(opt.description)
+          .setValue(opt.value)
+          .setDefault(session.modelReasoningEffort === opt.value)
+      );
+    }
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    await interaction.reply({
+      content: `🧠 **Change Codex Reasoning Effort**\nModel: \`${session.model}\` · Current: **${session.modelReasoningEffort}**\n\n⚠️ Switching aborts the current turn and resumes the thread with new effort.`,
+      components: [row],
+      ephemeral: true,
+    });
+    return;
+  }
+
   // /codex status - show all Codex sessions
   if (subcommand === 'status') {
     const sessions = codexSessionManager.getAllSessions();

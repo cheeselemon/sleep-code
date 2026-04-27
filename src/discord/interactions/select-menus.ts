@@ -352,6 +352,84 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
 };
 
 /**
+ * Handle reasoning effort change for a running Codex session.
+ * customId format: `codex_intelligence:<sessionId>`
+ */
+export const handleCodexIntelligenceSelect: SelectMenuHandler = async (interaction, context) => {
+  const { codexSessionManager, channelManager } = context;
+
+  if (!codexSessionManager) {
+    await interaction.reply({ content: '⚠️ Codex is not enabled.', ephemeral: true });
+    return;
+  }
+
+  // Decode sessionId from customId
+  const sessionId = interaction.customId.slice('codex_intelligence:'.length);
+  if (!sessionId) {
+    await interaction.update({ content: '❌ Invalid session ID.', components: [] });
+    return;
+  }
+
+  const newEffort = interaction.values[0];
+  if (!CODEX_VALID_EFFORTS.has(newEffort as CodexEffort)) {
+    await interaction.update({
+      content: `❌ Invalid reasoning effort: ${newEffort}`,
+      components: [],
+    });
+    return;
+  }
+
+  const session = codexSessionManager.getSession(sessionId);
+  if (!session) {
+    await interaction.update({
+      content: '❌ Codex session no longer exists (may have ended).',
+      components: [],
+    });
+    return;
+  }
+
+  if (session.modelReasoningEffort === newEffort) {
+    await interaction.update({
+      content: `ℹ️ Already using **${newEffort}** — no change.`,
+      components: [],
+    });
+    return;
+  }
+
+  const oldEffort = session.modelReasoningEffort;
+
+  try {
+    await interaction.update({
+      content: `🧠 Switching reasoning effort: **${oldEffort}** → **${newEffort}**...`,
+      components: [],
+    });
+
+    const ok = await codexSessionManager.switchReasoningEffort(sessionId, newEffort as CodexEffort);
+    if (!ok) {
+      await interaction.followUp({
+        content: '❌ Failed to switch reasoning effort.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // Persist so the change survives bot/PM2 restart
+    channelManager.setCodexReasoningEffort(sessionId, newEffort as CodexEffort);
+
+    await interaction.followUp({
+      content: `✅ **Codex reasoning effort changed**\n\`${session.model}\` · ${oldEffort} → **${newEffort}**\n\nNext message will use the new level.`,
+      ephemeral: true,
+    });
+  } catch (err) {
+    log.error({ err, sessionId, newEffort }, 'Failed to switch Codex reasoning effort');
+    await interaction.followUp({
+      content: `❌ Error: ${(err as Error).message}`,
+      ephemeral: true,
+    });
+  }
+};
+
+/**
  * Handle session selection for stopping a Codex session
  */
 export const handleCodexStopSessionSelect: SelectMenuHandler = async (interaction, context) => {

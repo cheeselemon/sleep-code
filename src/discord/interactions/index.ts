@@ -36,6 +36,7 @@ import {
   handleCodexStartConfigSelect,
   handleCodexStartDirSelect,
   handleCodexStopSessionSelect,
+  handleCodexIntelligenceSelect,
   handleSdkStartConfigSelect,
   handleSdkStartDirSelect,
   handleAgentStartModelSelect,
@@ -233,6 +234,13 @@ export async function handleSelectMenu(
   // Codex stop session selection
   if (customId === 'codex_stop_session') {
     await handleCodexStopSessionSelect(interaction, context);
+    return;
+  }
+
+  // Codex intelligence (reasoning effort) change for current thread session
+  // customId: codex_intelligence:<sessionId>
+  if (customId.startsWith('codex_intelligence:')) {
+    await handleCodexIntelligenceSelect(interaction, context);
     return;
   }
 
