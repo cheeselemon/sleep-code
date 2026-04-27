@@ -24,7 +24,7 @@ export const handleCodex: CommandHandler = async (interaction, context) => {
     return;
   }
 
-  // /codex start - show directory selection
+  // /codex start - show model + reasoning effort selection first, then directory
   if (subcommand === 'start') {
     if (!settingsManager) {
       await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
@@ -40,23 +40,56 @@ export const handleCodex: CommandHandler = async (interaction, context) => {
       return;
     }
 
+    // Step 1: model + reasoning effort.
+    // Value format: `<model-slug>:<effort>` decoded by handleCodexStartConfigSelect.
+    // Models sourced from ~/.codex/models_cache.json (visibility: list).
     const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId('codex_start_dir')
-      .setPlaceholder('Select a directory...');
+      .setCustomId('codex_start_config')
+      .setPlaceholder('Select model & reasoning effort...');
 
-    for (const dir of dirs.slice(0, 25)) {
-      selectMenu.addOptions(
-        new StringSelectMenuOptionBuilder()
-          .setLabel(basename(dir))
-          .setDescription(dir.slice(0, 100))
-          .setValue(dir)
-      );
-    }
+    selectMenu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.5 (high)')
+        .setDescription('Frontier · strong reasoning · default')
+        .setValue('gpt-5.5:high'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.5 (xhigh)')
+        .setDescription('Frontier · deepest reasoning · slowest')
+        .setValue('gpt-5.5:xhigh'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.5 (medium)')
+        .setDescription('Frontier · balanced')
+        .setValue('gpt-5.5:medium'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.5 (low)')
+        .setDescription('Frontier · fastest')
+        .setValue('gpt-5.5:low'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.4 (high)')
+        .setDescription('Previous gen · strong reasoning')
+        .setValue('gpt-5.4:high'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.4 (medium)')
+        .setDescription('Previous gen · balanced')
+        .setValue('gpt-5.4:medium'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.4-mini (medium)')
+        .setDescription('Smaller · faster · cheaper')
+        .setValue('gpt-5.4-mini:medium'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.3-codex (high)')
+        .setDescription('Coding-specialized · strong reasoning')
+        .setValue('gpt-5.3-codex:high'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('GPT-5.2 (medium)')
+        .setDescription('Legacy · balanced')
+        .setValue('gpt-5.2:medium'),
+    );
 
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
     await interaction.reply({
-      content: '📁 **Start Codex Session**\nSelect a directory:',
+      content: '🤖 **Start Codex Session**\nSelect model & reasoning effort:',
       components: [row],
       ephemeral: true,
     });

@@ -184,7 +184,96 @@ export const handleSetTerminalSelect: SelectMenuHandler = async (interaction, co
 };
 
 /**
- * Handle directory selection for starting a Codex session
+ * Codex reasoning effort type — duplicated from codex-session-manager to avoid
+ * importing the runtime module here.
+ */
+type CodexEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+/**
+ * Validate a model+effort string against the known set so an attacker can't
+ * inject arbitrary values via crafted Discord interactions. Loose allowlist:
+ * any of the model slugs from ~/.codex/models_cache.json + standard efforts.
+ */
+const CODEX_VALID_MODELS = new Set([
+  'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.2',
+]);
+const CODEX_VALID_EFFORTS: ReadonlySet<CodexEffort> = new Set([
+  'minimal', 'low', 'medium', 'high', 'xhigh',
+]);
+
+function parseCodexConfig(value: string): { model: string; effort: CodexEffort } | null {
+  const [model, effortStr] = value.split(':');
+  if (!model || !effortStr) return null;
+  if (!CODEX_VALID_MODELS.has(model)) return null;
+  if (!CODEX_VALID_EFFORTS.has(effortStr as CodexEffort)) return null;
+  return { model, effort: effortStr as CodexEffort };
+}
+
+function codexConfigDisplay(model: string, effort: string): string {
+  // Convert `gpt-5.5` → `GPT-5.5`, `gpt-5.4-mini` → `GPT-5.4-mini`
+  const display = model.replace(/^gpt-/, 'GPT-');
+  return `${display} (${effort})`;
+}
+
+/**
+ * Step 1: User picks a Codex model + reasoning effort. We then show the
+ * directory picker, encoding the selection in the next customId.
+ */
+export const handleCodexStartConfigSelect: SelectMenuHandler = async (interaction, context) => {
+  const { settingsManager } = context;
+
+  if (!settingsManager) {
+    await interaction.reply({ content: '⚠️ Settings management not enabled.', ephemeral: true });
+    return;
+  }
+
+  const parsed = parseCodexConfig(interaction.values[0]);
+  if (!parsed) {
+    await interaction.update({
+      content: `❌ Invalid model selection: ${interaction.values[0]}`,
+      components: [],
+    });
+    return;
+  }
+
+  const dirs = settingsManager.getAllowedDirectories();
+  if (dirs.length === 0) {
+    await interaction.update({
+      content: '⚠️ No directories configured. Use `/claude add-dir` first.',
+      components: [],
+    });
+    return;
+  }
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`codex_start_dir:${parsed.model}:${parsed.effort}`)
+    .setPlaceholder('Select a directory...');
+
+  for (const dir of dirs.slice(0, 25)) {
+    selectMenu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(basename(dir))
+        .setDescription(dir.slice(0, 100))
+        .setValue(dir)
+    );
+  }
+
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+  await interaction.update({
+    content: `🤖 **Start Codex Session** — ${codexConfigDisplay(parsed.model, parsed.effort)}\nSelect a directory:`,
+    components: [row],
+  });
+};
+
+/**
+ * Step 2: User picks a directory. Start the Codex session with the model +
+ * effort encoded in the customId.
+ *
+ * customId format: `codex_start_dir` (legacy, no model) OR
+ *                  `codex_start_dir:<model>:<effort>` (with selection).
+ * Legacy form falls back to CODEX_MODEL + CODEX_DEFAULT_REASONING in
+ * codexSessionManager.startSession.
  */
 export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, context) => {
   const { codexSessionManager, channelManager, settingsManager, state } = context;
@@ -196,6 +285,19 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
 
   const cwd = interaction.values[0];
 
+  // Decode model + effort from customId (set by handleCodexStartConfigSelect).
+  // Format: `codex_start_dir:<model>:<effort>` — bare prefix means defaults.
+  let model: string | undefined;
+  let modelReasoningEffort: CodexEffort | undefined;
+  if (interaction.customId.startsWith('codex_start_dir:')) {
+    const rest = interaction.customId.slice('codex_start_dir:'.length);
+    const parsed = parseCodexConfig(rest);
+    if (parsed) {
+      model = parsed.model;
+      modelReasoningEffort = parsed.effort;
+    }
+  }
+
   if (!settingsManager.isDirectoryAllowed(cwd)) {
     await interaction.update({
       content: `❌ Directory \`${cwd}\` is no longer in the whitelist.`,
@@ -205,14 +307,19 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
   }
 
   try {
+    const displayName = model && modelReasoningEffort
+      ? codexConfigDisplay(model, modelReasoningEffort)
+      : 'default model';
     await interaction.update({
-      content: `🚀 Starting Codex session in \`${cwd}\`...`,
+      content: `🚀 Starting Codex session in \`${cwd}\` — ${displayName}...`,
       components: [],
     });
 
     // Create thread first, then start Codex session
     const sessionName = `codex-${basename(cwd)}`;
-    const mapping = await channelManager.createCodexSession('pending', sessionName, cwd);
+    const mapping = await channelManager.createCodexSession(
+      'pending', sessionName, cwd, undefined, model, modelReasoningEffort,
+    );
     if (!mapping) {
       await interaction.followUp({ content: '❌ Failed to create thread.', ephemeral: true });
       return;
@@ -224,17 +331,19 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
 
     const entry = await codexSessionManager.startSession(cwd, mapping.threadId, {
       sandboxMode: isYolo ? 'workspace-write' : 'read-only',
+      model,
+      modelReasoningEffort,
     });
 
     // Update channel manager with real session ID
     channelManager.updateCodexSessionId('pending', entry.id);
 
     await interaction.followUp({
-      content: `✅ **Codex session started**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
+      content: `✅ **Codex session started**\nModel: **${codexConfigDisplay(entry.model, entry.modelReasoningEffort)}**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
       ephemeral: true,
     });
   } catch (err) {
-    log.error({ err, cwd }, 'Failed to start Codex session');
+    log.error({ err, cwd, model, modelReasoningEffort }, 'Failed to start Codex session');
     await interaction.followUp({
       content: `❌ Failed to start Codex session: ${(err as Error).message}`,
       ephemeral: true,

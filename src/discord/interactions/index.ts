@@ -33,6 +33,7 @@ import {
   handleStopSessionSelect,
   handleRemoveDirSelect,
   handleSetTerminalSelect,
+  handleCodexStartConfigSelect,
   handleCodexStartDirSelect,
   handleCodexStopSessionSelect,
   handleSdkStartConfigSelect,
@@ -215,8 +216,16 @@ export async function handleSelectMenu(
     return;
   }
 
+  // Codex model + reasoning effort selection (step 1)
+  if (customId === 'codex_start_config') {
+    await handleCodexStartConfigSelect(interaction, context);
+    return;
+  }
+
   // Codex start directory selection
-  if (customId === 'codex_start_dir') {
+  // - `codex_start_dir`               (legacy, falls back to defaults)
+  // - `codex_start_dir:<model>:<eff>` (new, with model+effort encoded)
+  if (customId === 'codex_start_dir' || customId.startsWith('codex_start_dir:')) {
     await handleCodexStartDirSelect(interaction, context);
     return;
   }

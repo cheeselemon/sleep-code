@@ -20,6 +20,8 @@ export interface PersistedMapping {
   channelId: string;
   cwd: string;
   codexThreadId?: string;   // Codex SDK thread ID for resumeThread()
+  codexModel?: string;      // Codex model slug (e.g., 'gpt-5.5') — preserved across restart
+  codexModelReasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'; // Codex reasoning effort
   sdkSessionId?: string;    // Claude Agent SDK session ID for resume()
   sdkModel?: string;        // Claude SDK model ID (e.g., 'claude-opus-4-7[1m]') for resume
   modelAlias?: string;      // Agent session model alias (e.g., 'gemma4', 'glm5')

@@ -6,13 +6,20 @@
  */
 
 import { Codex } from '@openai/codex-sdk';
-import type { Thread, SandboxMode } from '@openai/codex-sdk';
+import type { Thread, SandboxMode, ModelReasoningEffort } from '@openai/codex-sdk';
 import { randomUUID } from 'crypto';
 import { discordLogger as log } from '../../utils/logger.js';
 
-export const CODEX_MODEL = 'gpt-5.4';
+/**
+ * Default Codex model. Updated to gpt-5.5 (frontier) — `~/.codex/config.toml`
+ * defaults to this and `models_cache.json` lists it as the recommended model.
+ * Per-session override is supported via `startSession({ model, modelReasoningEffort })`
+ * so /codex start can pin a specific model + reasoning level.
+ */
+export const CODEX_MODEL = 'gpt-5.5';
+export const CODEX_DEFAULT_REASONING: ModelReasoningEffort = 'high';
 
-export type { SandboxMode } from '@openai/codex-sdk';
+export type { SandboxMode, ModelReasoningEffort } from '@openai/codex-sdk';
 
 export interface CodexSessionEntry {
   id: string;
@@ -20,6 +27,11 @@ export interface CodexSessionEntry {
   codexThreadId: string;
   cwd: string;
   sandboxMode: SandboxMode;
+  /** Model slug pinned at /codex start time (e.g. `gpt-5.5`). Preserved
+   *  across sandbox switch + restore so the user's selection sticks. */
+  model: string;
+  /** Reasoning effort pinned at /codex start time. */
+  modelReasoningEffort: ModelReasoningEffort;
   status: 'starting' | 'running' | 'idle' | 'ended';
   discordThreadId: string;
   startedAt: Date;
@@ -67,12 +79,17 @@ export class CodexSessionManager {
 
   async startSession(cwd: string, discordThreadId: string, options?: {
     sandboxMode?: SandboxMode;
+    model?: string;
+    modelReasoningEffort?: ModelReasoningEffort;
   }): Promise<CodexSessionEntry> {
     const id = randomUUID();
     const sandboxMode = options?.sandboxMode ?? 'read-only';
+    const model = options?.model ?? CODEX_MODEL;
+    const modelReasoningEffort = options?.modelReasoningEffort ?? CODEX_DEFAULT_REASONING;
 
     const codexThread = this.codex.startThread({
-      model: CODEX_MODEL,
+      model,
+      modelReasoningEffort,
       workingDirectory: cwd,
       sandboxMode,
       approvalPolicy: 'never',
@@ -85,6 +102,8 @@ export class CodexSessionManager {
       codexThreadId: '', // Set after first turn
       cwd,
       sandboxMode,
+      model,
+      modelReasoningEffort,
       status: 'idle',
       discordThreadId,
       startedAt: new Date(),
@@ -93,7 +112,7 @@ export class CodexSessionManager {
     };
 
     this.sessions.set(id, entry);
-    log.info({ sessionId: id, cwd, discordThreadId }, 'Codex session started');
+    log.info({ sessionId: id, cwd, discordThreadId, model, modelReasoningEffort }, 'Codex session started');
 
     await this.events.onSessionStart(id, cwd, discordThreadId);
     return entry;
@@ -187,8 +206,10 @@ export class CodexSessionManager {
       session.activeTurn = null;
     }
 
+    // Preserve the user's pinned model + reasoning effort across sandbox switches.
     const threadOptions = {
-      model: CODEX_MODEL,
+      model: session.model,
+      modelReasoningEffort: session.modelReasoningEffort,
       workingDirectory: session.cwd,
       sandboxMode: newMode,
       approvalPolicy: 'never' as const,
@@ -205,18 +226,22 @@ export class CodexSessionManager {
 
     session.sandboxMode = newMode;
     session.status = 'idle';
-    log.info({ sessionId, newMode }, 'Codex sandbox mode switched');
+    log.info({ sessionId, newMode, model: session.model, modelReasoningEffort: session.modelReasoningEffort }, 'Codex sandbox mode switched');
     return true;
   }
 
   /**
-   * Restore sessions from persisted mappings (after PM2 restart)
+   * Restore sessions from persisted mappings (after PM2 restart).
+   * Preserves the user's selected model + reasoning effort when stored;
+   * falls back to defaults for legacy mappings (pre-model-selection feature).
    */
   async restoreSessions(mappings: Array<{
     sessionId: string;
     codexThreadId: string;
     cwd: string;
     discordThreadId: string;
+    model?: string;
+    modelReasoningEffort?: ModelReasoningEffort;
   }>): Promise<number> {
     let restored = 0;
     for (const m of mappings) {
@@ -225,9 +250,13 @@ export class CodexSessionManager {
         continue;
       }
 
+      const model = m.model ?? CODEX_MODEL;
+      const modelReasoningEffort = m.modelReasoningEffort ?? CODEX_DEFAULT_REASONING;
+
       try {
         const codexThread = this.codex.resumeThread(m.codexThreadId, {
-          model: CODEX_MODEL,
+          model,
+          modelReasoningEffort,
           skipGitRepoCheck: true,
         });
 
@@ -237,6 +266,8 @@ export class CodexSessionManager {
           codexThreadId: m.codexThreadId,
           cwd: m.cwd,
           sandboxMode: 'read-only',
+          model,
+          modelReasoningEffort,
           status: 'idle',
           discordThreadId: m.discordThreadId,
           startedAt: new Date(),
@@ -246,7 +277,7 @@ export class CodexSessionManager {
 
         this.sessions.set(m.sessionId, entry);
         restored++;
-        log.info({ sessionId: m.sessionId, codexThreadId: m.codexThreadId }, 'Restored Codex session');
+        log.info({ sessionId: m.sessionId, codexThreadId: m.codexThreadId, model, modelReasoningEffort }, 'Restored Codex session');
       } catch (err) {
         log.error({ sessionId: m.sessionId, err }, 'Failed to restore Codex session');
       }

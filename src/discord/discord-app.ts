@@ -25,7 +25,8 @@ import type { ProcessManager } from './process-manager.js';
 import type { SettingsManager } from './settings-manager.js';
 import { CodexSessionManager } from './codex/codex-session-manager.js';
 import { createCodexEvents } from './codex/codex-handlers.js';
-import { CODEX_MODEL } from './codex/codex-session-manager.js';
+// CODEX_MODEL no longer imported — model now read per-session from entry.model
+// (set by /codex start model picker; defaults are baked into codex-session-manager).
 import { ClaudeSdkSessionManager, type ClaudeSdkSessionEntry } from './claude-sdk/claude-sdk-session-manager.js';
 import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
 import { AgentSessionManager } from './agents/agent-session-manager.js';
@@ -625,7 +626,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           // Notify Discord thread only — no PTY injection to avoid prompt injection suspicion
           // Claude learns about Codex via CLAUDE.md protocol (set up with /sc-install)
           try {
-            await firstMessage.channel.send(`**Codex joined this thread.** Model: \`${CODEX_MODEL}\`. Messages are prefixed with agent names.`);
+            // Use entry.model so the announcement reflects the actual model the
+            // session was started with (entry.model defaults to CODEX_MODEL when
+            // no per-session override is set, e.g. auto-create in shared thread).
+            await firstMessage.channel.send(`**Codex joined this thread.** Model: \`${entry.model}\` (${entry.modelReasoningEffort}). Messages are prefixed with agent names.`);
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Codex session');
@@ -806,6 +810,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           codexThreadId: m.codexThreadId!,
           cwd: m.cwd,
           discordThreadId: m.threadId,
+          // Pass through user's pinned model + effort (legacy mappings without
+          // these fields fall back to defaults inside restoreSessions).
+          model: m.codexModel,
+          modelReasoningEffort: m.codexModelReasoningEffort,
         }));
 
       if (restorable.length > 0) {

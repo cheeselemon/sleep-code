@@ -698,6 +698,8 @@ export class ChannelManager {
     sessionName: string,
     cwd: string,
     existingThreadId?: string,
+    codexModel?: string,
+    codexModelReasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh',
   ): Promise<ChannelMapping | null> {
     if (!this.initialized) {
       const ready = await this.waitForInit();
@@ -775,9 +777,16 @@ export class ChannelManager {
     };
 
     this.codexStore.set(sessionId, mapping);
-    await this.codexStore.persistAndSave(sessionId, { sessionId, threadId, channelId, cwd });
+    await this.codexStore.persistAndSave(sessionId, {
+      sessionId,
+      threadId,
+      channelId,
+      cwd,
+      codexModel,
+      codexModelReasoningEffort,
+    });
 
-    log.info({ sessionId, threadId }, 'Codex session mapping stored');
+    log.info({ sessionId, threadId, codexModel, codexModelReasoningEffort }, 'Codex session mapping stored');
     return mapping;
   }
 
