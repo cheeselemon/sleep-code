@@ -298,9 +298,18 @@ export class CodexSessionManager {
       const modelReasoningEffort = m.modelReasoningEffort ?? CODEX_DEFAULT_REASONING;
 
       try {
+        // CRITICAL: must pass `workingDirectory` here. Without it the Codex CLI
+        // falls back to `process.cwd()` of the bot (typically sleep-code under
+        // PM2), so subsequent turns operate in the wrong directory after a
+        // restart. session.cwd in memory is correct, but the actual CLI subprocess
+        // is what matters for tool calls. Match other Thread option call sites
+        // (switchSandboxMode, switchReasoningEffort) for consistency.
         const codexThread = this.codex.resumeThread(m.codexThreadId, {
           model,
           modelReasoningEffort,
+          workingDirectory: m.cwd,
+          sandboxMode: 'read-only',
+          approvalPolicy: 'never',
           skipGitRepoCheck: true,
         });
 
