@@ -67,7 +67,7 @@ pm2 logs sleep-discord
 - `@slack/bolt` ^4.x — Slack bot
 - `grammy` ^1.x — Telegram bot
 - `@anthropic-ai/claude-agent-sdk` ^0.2.x — Claude Agent SDK (in-process sessions)
-- `@openai/codex-sdk` ^0.104.x — Codex integration
+- `@openai/codex-sdk` ^0.125.x — Codex integration (gpt-5.5 / xhigh requires CLI ≥ 0.125)
 - `node-pty` ^1.x — PTY spawning
 - `chokidar` ^5.x — File watching
 - `pino` ^10.x — Structured logging
@@ -217,11 +217,12 @@ Discord-only. Handles:
 Discord-only. Handles:
 - Codex CLI agent sessions via `@openai/codex-sdk`
 - Message routing between Discord and Codex
-- Model: gpt-5.4, approval_policy: 'never' (no permission prompts)
+- Model + reasoning effort pinned per session (gpt-5.5 default; minimal → xhigh effort), `approval_policy: 'never'` (no permission prompts)
 - Auto-detected when `~/.codex/auth.json` exists or `OPENAI_API_KEY` is set
 - Sandbox: `read-only` by default, switches to `workspace-write` when YOLO enabled
-- Session persistence: `codexThreadId` saved after first turn, `resumeThread()` for restore after bot restart
-- Sandbox mode switch triggers thread re-creation/resume
+- Session persistence: `codexThreadId` + `cwd` + `codexModel` + `codexModelReasoningEffort` saved, `resumeThread()` with `workingDirectory` for restore after bot restart (sandbox resets to `read-only`)
+- Sandbox mode switch (`/yolo-sleep`) and reasoning effort switch (`/codex intelligence`) abort active turn then resume thread with new option (cwd + model preserved)
+- Mid-turn message queueing — incoming messages during an active turn are queued (cap 10), drained as a single follow-up turn (joined with `\n\n`) when the turn ends
 
 ## Discord Interactive Features
 
@@ -249,7 +250,7 @@ Discord-only. Handles:
 - `/interrupt`, `/background`, `/mode`, `/compact`, `/model` - In-session controls
 - `/panel` - Show control buttons (Interrupt, YOLO toggle)
 - `/yolo-sleep` - Toggle YOLO mode (auto-approve all permissions)
-- `/codex start|stop|status` - Codex CLI session management
+- `/codex start|stop|status|intelligence` - Codex CLI session management (model + reasoning effort selection at start; `intelligence` switches effort mid-session)
 - `/memory opt-out|opt-in|status|digest|consolidate` - Memory collection control, manual triggers
 - `/sessions` - Show all active Claude + Codex sessions
 - `/status` - Show current thread session status
@@ -266,7 +267,7 @@ The sleep-code bot automatically relays messages between agents.
 | Type | Start Command | Models |
 |------|---------------|--------|
 | **Claude** | `/claude start` or `/claude start-sdk` | Opus 4.7/4.6, Sonnet 4.6, Haiku 4.5 (1M/200K) |
-| **Codex** | `/codex start` | GPT-5.4 |
+| **Codex** | `/codex start` | GPT-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2 (reasoning effort: minimal → xhigh) |
 | **Generic** | `/chat start` | Gemma 4, GLM-5, GLM-5.1, Qwen3 Coder |
 
 Generic agents use OpenRouter/DeepInfra APIs. Set `OPENROUTER_API_KEY` or `DEEPINFRA_API_KEY` in `~/.sleep-code/discord.env`.

@@ -42,9 +42,24 @@
 
 | Command | Description |
 |---------|-------------|
-| `/codex start` | Start a new Codex session (select directory) |
+| `/codex start` | Start a new Codex session (select **model + reasoning effort → directory**) |
 | `/codex stop` | Stop a running Codex session |
 | `/codex status` | Show all Codex sessions |
+| `/codex intelligence` | Change reasoning effort of the Codex session in this thread on the fly (no context loss) |
+
+**Available Codex models** (selected at `/codex start`):
+
+| Model | Reasoning Efforts | Notes |
+|-------|-------------------|-------|
+| `gpt-5.5` | minimal / low / medium / high / xhigh | Frontier · default model · `xhigh` = deepest reasoning, slowest |
+| `gpt-5.4` | high / medium | Previous generation |
+| `gpt-5.4-mini` | medium | Smaller · faster · cheaper |
+| `gpt-5.3-codex` | high | Coding-specialized variant |
+| `gpt-5.2` | medium | Legacy |
+
+> **Note:** `/codex intelligence` aborts the current turn and resumes the thread with the new effort. Conversation context is preserved via `codexThreadId`. Sandbox mode (read-only ↔ workspace-write toggled by `/yolo-sleep`) is also kept.
+
+**User input behavior:** Messages sent while Codex is mid-turn are queued (cap 10) and auto-merged into a single follow-up turn when the active turn ends. No more `session busy` errors on rapid multi-message input.
 
 ### Generic Agents (OpenRouter / DeepInfra)
 

@@ -31,7 +31,24 @@ const enableCodex = hasCodexOAuth || !!openaiKey;
 
 ### `/codex start`
 
-새 Codex 세션을 시작한다. 허용된 디렉토리 목록에서 선택하는 드롭다운 메뉴가 표시된다.
+새 Codex 세션을 시작한다. **2단계 선택 메뉴**가 표시된다:
+
+1. **모델 + 추론 강도 선택**: 9개 옵션 (예: `GPT-5.5 (high)`, `GPT-5.4-mini (medium)` 등)
+2. **디렉토리 선택**: 화이트리스트된 디렉토리 중 하나
+
+선택 사항은 세션에 고정되어 봇 재시작 시에도 복원된다 (`codex-session-mappings.json`에 저장).
+
+현재 `/codex start` 메뉴가 노출하는 9개 모델+effort 조합:
+
+| 모델 | `/codex start`에서 제공하는 effort | 설명 |
+|------|------------------------------------|------|
+| `gpt-5.5` | low / medium / high / xhigh | Frontier · 기본 effort `high` · `xhigh`는 가장 깊은 추론 |
+| `gpt-5.4` | medium / high | 이전 세대 |
+| `gpt-5.4-mini` | medium | 더 작고 빠르고 저렴 |
+| `gpt-5.3-codex` | high | 코딩 특화 |
+| `gpt-5.2` | medium | 레거시 |
+
+세션이 시작된 뒤에는 `/codex intelligence`에서 전체 effort 범위(`minimal / low / medium / high / xhigh`)를 자유롭게 전환할 수 있다.
 
 - `/claude add-dir`로 사전에 디렉토리를 등록해야 한다
 - Claude와 동일한 디렉토리 화이트리스트를 공유한다
@@ -43,6 +60,24 @@ const enableCodex = hasCodexOAuth || !!openaiKey;
 
 - 실행 중인 턴이 있으면 abort된다
 - 스레드가 아카이브된다 (같은 스레드에 Claude가 없는 경우에만)
+- 큐에 쌓인 입력은 폐기된다 (drop count 로깅)
+
+### `/codex intelligence`
+
+현재 스레드의 Codex 세션 추론 강도를 **실행 중에 변경**한다. 컨텍스트 손실 없음.
+
+- 현재 effort가 선택지에서 default로 표시된다
+- 활성 턴이 있으면 abort 후 새 effort로 thread 재개 (`resumeThread()`)
+- 모델 + sandbox 모드 + cwd는 유지됨
+- 이미 같은 effort 선택 시 no-op
+
+```
+/codex intelligence
+  → "🧠 Change Codex Reasoning Effort
+     Model: gpt-5.5 · Current: high"
+  → 드롭다운에서 새 강도 선택
+  → ✅ "GPT-5.5 · high → xhigh"
+```
 
 ### `/codex status`
 
@@ -54,6 +89,15 @@ const enableCodex = hasCodexOAuth || !!openaiKey;
 | running | 🟢 | 턴 실행 중 |
 | idle | 🟡 | 대기 중 (입력 가능) |
 | ended | ⚫ | 종료됨 |
+
+### `/yolo-sleep` (Codex 스레드에서)
+
+YOLO 모드를 토글한다. Codex의 sandbox 모드가 함께 전환된다:
+
+- ON: `workspace-write` (파일 수정 허용)
+- OFF: `read-only` (읽기 전용)
+
+전환 시 활성 턴은 abort되고 thread가 새 sandbox 모드로 재개된다.
 
 ## 메시지 라우팅
 
@@ -95,18 +139,23 @@ Codex SDK 세션의 생명주기를 관리한다.
 
 ```typescript
 class CodexSessionManager {
-  startSession(cwd, discordThreadId)  // 새 세션 시작
-  sendInput(sessionId, prompt)        // 사용자 입력 전달 (스트리밍)
-  stopSession(sessionId)              // 세션 종료 (abort 포함)
-  getSession(sessionId)               // 세션 조회
-  getSessionByDiscordThread(threadId) // Discord 스레드로 세션 조회
-  getAllSessions()                     // 전체 세션 목록
+  startSession(cwd, discordThreadId, { sandboxMode?, model?, modelReasoningEffort? })
+  sendInput(sessionId, prompt)        // 큐잉 + 자동 drain
+  stopSession(sessionId)              // 종료 (큐 비움 + abort)
+  switchSandboxMode(sessionId, newMode)  // sandbox 전환 (yolo 토글이 호출)
+  switchReasoningEffort(sessionId, newEffort)  // /codex intelligence가 호출
+  interruptSession(sessionId)         // 활성 턴만 abort (세션 유지)
+  restoreSessions(mappings)           // 봇 재시작 시 호출 (workingDirectory 포함)
+  getSession(sessionId)
+  getSessionByDiscordThread(threadId)
+  getAllSessions()
 }
 ```
 
 핵심 설정:
 - `approval_policy: 'never'` - 모든 작업을 자동 승인 (interactive approval 없음)
-- 동시 턴 방지 - `status === 'running'`이면 새 입력 거부
+- 모델 + reasoning effort는 세션 entry에 고정 — `restoreSessions`/`switchSandboxMode`에서도 보존
+- 입력 큐잉 - 활성 턴 중 들어온 메시지는 폐기되지 않고 큐에 쌓였다가 turn 끝나면 `\n\n`으로 합쳐 한 turn으로 발송 (cap 10)
 
 ### 이벤트 시스템
 
@@ -164,7 +213,9 @@ archiveCodexSession(sessionId)
 ## 제한사항
 
 - Codex 세션은 봇 재시작 시 `codexThreadId` 기반으로 자동 복구된다 (`resumeThread()`)
+- 봇 재시작 후 sandbox 모드는 `read-only`로 초기화된다 (yolo 상태는 별도 영속화 안 됨)
 - 명령어 출력은 1500자로 잘린다
 - 파일 diff 미리보기는 200자로 잘린다
 - Codex는 항상 자동 승인 모드로 실행된다 (권한 요청 UI 없음)
-- 동시에 하나의 턴만 처리 가능하다 (이전 턴 완료 전 새 입력 거부)
+- 입력 큐 cap = 10 — 11번째 메시지부터 거부 (`session busy or ended` 응답)
+- 동시에 하나의 턴만 실행되지만, 추가 메시지는 큐잉 후 자동 drain되므로 사용자 측에서 메시지 손실 없음

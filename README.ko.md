@@ -28,7 +28,7 @@ Sleep Code는 Claude Code(와 Codex)를 채팅 플랫폼과 연결합니다. 코
 - **세션 관리** — Discord에서 세션 시작, 중지, 복구
 - **Claude Agent SDK** — 터미널 없이 SDK `query()`로 세션 실행
 - **모델 & 컨텍스트 선택** — 세션 시작 시 Opus 4.7/4.6, Sonnet 4.6, Haiku 4.5 중 선택하고, 지원되는 200K 또는 1M 컨텍스트 옵션 사용
-- **Codex 연동** — 같은 스레드에서 Claude와 OpenAI Codex를 함께 실행
+- **Codex 연동** — 같은 스레드에서 Claude와 OpenAI Codex (gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2) 동시 실행, `/codex intelligence`로 추론 강도 실시간 변경
 - **시맨틱 메모리** — 대화를 자동 정제 → 로컬 벡터 DB, 일일 다이제스트 브리핑
 - **멀티 플랫폼** — Discord (전체 기능), Slack, Telegram
 
@@ -96,7 +96,7 @@ Claude Code / Codex
 
 기여를 환영합니다! 변경하려는 내용을 먼저 이슈로 논의해 주세요.
 
-개발 환경 설정과 가이드라인은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
+코드베이스 구조는 [Architecture](docs/architecture.md), 에이전트/기여자 규약은 [AGENTS.md](AGENTS.md)를 참고하세요.
 
 ## 감사의 말
 

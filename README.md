@@ -28,7 +28,7 @@ Sleep Code bridges Claude Code (and Codex) with your chat platform. Start a codi
 - **Session management** — start, stop, restore sessions from Discord
 - **Claude Agent SDK** — run sessions without a terminal via SDK `query()`
 - **Model & context selection** — choose Opus 4.7/4.6, Sonnet 4.6, or Haiku 4.5 with supported 200K or 1M context options at session start
-- **Codex integration** — run OpenAI Codex alongside Claude in the same thread
+- **Codex integration** — run OpenAI Codex (gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2) alongside Claude in the same thread, with on-the-fly reasoning effort change via `/codex intelligence`
 - **Semantic memory** — auto-distill conversations → local vector DB, daily digest briefings
 - **Multi-platform** — Discord (full features), Slack, Telegram
 
@@ -96,7 +96,7 @@ Requires [Ollama](https://ollama.com/) for embeddings. Without Ollama, the bot r
 
 Contributions are welcome! Please open an issue first to discuss what you'd like to change.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+See [Architecture](docs/architecture.md) for the codebase layout and [AGENTS.md](AGENTS.md) for agent/contributor conventions.
 
 ## Acknowledgments
 

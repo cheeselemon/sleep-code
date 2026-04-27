@@ -100,6 +100,10 @@ sleep-code help             # Show help
 
 Set `OPENAI_API_KEY` in your `.env` file, or run `codex login` to authenticate via OAuth (`~/.codex/auth.json`). Codex is auto-detected on bot startup.
 
+> **Note:** GPT-5.5 and `xhigh` reasoning effort require Codex CLI ≥ 0.125. The bundled `@openai/codex-sdk` ships a compatible CLI; if you also installed the standalone Codex CLI globally, run `npm i -g @openai/codex@latest` to upgrade.
+
+`/codex start` lets you pick the model and reasoning effort per session (gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2 with effort levels minimal → xhigh). `/codex intelligence` switches the effort mid-session without losing context.
+
 See [codex-integration-en.md](codex-integration-en.md) for full details.
 
 ## Environment Variables
@@ -118,13 +122,16 @@ See [codex-integration-en.md](codex-integration-en.md) for full details.
 
 | Path | Purpose |
 |------|---------|
-| `~/.sleep-code/discord.env` | Discord bot token + user ID |
+| `~/.sleep-code/discord.env` | Discord bot token + user ID (also `OPENROUTER_API_KEY` / `DEEPINFRA_API_KEY` for `/chat`) |
 | `~/.sleep-code/slack.env` | Slack tokens |
 | `~/.sleep-code/settings.json` | Allowed dirs, terminal app, maxConcurrentSessions |
 | `~/.sleep-code/process-registry.json` | ProcessManager session registry |
-| `~/.sleep-code/session-mappings.json` | Claude session → Discord thread mappings |
-| `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings |
-| `~/.sleep-code/sdk-session-mappings.json` | Claude SDK session → Discord thread mappings |
-| `~/.sleep-code/memory-config.json` | Memory system config (distill, consolidation, digest) |
+| `~/.sleep-code/session-mappings.json` | Claude PTY session → Discord thread mappings |
+| `~/.sleep-code/sdk-session-mappings.json` | Claude SDK session → Discord thread mappings (incl. `sdkSessionId`, `sdkModel`) |
+| `~/.sleep-code/codex-session-mappings.json` | Codex session → Discord thread mappings (incl. `codexThreadId`, `codexModel`, `codexModelReasoningEffort`) |
+| `~/.sleep-code/agent-session-mappings.json` | Generic agent (`/chat`) session → thread mappings |
+| `~/.sleep-code/agent-sessions/` | Per-session conversation history JSONL for `/chat` agents |
+| `~/.sleep-code/logs/` | PM2-bound rotating log files (pino) |
+| `~/.sleep-code/memory-config.json` | Memory system config (distill, consolidation, digest) — hot-reloaded |
 | `~/.sleep-code/digest-prompt.txt` | Custom daily digest prompt template (optional) |
 | `~/.sleep-code/memory/lancedb/` | LanceDB vector store |
