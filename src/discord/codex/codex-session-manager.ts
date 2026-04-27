@@ -37,6 +37,14 @@ export interface CodexSessionEntry {
   startedAt: Date;
   activeTurn: AbortController | null;
   turnCount: number;
+  /**
+   * Pending user messages received while a turn was in flight (Claude-style queueing).
+   * Drained after the active turn ends — all queued messages are joined with `\n\n`
+   * and sent as ONE follow-up turn so multi-message input doesn't burn N turns.
+   * Cap = `maxQueueLength` to bound memory + protect against runaway senders.
+   */
+  inputQueue: string[];
+  maxQueueLength: number;
 }
 
 export interface CodexEvents {
@@ -64,12 +72,16 @@ export class CodexSessionManager {
   private sessions = new Map<string, CodexSessionEntry>();
   private events: CodexEvents;
   private onCodexThreadIdSet?: (sessionId: string, codexThreadId: string) => void;
+  private maxQueueLength: number;
 
   constructor(events: CodexEvents, options?: {
     onCodexThreadIdSet?: (sessionId: string, codexThreadId: string) => void;
+    /** Per-session queue cap. Defaults to 10 to match Claude SDK manager. */
+    maxQueueLength?: number;
   }) {
     this.events = events;
     this.onCodexThreadIdSet = options?.onCodexThreadIdSet;
+    this.maxQueueLength = options?.maxQueueLength ?? 10;
     this.codex = new Codex({
       config: {
         approval_policy: 'never',
@@ -109,6 +121,8 @@ export class CodexSessionManager {
       startedAt: new Date(),
       activeTurn: null,
       turnCount: 0,
+      inputQueue: [],
+      maxQueueLength: this.maxQueueLength,
     };
 
     this.sessions.set(id, entry);
@@ -125,19 +139,50 @@ export class CodexSessionManager {
       return false;
     }
 
-    // Don't allow concurrent turns
-    if (session.status === 'running') {
-      log.warn({ sessionId }, 'Codex session is already processing a turn');
+    // Reject only when the queue is full — otherwise we always queue and let
+    // tryDrainQueue (here or in processStreamedTurn's finally) decide when to
+    // run. This matches the Claude SDK manager's "never drop input" contract.
+    if (session.inputQueue.length >= session.maxQueueLength) {
+      log.warn({
+        sessionId,
+        queueLen: session.inputQueue.length,
+        max: session.maxQueueLength,
+      }, 'Codex input queue full, dropping message');
       return false;
     }
 
-    // Fire and forget the streaming turn
-    this.processStreamedTurn(session, prompt).catch((err) => {
-      log.error({ sessionId, err }, 'Codex streamed turn failed');
-      this.events.onError(sessionId, err);
-    });
+    session.inputQueue.push(prompt);
+    log.debug({ sessionId, queueLen: session.inputQueue.length, status: session.status }, 'Codex input queued');
 
+    // If no turn is currently in flight, drain immediately. Otherwise the
+    // active turn's `finally` will drain the queue once it ends.
+    this.tryDrainQueue(session);
     return true;
+  }
+
+  /**
+   * If a turn isn't already running, pop ALL queued messages, merge them with
+   * `\n\n`, and start a new streamed turn. Merging matches the Claude SDK
+   * pattern — multi-message bursts become one Codex turn instead of N turns.
+   *
+   * Safe to call any time — if a turn is in flight or session ended, no-op.
+   */
+  private tryDrainQueue(session: CodexSessionEntry): void {
+    if (session.status === 'ended') return;
+    if (session.activeTurn !== null) return; // Turn in flight; finally will drain
+    if (session.inputQueue.length === 0) return;
+
+    const merged = session.inputQueue.splice(0).join('\n\n');
+    log.info({
+      sessionId: session.id,
+      mergedFrom: merged.split('\n\n').length,
+      lengthChars: merged.length,
+    }, 'Draining Codex input queue');
+
+    this.processStreamedTurn(session, merged).catch((err) => {
+      log.error({ sessionId: session.id, err }, 'Codex streamed turn failed');
+      this.events.onError(session.id, err);
+    });
   }
 
   async stopSession(sessionId: string): Promise<boolean> {
@@ -148,6 +193,13 @@ export class CodexSessionManager {
     if (session.activeTurn) {
       session.activeTurn.abort();
       session.activeTurn = null;
+    }
+
+    // Drop any queued input — session is ending, no point delivering them.
+    const dropped = session.inputQueue.length;
+    if (dropped > 0) {
+      log.warn({ sessionId, dropped }, 'Discarding queued Codex input on stop');
+      session.inputQueue.length = 0;
     }
 
     session.status = 'ended';
@@ -326,6 +378,8 @@ export class CodexSessionManager {
           startedAt: new Date(),
           activeTurn: null,
           turnCount: 0,
+          inputQueue: [],
+          maxQueueLength: this.maxQueueLength,
         };
 
         this.sessions.set(m.sessionId, entry);
@@ -443,6 +497,14 @@ export class CodexSessionManager {
       if (this.sessions.has(session.id) && session.activeTurn === null) {
         session.status = 'idle';
         this.events.onSessionStatus(session.id, 'idle');
+
+        // Drain any messages queued during this turn (e.g. user kept typing
+        // mid-response, or sent /interrupt + new prompt). setImmediate avoids
+        // re-entering processStreamedTurn from inside its own finally and gives
+        // the event loop a tick before the next runStreamed() call.
+        if (session.inputQueue.length > 0) {
+          setImmediate(() => this.tryDrainQueue(session));
+        }
       }
     }
   }
