@@ -373,7 +373,18 @@ export class ChannelManager {
       );
       await startMsg.pin().catch(() => {});
     } else {
-      await thread.send('🔄 **Session Reconnected**');
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      await thread.send(
+        `🔄 **Claude PTY Session Reconnected** — \`Claude Code (terminal)\`\n` +
+        `Session: \`${sessionId.slice(0, 8)}\` · Time: ${timestamp}\n` +
+        `CWD: \`${cwd}\`\n` +
+        `Tip: \`/panel\` for inline controls · \`/yolo-sleep\` to auto-approve`,
+      );
     }
 
     const mapping: ChannelMapping = {

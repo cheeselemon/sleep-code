@@ -173,8 +173,11 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
     log.info('Agent session manager initialized (OpenRouter/DeepInfra)');
   }
 
-  // Single-flight map to prevent duplicate lazy resume attempts for the same session
-  const pendingLazyResumes = new Map<string, Promise<ClaudeSdkSessionEntry | null>>();
+  // Single-flight map to prevent duplicate lazy resume attempts for the same session.
+  // Outcome carries `mode` so the consumer can post the correct resumed/restarted notice
+  // (the second receiver of an in-flight promise sees the same shape as the originator).
+  type LazyResumeOutcome = { entry: ClaudeSdkSessionEntry; mode: 'resumed' | 'restarted' };
+  const pendingLazyResumes = new Map<string, Promise<LazyResumeOutcome | null>>();
 
   const claudeSdkEvents = createClaudeSdkHandlers({
     client,
@@ -681,7 +684,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
               ? formatSdkModelDisplay(entry.selectedModel)
               : 'default model';
             await firstMessage.channel.send(
-              `**Claude joined this thread (SDK mode).** Model: \`${modelLabel}\`. Messages are prefixed with agent names.`,
+              `🤝 **Claude joined this thread (SDK mode)** — \`${modelLabel}\`\n` +
+              `Messages are prefixed with agent names.`,
             );
           } catch { /* ignore */ }
         } catch (err) {
@@ -700,11 +704,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         const pending = pendingLazyResumes.get(effectiveClaudeSessionId);
         if (pending) {
           log.info({ sessionId: effectiveClaudeSessionId, pid: process.pid }, 'Lazy resume: already in flight, awaiting');
-          sdkSession = await pending ?? undefined;
+          const pendingResult = await pending;
+          sdkSession = pendingResult ? pendingResult.entry : undefined;
         } else {
           const persisted = channelManager.getPersistedSdkMappings().find(m => m.sessionId === effectiveClaudeSessionId);
           if (persisted) {
-            const resumePromise = (async (): Promise<ClaudeSdkSessionEntry | null> => {
+            const resumePromise = (async (): Promise<LazyResumeOutcome | null> => {
               // If sdkSessionId was never properly updated (equals internal sessionId),
               // skip resume and go straight to fresh start
               const canResume = persisted.sdkSessionId && persisted.sdkSessionId !== persisted.sessionId;
@@ -718,7 +723,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
                     model: persisted.sdkModel,
                   });
                   channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
-                  return entry;
+                  return { entry, mode: 'resumed' };
                 } catch (resumeErr) {
                   log.warn({ err: resumeErr, sessionId: effectiveClaudeSessionId, pid: process.pid }, 'Lazy resume failed, trying fresh start');
                   try {
@@ -727,7 +732,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
                       model: persisted.sdkModel,
                     });
                     channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
-                    return entry;
+                    return { entry, mode: 'restarted' };
                   } catch (freshErr) {
                     log.error({ err: freshErr, sessionId: effectiveClaudeSessionId, pid: process.pid }, 'Fresh start also failed');
                     return null;
@@ -741,7 +746,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
                     model: persisted.sdkModel,
                   });
                   channelManager.setSdkSessionId(entry.id, entry.sdkSessionId);
-                  return entry;
+                  return { entry, mode: 'restarted' };
                 } catch (freshErr) {
                   log.error({ err: freshErr, sessionId: effectiveClaudeSessionId, pid: process.pid }, 'Fresh start failed');
                   return null;
@@ -753,7 +758,30 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             try {
               const result = await resumePromise;
               if (result) {
-                sdkSession = result;
+                sdkSession = result.entry;
+                // Notify thread that the session was resumed/restarted after bot restart
+                try {
+                  const modelDisplay = formatSdkModelDisplay(persisted.sdkModel ?? null);
+                  const sessionShort = persisted.sessionId.slice(0, 8);
+                  const timestamp = new Date().toLocaleString('ko-KR', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  });
+                  const message = result.mode === 'resumed'
+                    ? `🔄 **Claude SDK Session Resumed** — \`${modelDisplay}\`\n` +
+                      `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+                      `CWD: \`${persisted.cwd}\`\n` +
+                      `Tip: \`/panel\` for inline controls · \`/yolo-sleep\` to auto-approve`
+                    : `♻️ **Claude SDK Session Restarted** — \`${modelDisplay}\` *(resume failed, fresh context)*\n` +
+                      `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+                      `CWD: \`${persisted.cwd}\`\n` +
+                      `Tip: \`/panel\` for inline controls · \`/yolo-sleep\` to auto-approve`;
+                  await firstMessage.channel.send(message);
+                } catch (notifyErr) {
+                  log.warn({ err: notifyErr, sessionId: effectiveClaudeSessionId }, 'Failed to post lazy-resume notice');
+                }
               } else {
                 await firstMessage.reply('⚠️ Failed to resume Claude session. Use `/claude start-sdk` to start a new one.');
                 return;
@@ -835,6 +863,30 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             }
           }
         }
+        // Notify each Codex thread that the session was resumed after bot restart.
+        // Sandbox always resets to read-only on restore, so we surface that here too.
+        for (const m of restorable) {
+          const session = codexSessionManager.getSession(m.sessionId);
+          if (!session) continue; // restore failed for this entry; skip notice
+          try {
+            const thread = await client.channels.fetch(m.discordThreadId).catch(() => null);
+            if (!thread || !('send' in thread) || typeof (thread as any).send !== 'function') continue;
+            const modelLabel = m.model ?? 'gpt-5.5';
+            const effortLabel = m.modelReasoningEffort ?? 'high';
+            const sessionShort = m.sessionId.slice(0, 8);
+            const timestamp = new Date().toLocaleString('ko-KR', {
+              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+            });
+            await (thread as any).send(
+              `🔄 **Codex Session Resumed** — \`${modelLabel} (${effortLabel})\`\n` +
+              `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+              `CWD: \`${m.cwd}\`\n` +
+              `Sandbox reset to \`read-only\` · \`/yolo-sleep\` for workspace-write`,
+            );
+          } catch (notifyErr) {
+            log.warn({ err: notifyErr, sessionId: m.sessionId }, 'Failed to post Codex resume notice');
+          }
+        }
         log.info({ restored, total: restorable.length }, 'Codex session restoration complete');
       }
     }
@@ -858,6 +910,29 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             channelManager.restoreAgentSessionMapping(m);
           }
           const restored = await agentSessionManager.restoreSessions(restorable);
+          // Notify each agent thread that the session was resumed after bot restart.
+          for (const m of restorable) {
+            const session = agentSessionManager.getSession(m.sessionId);
+            if (!session) continue; // restore failed; skip notice
+            try {
+              const thread = await client.channels.fetch(m.discordThreadId).catch(() => null);
+              if (!thread || !('send' in thread) || typeof (thread as any).send !== 'function') continue;
+              const modelDef = getModelByAlias(m.modelAlias);
+              const displayName = modelDef?.displayName ?? m.modelAlias;
+              const sessionShort = m.sessionId.slice(0, 8);
+              const timestamp = new Date().toLocaleString('ko-KR', {
+                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+              });
+              await (thread as any).send(
+                `🔄 **${displayName} Session Resumed** — \`${m.modelAlias}\`\n` +
+                `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+                `CWD: \`${m.cwd}\`\n` +
+                `Tip: \`/panel\` for inline controls`,
+              );
+            } catch (notifyErr) {
+              log.warn({ err: notifyErr, sessionId: m.sessionId }, 'Failed to post agent resume notice');
+            }
+          }
           log.info({ restored, total: restorable.length }, 'Agent session restoration complete');
         }
       }
