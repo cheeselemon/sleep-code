@@ -238,32 +238,32 @@ All messages have a sender prefix:
 - `Human → Claude`: `{displayName}: content` (default in shared threads)
 - `Human → Codex`: starts with `@codex`
 - `Human → Generic`: starts with `@gemma4`, `@glm5`, `@glm51`, or `@qwen3-coder`
-- `Agent → Agent`: include `@target_name` in output for auto-routing. **단, 구체적인 요청·질문·작업이 있을 때만** 사용하며, ack/의견/완료 보고에는 사용하지 않는다.
+- `Agent → Agent`: include `@target_name` in output for auto-routing. **Use only when there is a concrete request, question, or task** — never for ack, agreement, or completion reports.
 
 ### `@` Mention Rules (Critical — prevents infinite loops)
 
-- **라우팅 토큰은 마크다운 형식과 무관하게 발동한다.** 인용(`>`)·코드 블록·리스트·표·헤더·세부 설명 어디에 들어 있든 `@agent_name`이 나타나면 즉시 라우팅이 발동된다. 라우팅 의도가 없는 문맥(예시·인용·코드 블록·설명·문서·계획서·스크립트)에서는 다음 중 하나의 **안전 표기**를 사용한다:
-  - `(at)codex` — 가장 명확
-  - `\@codex` — 백슬래시 이스케이프 (렌더러에 따라 동작 차이)
-  - `codex` — `@` 자체를 빼는 것이 가장 안전 (기본값)
-- **한 메시지에 `@mention`은 반드시 1개만 사용** — 여러 에이전트에 보내려면 각각 별도 메시지로 전송
-  - OK: "@codex review this" → (별도 메시지) "@gemma4 what do you think?"
-  - BAD: "@codex review this and @gemma4 check that" (동시 전달로 혼선 발생)
+- **Routing tokens fire regardless of markdown formatting.** A `@agent_name` token triggers immediate routing whether it appears in blockquotes (`>`), code blocks, lists, tables, headings, or inline descriptions. In any context where you do NOT intend routing (examples, quotes, code blocks, explanations, documentation, plans, scripts), use one of these **safe notations**:
+  - `(at)codex` — clearest
+  - `\@codex` — backslash escape (rendering varies by renderer)
+  - `codex` — drop the `@` entirely (safest default)
+- **Use at most one `@mention` per message.** To reach multiple agents, send separate messages.
+  - OK: "@codex review this" → (separate message) "@gemma4 what do you think?"
+  - BAD: "@codex review this and @gemma4 check that" (simultaneous delivery causes crosstalk)
 
-### 메시지 미리보기 패턴
+### Message Preview Pattern
 
-"이 메시지를 보낼까요?" 확인 단계에서 메시지 본문을 사용자에게 보여줄 때, 본문 안의 `@agent_name`은 항상 안전 표기(`(at)codex` / `codex`)로 치환한다. 사용자 승인 후 **실제 발송 시점**에만 진짜 토큰을 복원하여 별도 메시지로 전송한다.
+When showing a draft message body to the user in a "send this message?" confirmation step, **always replace `@agent_name` tokens inside the preview body with safe notation (`(at)codex` / `codex`)**. Restore real tokens only at the actual send step, in a separate message after user approval.
 
-미리보기 단계에서 라우팅 토큰을 그대로 두면 즉시 발송된다 — 미리보기와 발송이 한 번에 일어나는 셈이라 패턴이 깨진다.
+If the preview keeps real routing tokens, the message is delivered immediately — preview and send collapse into a single event, breaking the confirmation pattern.
 
-### 라우팅 회신 / 사후 보고
+### Routed Reply / Self-Report
 
-- **라우팅된 메시지에 대한 응답이 단순 ack·동의·이해 표명·완료 보고면 라우팅 회신을 하지 않는다.** 시스템이 `Start with @agent to reply` 같은 힌트를 표시해도, 응답 내용이 사람(CEO) 보고로 종결될 수 있는 성격이면 사람에게만 보고한다. 라우팅 회신은 (a) 새로운 구체 요청·질문·작업이 있거나, (b) 상대 에이전트가 명시적으로 답변을 요구한 질문에 대한 답변일 때만 사용.
-- 라우팅 없이 다른 에이전트를 언급할 때는 `@`를 빼고 쓰기 ("codex", "claude", "gemma4")
+- **Do not reply via routing if your response is just an ack, agreement, acknowledgment, or completion report.** Even when the system shows a hint like `Start with @agent to reply`, route-replies must be reserved for (a) a new concrete request, question, or task, or (b) an explicit answer to a question the other agent demanded. Status updates and completion reports go to the human (CEO) only.
+- When referring to another agent without routing, omit the `@` ("codex", "claude", "gemma4")
   - OK: "incorporated codex's feedback"
   - BAD: "incorporated @codex's feedback" (triggers unintended routing)
-- **의도치 않은 라우팅 발생 시 즉시 자발적 사후 보고** — 본인이 작성한 텍스트로 인해 의도하지 않은 라우팅이 발동되었다고 인지한 시점에, 후속 응답에서 사실을 즉시 자발적으로 사람(CEO)에게 보고하고 사후 영향(상대 에이전트의 회신 여부, 작업 흐름 영향 범위)을 정리한다.
-- `@mention` = 즉시 전달 + 대상 에이전트 작업 시작. **구체적인 요청·질문·작업이 있을 때만** 사용.
+- **Self-report unintended routing immediately.** The moment you realize your own text triggered an unintended routing, proactively report the fact to the human (CEO) in your next reply and summarize the fallout (whether the other agent replied, what part of the workflow was affected).
+- `@mention` = immediate delivery + the target agent starts working. **Use only when you have a concrete request, question, or task.**
 
 ### File-Based Context Sharing
 
@@ -324,7 +324,7 @@ Each memory is tagged with project, speaker, priority (0-10), and topicKey.
 - `sc_memory_search` — Semantic search. Returns relevant memories for queries like "what did we decide about refund logic?"
 - `sc_memory_list` — List recent memories for the project
 - `sc_memory_store` — Only use when the user explicitly requests it (e.g., "remember this", "store this")
-- **메모리 저장 제안도 사용자 명시 요청 시에만.** 에이전트가 자발적으로 "메모리에 저장할까요?"를 묻는 것은 기본 비활성화. 사용자가 "기억해 / 저장해" 등 명시 요청을 한 시점에만 저장 또는 저장 의사 확인을 진행한다.
+- **Do not volunteer memory-store prompts.** Agents must not ask "should I save this to memory?" on their own initiative. Only proceed with a save (or a save-confirmation question) when the user has explicitly asked ("remember this", "save this", etc.).
 
 ### Project Settings
 - project name: `{PROJECT_NAME}`
