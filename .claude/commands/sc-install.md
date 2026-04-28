@@ -13,11 +13,11 @@ Handles CLAUDE.md and AGENTS.md in one step.
 Ask the user:
 
 ```
-Sleep Code 설치/업데이트 대상 프로젝트를 선택해 주세요:
+Select the target project for sleep-code install/update:
 
-1. **자동 탐색** — 전체 시스템(`$HOME` 이하)에서 CLAUDE.md/AGENTS.md를 모두 찾습니다
-2. **경로 직접 입력** — 프로젝트 루트 경로를 지정합니다
-3. **현재 프로젝트** — 현재 작업 디렉토리(CWD)에 설치/업데이트합니다
+1. **Auto-find** — Search the entire system (under `$HOME`) for CLAUDE.md/AGENTS.md
+2. **Manual path** — Provide the project root path
+3. **Current project** — Install/update into the current working directory (CWD)
 ```
 
 Wait for user response before proceeding.
@@ -34,31 +34,31 @@ Based on user's choice. **In every option, the resolved path must be shown back 
   - `find "$HOME" \( -name node_modules -o -name .git -o -name Library -o -name .Trash -o -name .cache -o -name .npm -o -name .cargo -o -name .rustup \) -prune -o -type f \( -name CLAUDE.md -o -name AGENTS.md \) -print`
 - **Always exclude**: `node_modules`, `.git`, `~/Library`, `~/.Trash`, `~/.cache`, `~/.npm`, `~/.cargo`, `~/.rustup`, `~/.pnpm`, `~/.yarn`, system dirs (`/System`, `/usr`, `/bin`, `/sbin`, `/private`)
 - **DO NOT** restrict to current directory or to a fixed depth — scan the whole `$HOME` tree
-- 같은 프로젝트 루트에 여러 파일(`CLAUDE.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`)이 있으면 **하나의 프로젝트로 묶어서** 표시
-- 결과가 많으면 절대 경로 알파벳 순 정렬 후 모두 보여주기 (자르지 말 것)
-- **사전 내용 검사 (필수)**: 목록을 보여주기 전에, 각 프로젝트의 발견된 모든 파일을 실제로 읽어서 sleep-code 섹션 존재 여부를 판정한다.
-  - 검사 대상 섹션: `## Multi-Agent Communication Protocol` (또는 레거시 `## Multi-Agent Workflow`), `## File Delivery via \`<attach>\` Marker`, `## Memory & Knowledge System`
-  - 셋 중 **하나라도 있으면** `[업데이트]`로 태깅
-  - 셋 다 없으면 `[신규 설치]`로 태깅
-- Present found projects as a numbered list with their absolute paths AND the [업데이트]/[신규 설치] tag
+- When multiple files (`CLAUDE.md`, `.claude/CLAUDE.md`, `AGENTS.md`, `.claude/AGENTS.md`) live under the same project root, **group them as one project**
+- If results are large, sort by absolute path alphabetically and show all (do not truncate)
+- **Pre-scan content (required)**: before listing, actually read each project's discovered files to detect whether sleep-code sections are present.
+  - Target sections: `## Multi-Agent Communication Protocol` (or legacy `## Multi-Agent Workflow`), `## File Delivery via \`<attach>\` Marker`, `## Memory & Knowledge System`
+  - If **any one** is present → tag as `[UPDATE]`
+  - If **none** are present → tag as `[NEW INSTALL]`
+- Present found projects as a numbered list with their absolute paths AND the [UPDATE]/[NEW INSTALL] tag
 - Ask the user to pick one (or multiple). Example prompt:
 
 ```
-탐색 결과 — 설치/업데이트할 프로젝트 번호를 골라주세요 (쉼표로 구분):
-   1. {project_name}  ({absolute_path})  [업데이트]   {discovered files}
-   2. {project_name}  ({absolute_path})  [신규 설치]  {discovered files}
+Search results — pick project number(s) to install/update (comma-separated):
+   1. {project_name}  ({absolute_path})  [UPDATE]       {discovered files}
+   2. {project_name}  ({absolute_path})  [NEW INSTALL]  {discovered files}
    ...
 
-선택:
+Selection:
 ```
 
 - After the user picks, **echo the chosen project(s) back and ask for final confirmation**:
 
 ```
-선택한 프로젝트:
+Selected projects:
   - {project_name}  ({absolute_path})
 
-이 경로에 sleep-code를 설치/업데이트할까요? (y/n)
+Install/update sleep-code into these paths? (y/n)
 ```
 
 - Only proceed to Step 3 after `y`.
@@ -69,10 +69,10 @@ Based on user's choice. **In every option, the resolved path must be shown back 
 - **Echo the resolved path back and ask for confirmation** before proceeding:
 
 ```
-입력하신 경로: {absolute_path}
-디렉토리 확인: ✅ 존재함 / ❌ 존재하지 않음
+Path: {absolute_path}
+Directory check: ✅ exists / ❌ does not exist
 
-이 경로에 sleep-code를 설치/업데이트할까요? (y/n)
+Install/update sleep-code into this path? (y/n)
 ```
 
 - Only proceed to Step 3 after `y`. If `n`, return to the path prompt.
@@ -97,7 +97,7 @@ For the selected project path:
 Report status:
 
 ```
-프로젝트: {project_name} ({project_path})
+Project: {project_name} ({project_path})
 
 CLAUDE.md: {path} / missing
   - Multi-Agent Protocol: {installed/outdated/missing}
@@ -121,12 +121,12 @@ Based on the Step 3 detection, ask the user in **two passes**, **already-install
 If any sections are already present (`installed` or `outdated`), list them first and ask:
 
 ```
-이미 설치된 섹션 (업데이트할 항목을 골라주세요):
+Already-installed sections (pick which to update):
   1. CLAUDE.md > Multi-Agent Protocol  ({installed/outdated})
   2. AGENTS.md > File Delivery         ({installed/outdated})
   ...
 
-업데이트할 번호 (쉼표로 구분, 'all' / 'none'):
+Numbers to update (comma-separated, 'all' / 'none'):
 ```
 
 Default to **all already-installed sections** when the user types `all` or just presses Enter. `outdated` items should be highlighted (e.g., with `⚠️`) so the user notices them.
@@ -136,12 +136,12 @@ Default to **all already-installed sections** when the user types `all` or just 
 Then list missing sections and ask:
 
 ```
-설치되지 않은 섹션 (새로 설치할 항목을 골라주세요):
+Missing sections (pick which to install):
   1. CLAUDE.md > File Delivery
   2. AGENTS.md > Memory & Knowledge
   ...
 
-설치할 번호 (쉼표로 구분, 'all' / 'none'):
+Numbers to install (comma-separated, 'all' / 'none'):
 ```
 
 If no sections fall into a pass, skip that pass and continue.
@@ -151,12 +151,12 @@ If no sections fall into a pass, skip that pass and continue.
 Print the combined plan and ask for final confirmation before any file write:
 
 ```
-적용할 작업:
-  - CLAUDE.md > Multi-Agent Protocol  → 업데이트
-  - AGENTS.md > File Delivery         → 새로 설치
+Plan:
+  - CLAUDE.md > Multi-Agent Protocol  → update
+  - AGENTS.md > File Delivery         → new install
   ...
 
-진행할까요? (y/n)
+Proceed? (y/n)
 ```
 
 ## Step 5: Install / Update
@@ -336,9 +336,9 @@ Each memory is tagged with project, speaker, priority (0-10), and topicKey.
 Print a summary:
 
 ```
---- Sleep Code 설치/업데이트 완료 ---
+--- Sleep Code install/update complete ---
 
-프로젝트: {project_name} ({project_path})
+Project: {project_name} ({project_path})
 
 CLAUDE.md:
   - Multi-Agent Protocol: {installed/updated/already up-to-date}
@@ -350,7 +350,7 @@ AGENTS.md:
   - File Delivery:        {installed/updated/already up-to-date}
   - Memory & Knowledge:   {installed/updated/already up-to-date}
 
-개별 섹션만 다시 손보고 싶으면 /sc-install 을 다시 실행해서 해당 항목만 선택.
+To touch up individual sections later, re-run /sc-install and pick only the items you want.
 ```
 
 ## Rules
