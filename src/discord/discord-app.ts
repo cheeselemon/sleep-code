@@ -179,6 +179,46 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
   type LazyResumeOutcome = { entry: ClaudeSdkSessionEntry; mode: 'resumed' | 'restarted' };
   const pendingLazyResumes = new Map<string, Promise<LazyResumeOutcome | null>>();
 
+  // Lazy resume-notice queues. Populated at startup for each restored Codex/Agent
+  // session, drained on the user's first message in that session — so we never
+  // flood every old thread with a "Resumed" card just because the bot rebooted.
+  const codexResumeNoticePending = new Map<string, {
+    model?: string;
+    modelReasoningEffort?: string;
+    cwd: string;
+  }>();
+  const agentResumeNoticePending = new Map<string, {
+    modelAlias: string;
+    cwd: string;
+  }>();
+
+  // Helper: drain a queued resume notice and post it to the agent's thread.
+  // No-op for sessions that weren't restored at boot (i.e. fresh `/chat start`).
+  const drainAgentResumeNotice = async (
+    sessionId: string,
+    channel: { send: (content: string) => Promise<unknown> },
+  ): Promise<void> => {
+    const pending = agentResumeNoticePending.get(sessionId);
+    if (!pending) return;
+    agentResumeNoticePending.delete(sessionId);
+    try {
+      const modelDef = getModelByAlias(pending.modelAlias);
+      const displayName = modelDef?.displayName ?? pending.modelAlias;
+      const sessionShort = sessionId.slice(0, 8);
+      const timestamp = new Date().toLocaleString('ko-KR', {
+        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+      await channel.send(
+        `🔄 **${displayName} Session Resumed** — \`${pending.modelAlias}\`\n` +
+        `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+        `CWD: \`${pending.cwd}\`\n` +
+        `Tip: \`/panel\` for inline controls`,
+      );
+    } catch (notifyErr) {
+      log.warn({ err: notifyErr, sessionId }, 'Failed to post agent resume notice');
+    }
+  };
+
   const claudeSdkEvents = createClaudeSdkHandlers({
     client,
     channelManager,
@@ -495,6 +535,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
 
     // Route to agent session if it's the only session in this thread (no claude/codex)
     if (!claudeSessionId && !codexSessionId && agentSession && agentSessionManager) {
+      await drainAgentResumeNotice(agentSession.id, firstMessage.channel);
       const agentInput = `${displayName}: ${inputText}`;
       const sent = await agentSessionManager.sendInput(agentSession.id, agentInput);
       if (!sent) {
@@ -585,6 +626,7 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
       }
 
+      await drainAgentResumeNotice(targetSession.id, firstMessage.channel);
       const agentInput = `${displayName}: ${inputText}`;
       const sent = await agentSessionManager.sendInput(targetSession.id, agentInput);
       if (!sent) {
@@ -639,6 +681,28 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           log.error({ err }, 'Failed to auto-create Codex session');
           await firstMessage.reply(`⚠️ Failed to start Codex: ${(err as Error).message}`);
           return;
+        }
+      }
+
+      // Drain pending lazy resume notice (only for sessions restored at boot)
+      const pendingCodexNotice = codexResumeNoticePending.get(effectiveCodexSessionId);
+      if (pendingCodexNotice) {
+        codexResumeNoticePending.delete(effectiveCodexSessionId);
+        try {
+          const modelLabel = pendingCodexNotice.model ?? 'gpt-5.5';
+          const effortLabel = pendingCodexNotice.modelReasoningEffort ?? 'high';
+          const sessionShort = effectiveCodexSessionId.slice(0, 8);
+          const timestamp = new Date().toLocaleString('ko-KR', {
+            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+          });
+          await firstMessage.channel.send(
+            `🔄 **Codex Session Resumed** — \`${modelLabel} (${effortLabel})\`\n` +
+            `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
+            `CWD: \`${pendingCodexNotice.cwd}\`\n` +
+            `Sandbox reset to \`read-only\` · \`/yolo-sleep\` for workspace-write`,
+          );
+        } catch (notifyErr) {
+          log.warn({ err: notifyErr, sessionId: effectiveCodexSessionId }, 'Failed to post Codex resume notice');
         }
       }
 
@@ -863,31 +927,17 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             }
           }
         }
-        // Notify each Codex thread that the session was resumed after bot restart.
-        // Sandbox always resets to read-only on restore, so we surface that here too.
+        // Queue lazy resume notices — drained on first user message in each
+        // session so we don't flood every restored thread on bot startup.
         for (const m of restorable) {
-          const session = codexSessionManager.getSession(m.sessionId);
-          if (!session) continue; // restore failed for this entry; skip notice
-          try {
-            const thread = await client.channels.fetch(m.discordThreadId).catch(() => null);
-            if (!thread || !('send' in thread) || typeof (thread as any).send !== 'function') continue;
-            const modelLabel = m.model ?? 'gpt-5.5';
-            const effortLabel = m.modelReasoningEffort ?? 'high';
-            const sessionShort = m.sessionId.slice(0, 8);
-            const timestamp = new Date().toLocaleString('ko-KR', {
-              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-            });
-            await (thread as any).send(
-              `🔄 **Codex Session Resumed** — \`${modelLabel} (${effortLabel})\`\n` +
-              `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
-              `CWD: \`${m.cwd}\`\n` +
-              `Sandbox reset to \`read-only\` · \`/yolo-sleep\` for workspace-write`,
-            );
-          } catch (notifyErr) {
-            log.warn({ err: notifyErr, sessionId: m.sessionId }, 'Failed to post Codex resume notice');
-          }
+          if (!codexSessionManager.getSession(m.sessionId)) continue; // restore failed
+          codexResumeNoticePending.set(m.sessionId, {
+            model: m.model,
+            modelReasoningEffort: m.modelReasoningEffort,
+            cwd: m.cwd,
+          });
         }
-        log.info({ restored, total: restorable.length }, 'Codex session restoration complete');
+        log.info({ restored, total: restorable.length, pendingNotices: codexResumeNoticePending.size }, 'Codex session restoration complete');
       }
     }
 
@@ -910,30 +960,15 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
             channelManager.restoreAgentSessionMapping(m);
           }
           const restored = await agentSessionManager.restoreSessions(restorable);
-          // Notify each agent thread that the session was resumed after bot restart.
+          // Queue lazy resume notices — drained on first user message in each session.
           for (const m of restorable) {
-            const session = agentSessionManager.getSession(m.sessionId);
-            if (!session) continue; // restore failed; skip notice
-            try {
-              const thread = await client.channels.fetch(m.discordThreadId).catch(() => null);
-              if (!thread || !('send' in thread) || typeof (thread as any).send !== 'function') continue;
-              const modelDef = getModelByAlias(m.modelAlias);
-              const displayName = modelDef?.displayName ?? m.modelAlias;
-              const sessionShort = m.sessionId.slice(0, 8);
-              const timestamp = new Date().toLocaleString('ko-KR', {
-                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-              });
-              await (thread as any).send(
-                `🔄 **${displayName} Session Resumed** — \`${m.modelAlias}\`\n` +
-                `Session: \`${sessionShort}\` · Time: ${timestamp}\n` +
-                `CWD: \`${m.cwd}\`\n` +
-                `Tip: \`/panel\` for inline controls`,
-              );
-            } catch (notifyErr) {
-              log.warn({ err: notifyErr, sessionId: m.sessionId }, 'Failed to post agent resume notice');
-            }
+            if (!agentSessionManager.getSession(m.sessionId)) continue; // restore failed
+            agentResumeNoticePending.set(m.sessionId, {
+              modelAlias: m.modelAlias,
+              cwd: m.cwd,
+            });
           }
-          log.info({ restored, total: restorable.length }, 'Agent session restoration complete');
+          log.info({ restored, total: restorable.length, pendingNotices: agentResumeNoticePending.size }, 'Agent session restoration complete');
         }
       }
     }
