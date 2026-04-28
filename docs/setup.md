@@ -23,18 +23,47 @@ Sleep Code is built around Discord. The Slack and Telegram clients still exist i
 
 ### Discord (primary)
 
-1. Create a Discord app at https://discord.com/developers/applications
-   - Go to Bot → Reset Token → copy it
-   - Enable "Message Content Intent"
-   - Go to OAuth2 → URL Generator → select "bot" scope
-   - Select permissions: Send Messages, Manage Messages, Manage Channels, Manage Threads, Create Public Threads, Send Messages in Threads, Read Message History, Attach Files
-   - Permission integer should be `2252126231308304`
-   - Open the generated URL to invite the bot
-2. Get your User ID (enable Developer Mode, right-click your name → Copy User ID)
-3. Run setup:
+1. **Create a Discord app** at https://discord.com/developers/applications
+   - Click "New Application" → enter a name
+   - Go to **Bot** → "Reset Token" → copy the token (you will paste it later)
+   - Toggle **"Message Content Intent"** ON (required — without this the bot cannot read your messages)
+2. **Copy the Application ID** from the General Information page (top of the page, "Application ID" field)
+3. **Invite the bot to your server** — pick one of the two methods below.
+
+   **Method A — Direct invite URL (recommended)**
+
+   Replace `YOUR_CLIENT_ID` with the Application ID from step 2, then paste the URL into your browser:
+
+   ```
+   https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=2252126231308304&scope=bot%20applications.commands
+   ```
+
+   Pick the target server, click Authorize. Done. The permission integer is baked into the URL, so you don't have to assemble it yourself.
+
+   **Method B — OAuth2 URL Generator (manual checklist)**
+
+   If you'd rather see exactly which permissions are granted, go to **OAuth2 → URL Generator** in the developer portal and check these boxes:
+
+   | Permission | Section |
+   |------------|---------|
+   | View Channels | General Permissions |
+   | Manage Channels | General Permissions |
+   | Send Messages | Text Permissions |
+   | Send Messages in Threads | Text Permissions |
+   | Create Public Threads | Text Permissions |
+   | Manage Threads | Text Permissions |
+   | Manage Messages | Text Permissions |
+   | Embed Links | Text Permissions |
+   | Attach Files | Text Permissions |
+   | Read Message History | Text Permissions |
+   | Use Application Commands | Text Permissions |
+
+   Under "Scopes" check **`bot`** and **`applications.commands`**. The "Generated URL" textbox at the bottom should contain `permissions=2252126231308304` — if it doesn't, a checkbox is missing or extra. Open the URL to invite the bot.
+4. **Get your User ID** — in Discord, go to Settings → Advanced → enable **Developer Mode**, then right-click your username and choose "Copy User ID".
+5. **Run setup** and paste the bot token + your User ID when prompted:
 
 ```bash
-npm run discord:setup   # Enter your credentials
+npm run discord:setup
 ```
 
 ### Telegram (experimental)
