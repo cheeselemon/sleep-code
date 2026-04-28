@@ -6,6 +6,7 @@ import { join } from 'path';
 import { discordLogger as log } from '../utils/logger.js';
 import { SessionStore } from './session-store.js';
 import type { PersistedMapping, ChannelMapping } from './session-store.js';
+import { formatSdkModelDisplay } from './claude-sdk/models.js';
 
 // Re-export types so existing imports from channel-manager keep working
 export type { PersistedMapping, ChannelMapping } from './session-store.js';
@@ -363,11 +364,16 @@ export class ChannelManager {
         hour: '2-digit',
         minute: '2-digit',
       });
-      await thread.send(
-        `🚀 **New Session Started**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+      const startMsg = await thread.send(
+        `🟢 **Claude PTY Session Starting** — \`Claude Code (terminal)\`\n` +
+        `<@${this.userId}>\n` +
+        `Session: \`${sessionId.slice(0, 8)}\` · Time: ${timestamp}\n` +
+        `CWD: \`${cwd}\`\n` +
+        `Tip: \`/panel\` for inline controls · \`/yolo-sleep\` to auto-approve`,
       );
+      await startMsg.pin().catch(() => {});
     } else {
-      await thread.send(`🔄 **Session Reconnected**`);
+      await thread.send('🔄 **Session Reconnected**');
     }
 
     const mapping: ChannelMapping = {
@@ -535,8 +541,13 @@ export class ChannelManager {
           await thread.members.add(this.userId).catch(() => {});
         }
 
+        const modelDisplay = formatSdkModelDisplay(sdkModel);
         const startMsg = await thread.send(
-          `📡 **Claude SDK Session Starting**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+          `🟢 **Claude SDK Session Starting** — \`${modelDisplay}\`\n` +
+          `<@${this.userId}>\n` +
+          `Session: \`${sessionId.slice(0, 8)}\` · Time: ${timestamp}\n` +
+          `CWD: \`${cwd}\`\n` +
+          `Tip: \`/panel\` for inline controls · \`/yolo-sleep\` to auto-approve`,
         );
         await startMsg.pin().catch(() => {});
       } catch (err: any) {
@@ -722,7 +733,11 @@ export class ChannelManager {
           threadId = thread.id;
           threadName = thread.name;
           channelId = thread.parentId || '';
-          await thread.send(`🤖 **Codex session joined this thread**\nCWD: \`${cwd}\``);
+          const modelLabel = codexModel ?? 'gpt-5.5';
+          const effortLabel = codexModelReasoningEffort ?? 'high';
+          await thread.send(
+            `**Codex joined this thread.** Model: \`${modelLabel} (${effortLabel})\` · CWD: \`${cwd}\`. Messages are prefixed with agent names.`,
+          );
         }
       } catch {
         log.warn({ existingThreadId }, 'Failed to fetch existing thread for Codex');
@@ -753,9 +768,16 @@ export class ChannelManager {
           await thread.members.add(this.userId).catch(() => {});
         }
 
-        await thread.send(
-          `🤖 **Codex Session Started**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+        const modelLabel = codexModel ?? 'gpt-5.5';
+        const effortLabel = codexModelReasoningEffort ?? 'high';
+        const startMsg = await thread.send(
+          `🟢 **Codex Session Starting** — \`${modelLabel} (${effortLabel})\`\n` +
+          `<@${this.userId}>\n` +
+          `Session: \`${sessionId.slice(0, 8)}\` · Time: ${timestamp}\n` +
+          `CWD: \`${cwd}\`\n` +
+          `Tip: \`/codex intelligence\` to change reasoning effort · \`/yolo-sleep\` toggles workspace-write`,
         );
+        await startMsg.pin().catch(() => {});
       } catch (err: any) {
         log.error({ err: err.message }, 'Failed to create Codex thread');
         return null;
@@ -983,7 +1005,11 @@ export class ChannelManager {
       }
 
       const startMsg = await thread.send(
-        `🤖 **${modelDisplayName} Session Starting**\n<@${this.userId}>\nSession: \`${sessionId}\`\nTime: ${timestamp}\nCWD: \`${cwd}\``
+        `🟢 **${modelDisplayName} Session Starting** — \`${modelAlias}\`\n` +
+        `<@${this.userId}>\n` +
+        `Session: \`${sessionId.slice(0, 8)}\` · Time: ${timestamp}\n` +
+        `CWD: \`${cwd}\`\n` +
+        `Tip: \`/panel\` for inline controls`,
       );
       await startMsg.pin().catch(() => {});
     } catch (err: any) {

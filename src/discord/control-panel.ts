@@ -101,8 +101,33 @@ export class ControlPanel {
         .setEmoji('⛔'),
     );
 
+    const welcome = [
+      '## Sleep Code Control Panel',
+      '',
+      'Welcome. Each session opens a thread under the **Sleep Code Sessions** category — start one with the steps below.',
+      '',
+      '**1. Whitelist a working directory**',
+      '`/claude add-dir` — pick a project folder you want agents to operate in.',
+      '',
+      '**2. Start an agent session**',
+      '• `/claude start-sdk` — Claude via Agent SDK *(no terminal needed, recommended)*',
+      '• `/claude start` — Claude via PTY *(opens a terminal window)*',
+      '• `/codex start` — OpenAI Codex *(default `gpt-5.5 (high)`)*',
+      '• `/chat start` — Generic agent (Gemma 4 / GLM / Qwen3 Coder)',
+      '',
+      '**3. Useful in-session commands**',
+      '`/help` · `/sessions` · `/panel` · `/yolo-sleep` · `/codex intelligence`',
+      '',
+      '**Multi-agent threads**',
+      'Mention `@claude`, `@codex`, `@gemma4`, `@glm5`, `@glm51`, `@qwen3-coder` to route a message — one mention per message.',
+      '',
+      '**Memory** — semantic memory pipeline auto-distills threads into a local vector DB. See `/memory status` and `#sleep-code-memory`. Runs only with Ollama installed.',
+      '',
+      'The button below interrupts every running SDK / PTY / Codex turn at once.',
+    ].join('\n');
+
     await this.channel.send({
-      content: '## Sleep Code Control Panel\nAll active sessions can be managed from here.',
+      content: welcome,
       components: [row],
     });
   }

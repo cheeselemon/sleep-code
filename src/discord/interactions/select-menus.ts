@@ -17,6 +17,7 @@ import {
 } from 'discord.js';
 import { discordLogger as log } from '../../utils/logger.js';
 import { getModelByAlias } from '../agents/model-registry.js';
+import { SDK_MODEL_DISPLAY } from '../claude-sdk/models.js';
 import type { SelectMenuHandler } from './types.js';
 
 /**
@@ -475,16 +476,6 @@ export const handleCodexStopSessionSelect: SelectMenuHandler = async (interactio
  *   `<model-id>` → 200K context
  *   `<model-id>[1m]` → 1M context variant
  */
-const SDK_MODEL_DISPLAY: Record<string, string> = {
-  'claude-opus-4-7[1m]': 'Opus 4.7 (1M)',
-  'claude-opus-4-7': 'Opus 4.7 (200K)',
-  'claude-opus-4-6[1m]': 'Opus 4.6 (1M)',
-  'claude-opus-4-6': 'Opus 4.6 (200K)',
-  'claude-sonnet-4-6[1m]': 'Sonnet 4.6 (1M)',
-  'claude-sonnet-4-6': 'Sonnet 4.6 (200K)',
-  'claude-haiku-4-5': 'Haiku 4.5 (200K)',
-};
-
 /**
  * customId encoding: `sonnet[1m]` contains brackets which Discord allows
  * but colons are our delimiter, so we base64-encode model IDs for safety.

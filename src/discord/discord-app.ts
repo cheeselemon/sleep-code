@@ -29,6 +29,7 @@ import { createCodexEvents } from './codex/codex-handlers.js';
 // (set by /codex start model picker; defaults are baked into codex-session-manager).
 import { ClaudeSdkSessionManager, type ClaudeSdkSessionEntry } from './claude-sdk/claude-sdk-session-manager.js';
 import { createClaudeSdkHandlers } from './claude-sdk/claude-sdk-handlers.js';
+import { formatSdkModelDisplay } from './claude-sdk/models.js';
 import { AgentSessionManager } from './agents/agent-session-manager.js';
 import { createAgentEvents } from './agents/agent-handlers.js';
 import { getModelByAlias, getProviderConfig } from './agents/model-registry.js';
@@ -676,7 +677,12 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           log.info({ sessionId: entry.id, cwd: codexEntry.cwd }, 'Auto-created Claude SDK session in existing thread');
 
           try {
-            await firstMessage.channel.send('**Claude joined this thread (SDK mode).** Messages are prefixed with agent names.');
+            const modelLabel = entry.selectedModel
+              ? formatSdkModelDisplay(entry.selectedModel)
+              : 'default model';
+            await firstMessage.channel.send(
+              `**Claude joined this thread (SDK mode).** Model: \`${modelLabel}\`. Messages are prefixed with agent names.`,
+            );
           } catch { /* ignore */ }
         } catch (err) {
           log.error({ err }, 'Failed to auto-create Claude SDK session');
