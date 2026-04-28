@@ -125,17 +125,11 @@ pm2 logs sleep-discord --lines 5 --nostream
 | `/commands` | List all registered slash commands |
 | `/settings` | Show current bot and memory configuration |
 
-## All Platform Commands
+## Platform Coverage
 
-| Command | Slack | Discord | Telegram | Description |
-|---------|:-----:|:-------:|:--------:|-------------|
-| `/sessions` | O | O | O | List active sessions |
-| `/switch <name>` | - | - | O | Switch session (Telegram only) |
-| `/model <name>` | O | O | O | Switch model |
-| `/compact` | O | O | O | Compact conversation |
-| `/background` | O | O | O | Background mode (Ctrl+B) |
-| `/interrupt` | O | O | O | Interrupt (Escape) |
-| `/mode` | O | O | O | Toggle mode (Shift+Tab) |
+All commands above target the **Discord** client, which is the primary and fully-supported surface.
+
+The Slack and Telegram clients are experimental and feature-incomplete — only basic message relay plus a small set of in-session controls work there. Slash commands such as `/codex`, `/claude start-sdk`, `/yolo-sleep`, `/panel`, `/memory digest`, etc. are Discord-only. See [setup.md](setup.md) for the experimental client setup.
 
 ## Multi-Agent Message Routing (Discord)
 

@@ -5,7 +5,9 @@
 ### Start a Bot
 
 ```bash
-npm run discord         # Start the Discord bot
+npm run discord         # Start the Discord bot (primary, fully supported)
+
+# Experimental clients — feature-incomplete, no Discord parity:
 npm run telegram        # Start the Telegram bot
 npm run slack           # Start the Slack bot
 ```
@@ -33,10 +35,12 @@ See [SDK Session Guide](sdk-session.md) for details on the difference between PT
 If you ran `npm link` (see [setup.md](setup.md)):
 
 ```bash
-sleep-code discord          # Run Discord bot
+sleep-code discord          # Run Discord bot (primary)
+sleep-code claude           # Start Claude session
+
+# Experimental clients:
 sleep-code telegram         # Run Telegram bot
 sleep-code slack            # Run Slack bot
-sleep-code claude           # Start Claude session
 ```
 
 ## PM2 Background Execution
@@ -54,9 +58,11 @@ npm install -g pm2
 ```bash
 cd /path/to/sleep-code
 
-# Start specific bot
-pm2 start ecosystem.config.cjs --only sleep-telegram
+# Primary bot
 pm2 start ecosystem.config.cjs --only sleep-discord
+
+# Experimental clients (feature-incomplete):
+pm2 start ecosystem.config.cjs --only sleep-telegram
 pm2 start ecosystem.config.cjs --only sleep-slack
 
 # Start all bots

@@ -61,7 +61,7 @@ explorer/                   # Memory Explorer web app (Next.js 16)
 ## Data Flow
 
 ```
-User (Discord/Slack/Telegram)
+User (Discord — Slack/Telegram clients are experimental)
   │
   ▼
 Chat Platform Bot

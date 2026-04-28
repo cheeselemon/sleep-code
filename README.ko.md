@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>누워서 코딩하세요.</strong> Discord, Slack, Telegram에서 Claude Code 세션을 모니터링하고 제어하세요.
+  <strong>누워서 코딩하세요.</strong> Discord에서 Claude Code 세션을 모니터링하고 제어하세요.
 </p>
 
 <p align="center">
@@ -23,14 +23,14 @@ Sleep Code는 Claude Code(와 Codex)를 채팅 플랫폼과 연결합니다. 코
 ## 주요 기능
 
 - **양방향 메시징** — 채팅 ↔ Claude Code 실시간 연동
-- **권한 처리** — Discord/Slack 버튼으로 도구 호출 승인/거부
+- **권한 처리** — Discord 버튼으로 도구 호출 승인/거부
 - **YOLO 모드** — 모든 권한 자동 승인 (주의해서 사용)
 - **세션 관리** — Discord에서 세션 시작, 중지, 복구
 - **Claude Agent SDK** — 터미널 없이 SDK `query()`로 세션 실행
 - **모델 & 컨텍스트 선택** — 세션 시작 시 Opus 4.7/4.6, Sonnet 4.6, Haiku 4.5 중 선택하고, 지원되는 200K 또는 1M 컨텍스트 옵션 사용
 - **Codex 연동** — 같은 스레드에서 Claude와 OpenAI Codex (gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2) 동시 실행, `/codex intelligence`로 추론 강도 실시간 변경
 - **시맨틱 메모리** — 대화를 자동 정제 → 로컬 벡터 DB, 일일 다이제스트 브리핑
-- **멀티 플랫폼** — Discord (전체 기능), Slack, Telegram
+- **Discord 중심** — Discord에 맞춰 개발됨. Slack/Telegram 클라이언트도 있지만 실험 단계로 기능이 매우 제한적
 
 ## 빠른 시작
 
@@ -49,12 +49,12 @@ npm run hook:setup
 npm run claude
 ```
 
-Telegram, Slack, 상세 설정 → [설치 가이드](docs/setup.md)
+상세 설정 (그리고 실험 단계의 Slack/Telegram 클라이언트) → [설치 가이드](docs/setup.md)
 
 ## 작동 방식
 
 ```
-사용자 (Discord/Slack/Telegram)
+사용자 (Discord)
   ↕ 메시지 + 권한 버튼
 Sleep Code 봇 (Unix 소켓 데몬)
   ↕ PTY 또는 Claude Agent SDK

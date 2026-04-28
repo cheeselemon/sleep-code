@@ -19,7 +19,9 @@ npm run build
 
 ## Platform Setup
 
-### Discord
+Sleep Code is built around Discord. The Slack and Telegram clients still exist in the repo but are **experimental and feature-incomplete** — most newer features (SDK sessions, Codex, semantic memory threads, control panel, multi-agent routing, AskUserQuestion, etc.) ship Discord-only. Use them at your own risk.
+
+### Discord (primary)
 
 1. Create a Discord app at https://discord.com/developers/applications
    - Go to Bot → Reset Token → copy it
@@ -35,7 +37,9 @@ npm run build
 npm run discord:setup   # Enter your credentials
 ```
 
-### Telegram
+### Telegram (experimental)
+
+> ⚠️ Feature-incomplete: no permission buttons (Telegram lacks Discord-style interactive components in the same way), no Codex integration, no SDK session UI, no control panel. Treat as a basic relay.
 
 1. Create a bot with @BotFather on Telegram
    - Send /newbot and follow the prompts
@@ -49,7 +53,9 @@ npm run discord:setup   # Enter your credentials
 npm run telegram:setup   # Enter your credentials
 ```
 
-### Slack
+### Slack (experimental)
+
+> ⚠️ Feature-incomplete: button/modal flows are partially implemented, no Codex integration, no SDK session UI, no control panel. Treat as a basic relay.
 
 1. Create a Slack app at https://api.slack.com/apps
    - Click "Create New App" → "From manifest" → paste `slack-manifest.json`

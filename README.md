@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>Code from your bed.</strong> Monitor and control Claude Code sessions from Discord, Slack, or Telegram.
+  <strong>Code from your bed.</strong> Monitor and control Claude Code sessions from Discord.
 </p>
 
 <p align="center">
@@ -23,14 +23,14 @@ Sleep Code bridges Claude Code (and Codex) with your chat platform. Start a codi
 ## Features
 
 - **Bidirectional messaging** — chat ↔ Claude Code in real time
-- **Permission handling** — approve/deny tool calls with Discord/Slack buttons
+- **Permission handling** — approve/deny tool calls with Discord buttons
 - **YOLO mode** — auto-approve all permissions (use with caution)
 - **Session management** — start, stop, restore sessions from Discord
 - **Claude Agent SDK** — run sessions without a terminal via SDK `query()`
 - **Model & context selection** — choose Opus 4.7/4.6, Sonnet 4.6, or Haiku 4.5 with supported 200K or 1M context options at session start
 - **Codex integration** — run OpenAI Codex (gpt-5.5 / 5.4 / 5.4-mini / 5.3-codex / 5.2) alongside Claude in the same thread, with on-the-fly reasoning effort change via `/codex intelligence`
 - **Semantic memory** — auto-distill conversations → local vector DB, daily digest briefings
-- **Multi-platform** — Discord (full features), Slack, Telegram
+- **Discord-first** — built around Discord; Slack/Telegram clients exist but are experimental and feature-incomplete
 
 ## Quick Start
 
@@ -49,12 +49,12 @@ npm run hook:setup
 npm run claude
 ```
 
-For Telegram, Slack, and detailed setup → [Setup Guide](docs/setup.md)
+For detailed setup (and the experimental Slack/Telegram clients) → [Setup Guide](docs/setup.md)
 
 ## How It Works
 
 ```
-You (Discord/Slack/Telegram)
+You (Discord)
   ↕ messages + permission buttons
 Sleep Code Bot (Unix socket daemon)
   ↕ PTY or Claude Agent SDK

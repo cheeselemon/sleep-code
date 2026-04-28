@@ -12,7 +12,7 @@ This file guides AI coding agents (Claude Code, OpenAI Codex, and other [agents.
 
 ## Project: Sleep Code
 
-**Code from your bed.** Monitor and control Claude Code sessions from Slack, Discord, or Telegram.
+**Code from your bed.** Monitor and control Claude Code sessions from Discord. (Slack and Telegram clients exist but are experimental and feature-incomplete.)
 
 - **Repository**: https://github.com/cheeselemon/sleep-code
 - **License**: MIT
@@ -22,12 +22,12 @@ This file guides AI coding agents (Claude Code, OpenAI Codex, and other [agents.
 ## Features
 
 - Real-time bidirectional messaging with Claude Code
-- Permission request handling with interactive buttons (Discord/Slack)
+- Permission request handling with interactive buttons (Discord)
 - YOLO mode for auto-approving all permissions
 - Session management from Discord (start/stop/restore sessions remotely)
 - Session restore: PTY via `/claude restore`, SDK via lazy resume (auto-resumes on next message after bot restart)
 - Terminal app support (Terminal.app, iTerm2) on macOS
-- Multi-platform: Telegram, Discord, Slack
+- Discord-first; Slack/Telegram clients exist but are experimental (feature-incomplete, no parity with Discord)
 - Semantic memory pipeline (auto-distill conversations → LanceDB)
 - Memory Explorer web UI (D3.js graph, table, search)
 
@@ -37,14 +37,16 @@ This file guides AI coding agents (Claude Code, OpenAI Codex, and other [agents.
 npm run build           # Build with tsup (required before running)
 npm run dev             # Dev mode with tsx
 npm run discord:setup   # Configure Discord credentials
-npm run discord         # Start the Discord bot
+npm run discord         # Start the Discord bot (primary client)
+npm run claude          # Start a monitored Claude Code session
+npm run explorer        # Start Memory Explorer web UI (port 3333)
+npm run memory-server   # Start MCP memory server
+
+# Experimental / incomplete — Discord parity not maintained:
 npm run telegram:setup  # Configure Telegram credentials
 npm run telegram        # Start the Telegram bot
 npm run slack:setup     # Configure Slack credentials
 npm run slack           # Start the Slack bot
-npm run claude          # Start a monitored Claude Code session
-npm run explorer        # Start Memory Explorer web UI (port 3333)
-npm run memory-server   # Start MCP memory server
 ```
 
 No test suite yet. Validate changes by building successfully:
