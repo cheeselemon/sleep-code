@@ -93,8 +93,15 @@ export class CodexSessionManager {
     sandboxMode?: SandboxMode;
     model?: string;
     modelReasoningEffort?: ModelReasoningEffort;
+    /** Pre-generated session ID. When the caller needs to create the Discord
+     *  channel/thread + post the start message BEFORE the SDK session exists,
+     *  it generates the UUID up front, passes it to `createCodexSession()`,
+     *  then forwards the same value here so both sides agree on the ID and
+     *  the start message can render the real 8-char prefix instead of the
+     *  legacy `'pending'` placeholder. */
+    sessionId?: string;
   }): Promise<CodexSessionEntry> {
-    const id = randomUUID();
+    const id = options?.sessionId ?? randomUUID();
     const sandboxMode = options?.sandboxMode ?? 'read-only';
     const model = options?.model ?? CODEX_MODEL;
     const modelReasoningEffort = options?.modelReasoningEffort ?? CODEX_DEFAULT_REASONING;

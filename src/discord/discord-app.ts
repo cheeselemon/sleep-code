@@ -656,7 +656,10 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
         }
 
         try {
-          const mapping = await channelManager.createCodexSession('pending', 'codex-auto', claudeMapping.cwd, threadId);
+          // Generate the session ID up front so the start message renders the real
+          // 8-char prefix instead of the legacy `'pending'` placeholder.
+          const presetSessionId = randomUUID();
+          const mapping = await channelManager.createCodexSession(presetSessionId, 'codex-auto', claudeMapping.cwd, threadId);
           if (!mapping) {
             await firstMessage.reply('⚠️ Failed to create Codex session.');
             return;
@@ -664,8 +667,8 @@ export function createDiscordApp(config: DiscordConfig, options?: Partial<Discor
           const isYolo = claudeSessionId ? state.yoloSessions.has(claudeSessionId) : false;
           const entry = await codexSessionManager.startSession(claudeMapping.cwd, threadId, {
             sandboxMode: isYolo ? 'workspace-write' : 'read-only',
+            sessionId: presetSessionId,
           });
-          channelManager.updateCodexSessionId('pending', entry.id);
           effectiveCodexSessionId = entry.id;
           log.info({ sessionId: entry.id, cwd: claudeMapping.cwd, sandboxMode: isYolo ? 'workspace-write' : 'read-only' }, 'Auto-created Codex session in existing thread');
 

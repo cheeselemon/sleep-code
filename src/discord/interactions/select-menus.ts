@@ -316,10 +316,13 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
       components: [],
     });
 
-    // Create thread first, then start Codex session
+    // Create thread first, then start Codex session.
+    // Pre-generate the session ID so the start message renders the real
+    // 8-char prefix instead of the legacy `'pending'` placeholder.
     const sessionName = `codex-${basename(cwd)}`;
+    const presetSessionId = randomUUID();
     const mapping = await channelManager.createCodexSession(
-      'pending', sessionName, cwd, undefined, model, modelReasoningEffort,
+      presetSessionId, sessionName, cwd, undefined, model, modelReasoningEffort,
     );
     if (!mapping) {
       await interaction.followUp({ content: '❌ Failed to create thread.', ephemeral: true });
@@ -334,10 +337,8 @@ export const handleCodexStartDirSelect: SelectMenuHandler = async (interaction, 
       sandboxMode: isYolo ? 'workspace-write' : 'read-only',
       model,
       modelReasoningEffort,
+      sessionId: presetSessionId,
     });
-
-    // Update channel manager with real session ID
-    channelManager.updateCodexSessionId('pending', entry.id);
 
     await interaction.followUp({
       content: `✅ **Codex session started**\nModel: **${codexConfigDisplay(entry.model, entry.modelReasoningEffort)}**\nSession: ${entry.id.slice(0, 8)}...\nDirectory: \`${cwd}\``,
