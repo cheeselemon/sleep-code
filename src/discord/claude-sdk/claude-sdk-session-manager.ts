@@ -122,7 +122,11 @@ export interface ClaudeSdkTurnUsage {
 }
 
 export interface ClaudeSdkEvents {
-  onSessionStart: (sessionId: string, cwd: string, discordThreadId: string) => void | Promise<void>;
+  /** Fires whenever a session goes live — both fresh starts and lazy resumes
+   *  after bot restart. `info.isResume === true` when the manager was given a
+   *  `resume:` option so the handler can suppress duplicate "ready" cards
+   *  (the lazy-resume code path posts its own 🔄 notice with full context). */
+  onSessionStart: (sessionId: string, cwd: string, discordThreadId: string, info?: { isResume?: boolean }) => void | Promise<void>;
   onSessionEnd: (sessionId: string) => void | Promise<void>;
   onSessionStatus?: (sessionId: string, status: 'running' | 'idle' | 'ended') => void | Promise<void>;
   onMessage: (sessionId: string, content: string) => void | Promise<void>;
@@ -195,7 +199,7 @@ export class ClaudeSdkSessionManager {
 
     this.sessions.set(id, entry);
 
-    await this.events.onSessionStart(id, cwd, discordThreadId);
+    await this.events.onSessionStart(id, cwd, discordThreadId, { isResume: !!options?.resume });
 
     // Start the query stream in the background.
     // SDK only produces messages after user input arrives via the prompt generator,

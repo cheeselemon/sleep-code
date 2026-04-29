@@ -168,7 +168,13 @@ export function createClaudeSdkHandlers(context: ClaudeSdkHandlerContext): Claud
   } = context;
 
   return {
-    onSessionStart: async (sessionId, cwd) => {
+    onSessionStart: async (sessionId, cwd, _discordThreadId, info) => {
+      // Skip the "ready" card for lazy resumes after bot restart — the
+      // resume notice posted by the lazy-resume path in discord-app.ts
+      // already carries directory, model, session id, and tip line, so a
+      // second message here is pure duplication. Fresh starts still get it.
+      if (info?.isResume) return;
+
       const thread = await getClaudeSdkThread(client, channelManager, sessionId);
       if (!thread) {
         return;
