@@ -19,6 +19,32 @@ import { discordLogger as log } from '../../utils/logger.js';
 export const CODEX_MODEL = 'gpt-5.5';
 export const CODEX_DEFAULT_REASONING: ModelReasoningEffort = 'high';
 
+/**
+ * Idle watchdog thresholds for Codex stream silent-hang detection.
+ *
+ * Background: a Codex CLI subprocess can wedge in `STAT=S` (interruptible
+ * sleep, waiting on a network socket) after `thread.started` fires. The Node
+ * side blocks forever on `for await (const event of events)` because no JSON
+ * line ever arrives on stdout. Without this watchdog the session stays
+ * `running` indefinitely (observed: 8h+ silent hang).
+ *
+ * Strategy:
+ *   - Tick the watchdog while a turn is in flight.
+ *   - At WARN_MS of silence: log a structured warning with the last-known
+ *     event type/age so the operator can correlate from `/check-alive`.
+ *   - At ABORT_MS of silence: abort the AbortController. The for-await loop
+ *     unwinds via `signal.aborted`, the finally block returns the session
+ *     to `idle`, and the user can retry.
+ *
+ * These intervals deliberately err toward "let the model think" — gpt-5.5
+ * with `model_reasoning_effort=high` legitimately spends several minutes on
+ * heavy reasoning before emitting tokens, so we don't want false positives
+ * that interrupt healthy long turns.
+ */
+const CODEX_IDLE_WARN_MS = 90_000;       // 1.5 min — log warning
+const CODEX_IDLE_ABORT_MS = 600_000;     // 10 min — force abort
+const CODEX_WATCHDOG_TICK_MS = 30_000;   // check cadence
+
 export type { SandboxMode, ModelReasoningEffort } from '@openai/codex-sdk';
 
 export interface CodexSessionEntry {
@@ -45,6 +71,19 @@ export interface CodexSessionEntry {
    */
   inputQueue: string[];
   maxQueueLength: number;
+  /**
+   * Liveness telemetry — updated every time the SDK emits a stream event, plus
+   * baseline-set at session creation. `/check-alive` reads these and the
+   * idle watchdog uses them to detect silent CLI hangs (the case that
+   * triggered this logging: thread.started fired then 8h of dead air).
+   */
+  lastEventAt: Date;
+  lastEventType: string | null;
+  /** Total stream events received this session (sanity counter). */
+  eventsTotal: number;
+  /** Wall-clock time the current turn was kicked off — used to age-out
+   *  sessions that received `runStreamed()` but never produced any event. */
+  turnStartedAt: Date | null;
 }
 
 export interface CodexEvents {
@@ -115,6 +154,7 @@ export class CodexSessionManager {
       skipGitRepoCheck: true,
     });
 
+    const now = new Date();
     const entry: CodexSessionEntry = {
       id,
       codexThread,
@@ -125,11 +165,15 @@ export class CodexSessionManager {
       modelReasoningEffort,
       status: 'idle',
       discordThreadId,
-      startedAt: new Date(),
+      startedAt: now,
       activeTurn: null,
       turnCount: 0,
       inputQueue: [],
       maxQueueLength: this.maxQueueLength,
+      lastEventAt: now,
+      lastEventType: null,
+      eventsTotal: 0,
+      turnStartedAt: null,
     };
 
     this.sessions.set(id, entry);
@@ -372,6 +416,7 @@ export class CodexSessionManager {
           skipGitRepoCheck: true,
         });
 
+        const restoredAt = new Date();
         const entry: CodexSessionEntry = {
           id: m.sessionId,
           codexThread,
@@ -382,11 +427,15 @@ export class CodexSessionManager {
           modelReasoningEffort,
           status: 'idle',
           discordThreadId: m.discordThreadId,
-          startedAt: new Date(),
+          startedAt: restoredAt,
           activeTurn: null,
           turnCount: 0,
           inputQueue: [],
           maxQueueLength: this.maxQueueLength,
+          lastEventAt: restoredAt,
+          lastEventType: null,
+          eventsTotal: 0,
+          turnStartedAt: null,
         };
 
         this.sessions.set(m.sessionId, entry);
@@ -405,15 +454,111 @@ export class CodexSessionManager {
 
     const abortController = new AbortController();
     session.activeTurn = abortController;
+    const turnStart = new Date();
+    session.turnStartedAt = turnStart;
+    session.lastEventAt = turnStart;
+    session.lastEventType = null;
 
+    log.info({
+      sessionId: session.id,
+      codexThreadId: session.codexThreadId || '(pre-thread.started)',
+      promptLength: prompt.length,
+      promptPreview: prompt.slice(0, 80),
+      model: session.model,
+      modelReasoningEffort: session.modelReasoningEffort,
+      sandboxMode: session.sandboxMode,
+      cwd: session.cwd,
+    }, 'Codex stream starting');
+
+    // ── Idle watchdog ─────────────────────────────────────────────────
+    // Checks every CODEX_WATCHDOG_TICK_MS whether the stream has gone
+    // quiet. Fires structured warnings at WARN_MS and aborts at ABORT_MS.
+    // See the constants block at the top of this file for the rationale.
+    let warnedOnce = false;
+    const watchdogHandle = setInterval(() => {
+      if (abortController.signal.aborted) return;
+      const idleMs = Date.now() - session.lastEventAt.getTime();
+      const turnElapsedMs = Date.now() - turnStart.getTime();
+
+      if (idleMs >= CODEX_IDLE_ABORT_MS) {
+        log.error({
+          sessionId: session.id,
+          codexThreadId: session.codexThreadId,
+          lastEventType: session.lastEventType,
+          eventsTotal: session.eventsTotal,
+          idleMs,
+          idleSec: Math.round(idleMs / 1000),
+          turnElapsedSec: Math.round(turnElapsedMs / 1000),
+          abortThresholdMs: CODEX_IDLE_ABORT_MS,
+        }, 'Codex stream silent-hang abort threshold reached, forcing abort');
+        abortController.abort();
+        try {
+          this.events.onError(session.id, new Error(
+            `Codex stream silent-hang: no events for ${Math.round(idleMs / 1000)}s ` +
+            `(last event: ${session.lastEventType ?? 'none'}). Forced abort. ` +
+            `Try sending the message again, or /codex stop and start a fresh session.`,
+          ));
+        } catch (err) {
+          log.error({ err, sessionId: session.id }, 'Failed to emit silent-hang onError');
+        }
+      } else if (idleMs >= CODEX_IDLE_WARN_MS && !warnedOnce) {
+        warnedOnce = true;
+        log.warn({
+          sessionId: session.id,
+          codexThreadId: session.codexThreadId,
+          lastEventType: session.lastEventType,
+          eventsTotal: session.eventsTotal,
+          idleMs,
+          idleSec: Math.round(idleMs / 1000),
+          turnElapsedSec: Math.round(turnElapsedMs / 1000),
+          warnThresholdMs: CODEX_IDLE_WARN_MS,
+          abortThresholdMs: CODEX_IDLE_ABORT_MS,
+        }, 'Codex stream idle warning — possible silent hang');
+      }
+    }, CODEX_WATCHDOG_TICK_MS);
+    // Don't keep the event loop alive solely for the watchdog timer.
+    if (typeof watchdogHandle.unref === 'function') watchdogHandle.unref();
+
+    let runStreamedResolved = false;
     try {
       const { events } = await session.codexThread.runStreamed(prompt, {
         signal: abortController.signal,
       });
+      runStreamedResolved = true;
+      log.info({
+        sessionId: session.id,
+        codexThreadId: session.codexThreadId,
+        runStreamedMs: Date.now() - turnStart.getTime(),
+      }, 'Codex stream connected, awaiting first event');
 
       for await (const event of events) {
         // Check if aborted
-        if (abortController.signal.aborted) break;
+        if (abortController.signal.aborted) {
+          log.info({
+            sessionId: session.id,
+            codexThreadId: session.codexThreadId,
+            eventsTotal: session.eventsTotal,
+            lastEventType: session.lastEventType,
+          }, 'Codex stream loop exited due to abort signal');
+          break;
+        }
+
+        // ── Liveness telemetry ──────────────────────────────────────
+        // Record the timestamp + event type FIRST so the watchdog and
+        // /check-alive see fresh data even if the handler below throws.
+        const eventArrivedAt = new Date();
+        const idleSinceLastSec = Math.round(
+          (eventArrivedAt.getTime() - session.lastEventAt.getTime()) / 1000,
+        );
+        session.lastEventAt = eventArrivedAt;
+        session.lastEventType = event.type;
+        session.eventsTotal++;
+        log.debug({
+          sessionId: session.id,
+          eventType: event.type,
+          eventIndex: session.eventsTotal,
+          idleSinceLastSec,
+        }, 'Codex event received');
 
         switch (event.type) {
           case 'thread.started': {
@@ -476,6 +621,8 @@ export class CodexSessionManager {
               inputTokens: usage?.input_tokens,
               outputTokens: usage?.output_tokens,
               turn: session.turnCount,
+              turnDurationSec: Math.round((Date.now() - turnStart.getTime()) / 1000),
+              eventsTotal: session.eventsTotal,
             }, 'Codex turn completed');
             if (usage) {
               await this.events.onTurnComplete?.(session.id, {
@@ -495,7 +642,28 @@ export class CodexSessionManager {
           }
         }
       }
+
+      log.info({
+        sessionId: session.id,
+        codexThreadId: session.codexThreadId,
+        eventsTotal: session.eventsTotal,
+        lastEventType: session.lastEventType,
+        turnDurationMs: Date.now() - turnStart.getTime(),
+      }, 'Codex stream loop exited normally');
+    } catch (err) {
+      log.error({
+        sessionId: session.id,
+        codexThreadId: session.codexThreadId,
+        runStreamedResolved,
+        eventsTotal: session.eventsTotal,
+        lastEventType: session.lastEventType,
+        turnDurationMs: Date.now() - turnStart.getTime(),
+        err,
+      }, 'Codex stream loop threw');
+      throw err;
     } finally {
+      clearInterval(watchdogHandle);
+      session.turnStartedAt = null;
       // Only reset state if this turn's controller is still the active one.
       // switchSandboxMode() replaces activeTurn, so a stale finally must not overwrite.
       if (session.activeTurn === abortController) {

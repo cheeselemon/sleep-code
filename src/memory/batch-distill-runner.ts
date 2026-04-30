@@ -248,6 +248,11 @@ export class BatchDistillRunner {
     return this.running;
   }
 
+  /** Count of threads explicitly opted out of memory collection. */
+  get optedOutCount(): number {
+    return this.optedOutThreads.size;
+  }
+
   // ── Internal ────────────────────────────────────────────────
 
   private async startTimers(): Promise<void> {
